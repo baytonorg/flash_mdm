@@ -1,0 +1,182 @@
+{
+  "AMAPI_LIVE_BEARER_TOKEN": [
+    "netlify/functions/_lib/__tests__/policy-update-mask.live.test.ts:5"
+  ],
+  "AMAPI_LIVE_EXPECT_CLEARED_TOP_LEVEL_KEY": [
+    "netlify/functions/_lib/__tests__/policy-update-mask.live.test.ts:9"
+  ],
+  "AMAPI_LIVE_POLICY_BASELINE_JSON": [
+    "netlify/functions/_lib/__tests__/policy-update-mask.live.test.ts:7"
+  ],
+  "AMAPI_LIVE_POLICY_NAME": [
+    "netlify/functions/_lib/__tests__/policy-update-mask.live.test.ts:6"
+  ],
+  "AMAPI_LIVE_POLICY_PATCH_JSON": [
+    "netlify/functions/_lib/__tests__/policy-update-mask.live.test.ts:8"
+  ],
+  "AMAPI_LIVE_POLICY_TEST_ENABLE": [
+    "netlify/functions/_lib/__tests__/policy-update-mask.live.test.ts:4"
+  ],
+  "AUDIT_LOG_RETENTION_DAYS": [
+    "netlify/functions/__tests__/cleanup-scheduled.test.ts:40",
+    "netlify/functions/cleanup-scheduled.ts:14"
+  ],
+  "BOOTSTRAP_SECRET": [
+    "netlify/functions/auth-register.ts:149"
+  ],
+  "DATABASE_URL": [
+    "netlify/functions/_lib/db.ts:12",
+    "netlify/functions/migrate.ts:1564"
+  ],
+  "DEPLOY_PRIME_URL": [
+    "netlify/functions/auth-magic-link-start.ts:58",
+    "netlify/functions/auth-magic-link-verify.ts:103",
+    "netlify/functions/auth-magic-link-verify.ts:61",
+    "netlify/functions/auth-password-reset-start.ts:61",
+    "netlify/functions/auth-register.ts:475",
+    "netlify/functions/environment-bind.ts:442",
+    "netlify/functions/signin-config.ts:57",
+    "netlify/functions/workspace-invite.ts:143"
+  ],
+  "DEVICE_LOCATION_RETENTION_DAYS": [
+    "netlify/functions/__tests__/cleanup-scheduled.test.ts:41",
+    "netlify/functions/cleanup-scheduled.ts:15"
+  ],
+  "DEVICE_STATUS_REPORT_RETENTION_DAYS": [
+    "netlify/functions/__tests__/cleanup-scheduled.test.ts:42",
+    "netlify/functions/cleanup-scheduled.ts:16"
+  ],
+  "ENCRYPTION_MASTER_KEY": [
+    "netlify/functions/_lib/__tests__/crypto.test.ts:8",
+    "netlify/functions/_lib/crypto.ts:8"
+  ],
+  "INTERNAL_FUNCTION_SECRET": [
+    "netlify/functions/_lib/__tests__/internal-auth.test.ts:12",
+    "netlify/functions/_lib/__tests__/internal-auth.test.ts:14",
+    "netlify/functions/_lib/__tests__/internal-auth.test.ts:30",
+    "netlify/functions/_lib/__tests__/internal-auth.test.ts:38",
+    "netlify/functions/_lib/__tests__/internal-auth.test.ts:46",
+    "netlify/functions/_lib/__tests__/internal-auth.test.ts:6",
+    "netlify/functions/_lib/__tests__/internal-auth.test.ts:63",
+    "netlify/functions/_lib/__tests__/internal-auth.test.ts:72",
+    "netlify/functions/_lib/__tests__/internal-auth.test.ts:82",
+    "netlify/functions/_lib/internal-auth.ts:19",
+    "netlify/functions/deployment-jobs.ts:418",
+    "netlify/functions/device-bulk.ts:133",
+    "netlify/functions/environment-enterprise.ts:226",
+    "netlify/functions/pubsub-webhook.ts:304",
+    "netlify/functions/sync-process-background.ts:1192",
+    "netlify/functions/workflow-cron-scheduled.ts:141"
+  ],
+  "LICENSING_DRY_RUN": [
+    "netlify/functions/_lib/licensing.ts:82"
+  ],
+  "LICENSING_ENFORCEMENT_ENABLED": [
+    "netlify/functions/_lib/__tests__/licensing.test.ts:127",
+    "netlify/functions/_lib/__tests__/licensing.test.ts:128",
+    "netlify/functions/_lib/__tests__/licensing.test.ts:134",
+    "netlify/functions/_lib/__tests__/licensing.test.ts:136",
+    "netlify/functions/_lib/__tests__/licensing.test.ts:141",
+    "netlify/functions/_lib/__tests__/licensing.test.ts:142",
+    "netlify/functions/_lib/__tests__/licensing.test.ts:188",
+    "netlify/functions/_lib/__tests__/licensing.test.ts:190",
+    "netlify/functions/_lib/__tests__/licensing.test.ts:195",
+    "netlify/functions/_lib/__tests__/licensing.test.ts:196",
+    "netlify/functions/_lib/__tests__/licensing.test.ts:233",
+    "netlify/functions/_lib/__tests__/licensing.test.ts:235",
+    "netlify/functions/_lib/__tests__/licensing.test.ts:240",
+    "netlify/functions/_lib/__tests__/licensing.test.ts:241",
+    "netlify/functions/_lib/__tests__/licensing.test.ts:276",
+    "netlify/functions/_lib/__tests__/licensing.test.ts:278",
+    "netlify/functions/_lib/__tests__/licensing.test.ts:283",
+    "netlify/functions/_lib/__tests__/licensing.test.ts:284",
+    "netlify/functions/_lib/__tests__/licensing.test.ts:297",
+    "netlify/functions/_lib/__tests__/licensing.test.ts:299",
+    "netlify/functions/_lib/licensing.ts:77"
+  ],
+  "MIGRATION_SECRET": [
+    "netlify/functions/__tests__/superadmin-actions.test.ts:155",
+    "netlify/functions/migrate.ts:1544",
+    "netlify/functions/superadmin-actions.ts:189"
+  ],
+  "NETLIFY_DATABASE_URL": [
+    "netlify/functions/_lib/db.ts:12",
+    "netlify/functions/migrate.ts:1564"
+  ],
+  "NETLIFY_DEV": [
+    "netlify/functions/_lib/__tests__/internal-auth.test.ts:22",
+    "netlify/functions/_lib/__tests__/internal-auth.test.ts:24",
+    "netlify/functions/_lib/__tests__/internal-auth.test.ts:48",
+    "netlify/functions/_lib/__tests__/internal-auth.test.ts:8",
+    "netlify/functions/_lib/internal-auth.ts:35"
+  ],
+  "NODE_ENV": [
+    "netlify/functions/_lib/__tests__/internal-auth.test.ts:17",
+    "netlify/functions/_lib/__tests__/internal-auth.test.ts:19",
+    "netlify/functions/_lib/__tests__/internal-auth.test.ts:47",
+    "netlify/functions/_lib/__tests__/internal-auth.test.ts:7",
+    "netlify/functions/_lib/auth.ts:396",
+    "netlify/functions/_lib/db.ts:17",
+    "netlify/functions/_lib/internal-auth.ts:35",
+    "netlify/functions/migrate.ts:1575",
+    "netlify/functions/superadmin-actions.ts:518"
+  ],
+  "PUBSUB_SHARED_SECRET": [
+    "netlify/functions/pubsub-webhook.ts:26"
+  ],
+  "RESEND_API_KEY": [
+    "netlify/functions/_lib/resend.ts:14"
+  ],
+  "RESEND_FROM_EMAIL": [
+    "netlify/functions/_lib/resend.ts:17"
+  ],
+  "SECRETS_SCAN_OMIT_KEYS": [],
+  "SOFT_DELETED_DEVICE_RETENTION_DAYS": [
+    "netlify/functions/__tests__/cleanup-scheduled.test.ts:43",
+    "netlify/functions/cleanup-scheduled.ts:17"
+  ],
+  "STRIPE_SECRET_KEY": [
+    "netlify/functions/__tests__/api-route-hardening.test.ts:301",
+    "netlify/functions/__tests__/api-route-hardening.test.ts:302",
+    "netlify/functions/__tests__/api-route-hardening.test.ts:320",
+    "netlify/functions/__tests__/api-route-hardening.test.ts:324",
+    "netlify/functions/__tests__/api-route-hardening.test.ts:325",
+    "netlify/functions/__tests__/api-route-hardening.test.ts:352",
+    "netlify/functions/__tests__/stripe-checkout.test.ts:60",
+    "netlify/functions/__tests__/stripe-portal.test.ts:48",
+    "netlify/functions/__tests__/superadmin-actions.test.ts:61",
+    "netlify/functions/_lib/__tests__/stripe.test.ts:158",
+    "netlify/functions/_lib/__tests__/stripe.test.ts:190",
+    "netlify/functions/_lib/__tests__/stripe.test.ts:44",
+    "netlify/functions/_lib/__tests__/stripe.test.ts:45",
+    "netlify/functions/_lib/__tests__/stripe.test.ts:50",
+    "netlify/functions/_lib/__tests__/stripe.test.ts:54",
+    "netlify/functions/_lib/__tests__/stripe.test.ts:65",
+    "netlify/functions/_lib/__tests__/stripe.test.ts:76",
+    "netlify/functions/_lib/stripe.ts:7",
+    "netlify/functions/license-status.ts:110",
+    "netlify/functions/stripe-checkout.ts:23",
+    "netlify/functions/stripe-portal.ts:20",
+    "netlify/functions/superadmin-actions.ts:383"
+  ],
+  "STRIPE_WEBHOOK_SECRET": [
+    "netlify/functions/__tests__/stripe-webhook.test.ts:74",
+    "netlify/functions/stripe-webhook.ts:68"
+  ],
+  "URL": [
+    "netlify/functions/__tests__/auth-password-reset.test.ts:116",
+    "netlify/functions/__tests__/auth-password-reset.test.ts:117",
+    "netlify/functions/__tests__/auth-password-reset.test.ts:136",
+    "netlify/functions/__tests__/auth-password-reset.test.ts:137",
+    "netlify/functions/app-web-token.ts:64",
+    "netlify/functions/auth-magic-link-start.ts:58",
+    "netlify/functions/auth-magic-link-verify.ts:103",
+    "netlify/functions/auth-magic-link-verify.ts:61",
+    "netlify/functions/auth-password-reset-start.ts:61",
+    "netlify/functions/auth-register.ts:475",
+    "netlify/functions/environment-bind.ts:442",
+    "netlify/functions/signin-config.ts:57",
+    "netlify/functions/workspace-invite.ts:143"
+  ],
+  "VITE_GOOGLE_MAPS_API_KEY": []
+}

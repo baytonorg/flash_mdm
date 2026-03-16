@@ -1,0 +1,245 @@
+---
+import { Image } from 'astro:assets';
+
+import devicesList from '../assets/screenshots/devices-list.png';
+import deviceOperations from '../assets/screenshots/device-operations.png';
+import deviceLocation from '../assets/screenshots/device-location.png';
+import devicePolicy from '../assets/screenshots/device-policy.png';
+import deviceCommand from '../assets/screenshots/device-command.png';
+import deviceApps from '../assets/screenshots/device-apps.png';
+import policyJson from '../assets/screenshots/policy-json.png';
+import policyOverrides from '../assets/screenshots/policy-overrides.png';
+import groups from '../assets/screenshots/groups.png';
+import workflowsList from '../assets/screenshots/workflows-list.png';
+import licences from '../assets/screenshots/licences.png';
+import reports from '../assets/screenshots/reports.png';
+import settingsEnvironment from '../assets/screenshots/settings-environment.png';
+import settingsEnrollment from '../assets/screenshots/settings-enrollment.png';
+import settingsProfile from '../assets/screenshots/settings-profile.png';
+import superadmin from '../assets/screenshots/superadmin.png';
+import superadminStats from '../assets/screenshots/superadmin-stats.png';
+import superadminLogs from '../assets/screenshots/superadmin-logs.png';
+
+const screenshots = [
+  { src: devicesList, alt: 'Device inventory with filtering, status indicators, and bulk actions', caption: 'Device Inventory', category: 'devices' },
+  { src: deviceOperations, alt: 'Device operations history with completed commands and status tracking', caption: 'Device Operations', category: 'devices' },
+  { src: deviceLocation, alt: 'Device location tracking with Google Maps integration and coordinate history', caption: 'Device Location', category: 'devices' },
+  { src: devicePolicy, alt: 'Device policy tab showing applied policy, assigned applications, networks, and policy tree', caption: 'Device Policy', category: 'devices' },
+  { src: deviceCommand, alt: 'Send command dialog for remote lock with custom message and contact details', caption: 'Remote Commands', category: 'devices' },
+  { src: deviceApps, alt: 'Device applications tab with app feedback, installed apps list, and versions', caption: 'Device Apps', category: 'devices' },
+  { src: policyJson, alt: 'JSON policy editor with syntax highlighting and real-time documentation panel', caption: 'JSON Editor', category: 'policies' },
+  { src: policyOverrides, alt: 'Policy settings and overrides with configurable sections including lock settings, password, and kiosk mode', caption: 'Policy Overrides', category: 'policies' },
+  { src: settingsEnrollment, alt: 'Sign-in enrolment and zero-touch provisioning configuration with Flashi AI assistant toggle', caption: 'Enrolment Settings', category: 'enrollment' },
+  { src: groups, alt: 'Hierarchical device groups with policy assignment and nested structure', caption: 'Groups', category: 'devices' },
+  { src: workflowsList, alt: 'Workflow list with triggers, actions, execution counts, and enable/disable toggles', caption: 'Workflows', category: 'workflows' },
+  { src: licences, alt: 'Licence overview showing plan tier, device usage, environment compliance, and billing details', caption: 'Licences', category: 'settings' },
+  { src: reports, alt: 'Reports and export interface with CSV and JSON format options for devices, policies, and audit logs', caption: 'Reports & Export', category: 'settings' },
+  { src: settingsEnvironment, alt: 'Environment settings with AMAPI enterprise binding, PubSub configuration', caption: 'Environment Settings', category: 'settings' },
+  { src: settingsProfile, alt: 'Profile settings with personal information, password change, and TOTP two-factor authentication', caption: 'Profile & Security', category: 'settings' },
+  { src: superadmin, alt: 'Superadmin platform overview with workspace count, device stats, and plan catalogue management', caption: 'Platform Admin', category: 'settings' },
+  { src: superadminStats, alt: 'Platform statistics with device distribution, signup trends, and system summary', caption: 'Platform Stats', category: 'settings' },
+  { src: superadminLogs, alt: 'Platform statistics with function logs for PubSub webhooks, derivative selection, and job queue', caption: 'Platform Logs', category: 'settings' },
+];
+
+const categories = [
+  { id: 'all', label: 'All' },
+  { id: 'devices', label: 'Devices' },
+  { id: 'policies', label: 'Policies' },
+  { id: 'enrollment', label: 'Enrolment' },
+  { id: 'workflows', label: 'Workflows' },
+  { id: 'settings', label: 'Settings' },
+];
+---
+
+<section id="screenshots" class="py-20 sm:py-24 bg-gray-50">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="text-center max-w-2xl mx-auto mb-12">
+      <h2 class="text-3xl sm:text-4xl font-bold text-gray-900">
+        See Flash in action
+      </h2>
+      <p class="mt-4 text-lg text-gray-600">
+        Explore the platform's key screens and features.
+      </p>
+    </div>
+
+    <!-- Category tabs -->
+    <div class="flex flex-wrap justify-center gap-2 mb-10" role="tablist">
+      {categories.map((cat, i) => (
+        <button
+          role="tab"
+          aria-selected={i === 0 ? 'true' : 'false'}
+          data-category={cat.id}
+          class:list={[
+            'gallery-tab px-4 py-2 text-sm font-medium rounded-full transition-colors',
+            i === 0
+              ? 'bg-primary-600 text-white'
+              : 'bg-white text-gray-600 border border-gray-200 hover:border-primary-200 hover:text-primary-600',
+          ]}
+        >
+          {cat.label}
+        </button>
+      ))}
+    </div>
+
+    <!-- Screenshot grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="screenshot-grid">
+      {screenshots.map((shot, index) => (
+        <button
+          class="gallery-item group relative rounded-xl overflow-hidden cursor-pointer text-left transition-transform duration-200 hover:scale-[1.02]"
+          data-category={shot.category}
+          data-index={index}
+          aria-label={`View ${shot.caption}`}
+        >
+          <Image
+            src={shot.src}
+            alt={shot.alt}
+            width={600}
+            quality={95}
+            format="webp"
+            loading="lazy"
+            class="w-full"
+          />
+          <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-4 py-3">
+            <span class="text-sm font-medium text-white">{shot.caption}</span>
+          </div>
+          <div class="absolute inset-0 bg-primary-600/0 group-hover:bg-primary-600/5 transition-colors"></div>
+        </button>
+      ))}
+    </div>
+  </div>
+
+  <!-- Lightbox -->
+  <div id="lightbox" class="fixed inset-0 z-[100] hidden bg-black/90 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Screenshot viewer">
+    <button id="lightbox-close" class="absolute top-4 right-4 z-10 p-2 text-white/80 hover:text-white transition-colors" aria-label="Close">
+      <svg class="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+      </svg>
+    </button>
+    <button id="lightbox-prev" class="absolute left-4 top-1/2 -translate-y-1/2 z-10 p-2 text-white/80 hover:text-white transition-colors" aria-label="Previous screenshot">
+      <svg class="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+      </svg>
+    </button>
+    <button id="lightbox-next" class="absolute right-4 top-1/2 -translate-y-1/2 z-10 p-2 text-white/80 hover:text-white transition-colors" aria-label="Next screenshot">
+      <svg class="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+      </svg>
+    </button>
+    <div class="flex items-center justify-center w-full h-full p-8 sm:p-16">
+      <div class="max-w-6xl w-full">
+        <img id="lightbox-img" src="" alt="" class="w-full rounded-lg shadow-2xl" />
+        <p id="lightbox-caption" class="text-center text-white/80 text-sm mt-4"></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+  // Tab filtering
+  const tabs = document.querySelectorAll<HTMLButtonElement>('.gallery-tab');
+  const items = document.querySelectorAll<HTMLButtonElement>('.gallery-item');
+
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const category = tab.dataset.category;
+
+      // Update tab styles
+      tabs.forEach(t => {
+        t.classList.remove('bg-primary-600', 'text-white');
+        t.classList.add('bg-white', 'text-gray-600', 'border', 'border-gray-200');
+        t.setAttribute('aria-selected', 'false');
+      });
+      tab.classList.add('bg-primary-600', 'text-white');
+      tab.classList.remove('bg-white', 'text-gray-600', 'border', 'border-gray-200');
+      tab.setAttribute('aria-selected', 'true');
+
+      // Filter items
+      items.forEach(item => {
+        if (category === 'all' || item.dataset.category === category) {
+          item.style.display = '';
+        } else {
+          item.style.display = 'none';
+        }
+      });
+    });
+  });
+
+  // Lightbox
+  const lightbox = document.getElementById('lightbox')!;
+  const lightboxImg = document.getElementById('lightbox-img') as HTMLImageElement;
+  const lightboxCaption = document.getElementById('lightbox-caption')!;
+  let currentIndex = 0;
+  let visibleItems: HTMLButtonElement[] = [];
+  let triggerElement: HTMLButtonElement | null = null;
+
+  function getVisibleItems(): HTMLButtonElement[] {
+    return Array.from(items).filter(item => item.style.display !== 'none');
+  }
+
+  function openLightbox(index: number) {
+    visibleItems = getVisibleItems();
+    currentIndex = index;
+    updateLightbox();
+    lightbox.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeLightbox() {
+    lightbox.classList.add('hidden');
+    document.body.style.overflow = '';
+    triggerElement?.focus();
+  }
+
+  function updateLightbox() {
+    const item = visibleItems[currentIndex];
+    if (!item) return;
+    const img = item.querySelector('img');
+    const caption = item.querySelector('span');
+    if (img) {
+      // Use the full-res source (Astro generates srcset)
+      lightboxImg.src = img.currentSrc || img.src;
+      lightboxImg.alt = img.alt;
+    }
+    if (caption) {
+      lightboxCaption.textContent = caption.textContent;
+    }
+  }
+
+  function navigate(direction: number) {
+    currentIndex = (currentIndex + direction + visibleItems.length) % visibleItems.length;
+    updateLightbox();
+  }
+
+  items.forEach(item => {
+    item.addEventListener('click', () => {
+      triggerElement = item;
+      const visible = getVisibleItems();
+      const idx = visible.indexOf(item);
+      openLightbox(idx >= 0 ? idx : 0);
+    });
+  });
+
+  document.getElementById('lightbox-close')!.addEventListener('click', closeLightbox);
+  document.getElementById('lightbox-prev')!.addEventListener('click', () => navigate(-1));
+  document.getElementById('lightbox-next')!.addEventListener('click', () => navigate(1));
+
+  lightbox.addEventListener('click', (e) => {
+    if (e.target === lightbox || (e.target as HTMLElement).closest('#lightbox > div')) {
+      // Only close if clicking the backdrop, not the image
+      const img = lightboxImg;
+      const rect = img.getBoundingClientRect();
+      const x = (e as MouseEvent).clientX;
+      const y = (e as MouseEvent).clientY;
+      if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
+        closeLightbox();
+      }
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (lightbox.classList.contains('hidden')) return;
+    if (e.key === 'Escape') closeLightbox();
+    if (e.key === 'ArrowLeft') navigate(-1);
+    if (e.key === 'ArrowRight') navigate(1);
+  });
+</script>

@@ -1,0 +1,810 @@
+[
+  {
+    "from": "/api/auth/config",
+    "to": "/.netlify/functions/auth-config",
+    "function": "auth-config",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/auth/login",
+    "to": "/.netlify/functions/auth-login",
+    "function": "auth-login",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/auth/logout",
+    "to": "/.netlify/functions/auth-logout",
+    "function": "auth-logout",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/auth/register",
+    "to": "/.netlify/functions/auth-register",
+    "function": "auth-register",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/auth/session",
+    "to": "/.netlify/functions/auth-session",
+    "function": "auth-session",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/auth/magic-link-start",
+    "to": "/.netlify/functions/auth-magic-link-start",
+    "function": "auth-magic-link-start",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/auth/magic-link-verify",
+    "to": "/.netlify/functions/auth-magic-link-verify",
+    "function": "auth-magic-link-verify",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/auth/magic-link-complete",
+    "to": "/.netlify/functions/auth-magic-link-complete",
+    "function": "auth-magic-link-complete",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/auth/password-change",
+    "to": "/.netlify/functions/auth-password-change",
+    "function": "auth-password-change",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/auth/password-reset-start",
+    "to": "/.netlify/functions/auth-password-reset-start",
+    "function": "auth-password-reset-start",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/auth/password-reset-complete",
+    "to": "/.netlify/functions/auth-password-reset-complete",
+    "function": "auth-password-reset-complete",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/auth/totp-setup",
+    "to": "/.netlify/functions/auth-totp-setup",
+    "function": "auth-totp-setup",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/auth/totp-verify",
+    "to": "/.netlify/functions/auth-totp-verify",
+    "function": "auth-totp-verify",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/auth/totp-verify/verify",
+    "to": "/.netlify/functions/auth-totp-verify",
+    "function": "auth-totp-verify",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/auth/totp-verify/disable",
+    "to": "/.netlify/functions/auth-totp-verify",
+    "function": "auth-totp-verify",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/workspaces/users",
+    "to": "/.netlify/functions/workspace-users",
+    "function": "workspace-users",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/workspaces/users/*",
+    "to": "/.netlify/functions/workspace-users",
+    "function": "workspace-users",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/workspaces/invite",
+    "to": "/.netlify/functions/workspace-invite",
+    "function": "workspace-invite",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/invites/*",
+    "to": "/.netlify/functions/workspace-invite",
+    "function": "workspace-invite",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/workspaces/*",
+    "to": "/.netlify/functions/workspace-crud",
+    "function": "workspace-crud",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/environments/bind",
+    "to": "/.netlify/functions/environment-bind",
+    "function": "environment-bind",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/environments/renew",
+    "to": "/.netlify/functions/environment-renew",
+    "function": "environment-renew",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/environments/enterprise",
+    "to": "/.netlify/functions/environment-enterprise",
+    "function": "environment-enterprise",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/environments/*",
+    "to": "/.netlify/functions/environment-crud",
+    "function": "environment-crud",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/groups/*",
+    "to": "/.netlify/functions/group-crud",
+    "function": "group-crud",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/devices/list",
+    "to": "/.netlify/functions/device-list",
+    "function": "device-list",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/devices/bulk",
+    "to": "/.netlify/functions/device-bulk",
+    "function": "device-bulk",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/devices/command",
+    "to": "/.netlify/functions/device-command",
+    "function": "device-command",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/devices/operations",
+    "to": "/.netlify/functions/device-operations",
+    "function": "device-operations",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/devices/operations/*",
+    "to": "/.netlify/functions/device-operations",
+    "function": "device-operations",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/devices/*",
+    "to": "/.netlify/functions/device-get/:splat",
+    "function": "device-get",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/policies/assign",
+    "to": "/.netlify/functions/policy-assign",
+    "function": "policy-assign",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/policies/unassign",
+    "to": "/.netlify/functions/policy-assign",
+    "function": "policy-assign",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/policies/assignments",
+    "to": "/.netlify/functions/policy-assign",
+    "function": "policy-assign",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/policies/effective",
+    "to": "/.netlify/functions/policy-assign",
+    "function": "policy-assign",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/policies/overrides",
+    "to": "/.netlify/functions/policy-overrides",
+    "function": "policy-overrides",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/policies/overrides/*",
+    "to": "/.netlify/functions/policy-overrides",
+    "function": "policy-overrides",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/policies/clone",
+    "to": "/.netlify/functions/policy-clone",
+    "function": "policy-clone",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/policies/versions",
+    "to": "/.netlify/functions/policy-versions",
+    "function": "policy-versions",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/policies/*",
+    "to": "/.netlify/functions/policy-crud",
+    "function": "policy-crud",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/components/assign",
+    "to": "/.netlify/functions/component-assign",
+    "function": "component-assign",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/components/unassign",
+    "to": "/.netlify/functions/component-assign",
+    "function": "component-assign",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/components/policy/*",
+    "to": "/.netlify/functions/component-assign",
+    "function": "component-assign",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/components/*",
+    "to": "/.netlify/functions/component-crud",
+    "function": "component-crud",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/apps/list",
+    "to": "/.netlify/functions/app-list",
+    "function": "app-list",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/apps/search",
+    "to": "/.netlify/functions/app-search",
+    "function": "app-search",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/apps/deploy",
+    "to": "/.netlify/functions/app-deploy",
+    "function": "app-deploy",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/apps/web-token",
+    "to": "/.netlify/functions/app-web-token",
+    "function": "app-web-token",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/apps/catalog",
+    "to": "/.netlify/functions/app-crud",
+    "function": "app-crud",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/apps/import",
+    "to": "/.netlify/functions/app-crud",
+    "function": "app-crud",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/apps/deployments/*",
+    "to": "/.netlify/functions/app-crud",
+    "function": "app-crud",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/apps/*/configs",
+    "to": "/.netlify/functions/app-crud",
+    "function": "app-crud",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/apps/*/configs/*",
+    "to": "/.netlify/functions/app-crud",
+    "function": "app-crud",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/apps/*",
+    "to": "/.netlify/functions/app-crud",
+    "function": "app-crud",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/networks/list",
+    "to": "/.netlify/functions/network-list",
+    "function": "network-list",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/networks/deploy",
+    "to": "/.netlify/functions/network-deploy",
+    "function": "network-deploy",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/networks/*",
+    "to": "/.netlify/functions/network-crud",
+    "function": "network-crud",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/audit-log",
+    "to": "/.netlify/functions/audit-log",
+    "function": "audit-log",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/signin/config",
+    "to": "/.netlify/functions/signin-config",
+    "function": "signin-config",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/signin/enroll",
+    "to": "/.netlify/functions/signin-enroll",
+    "function": "signin-enroll",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/enrolment/create",
+    "to": "/.netlify/functions/enrollment-create",
+    "function": "enrollment-create",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/enrolment/list",
+    "to": "/.netlify/functions/enrollment-list",
+    "function": "enrollment-list",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/enrolment/sync",
+    "to": "/.netlify/functions/enrollment-sync",
+    "function": "enrollment-sync",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/enrolment/*",
+    "to": "/.netlify/functions/enrollment-crud",
+    "function": "enrollment-crud",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/certificates/*",
+    "to": "/.netlify/functions/certificate-crud",
+    "function": "certificate-crud",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/deployments",
+    "to": "/.netlify/functions/deployment-jobs",
+    "function": "deployment-jobs",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/deployments/*",
+    "to": "/.netlify/functions/deployment-jobs",
+    "function": "deployment-jobs",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/pubsub/webhook",
+    "to": "/.netlify/functions/pubsub-webhook",
+    "function": "pubsub-webhook",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/workflows/*",
+    "to": "/.netlify/functions/workflow-crud",
+    "function": "workflow-crud",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/geofences/*",
+    "to": "/.netlify/functions/geofence-crud",
+    "function": "geofence-crud",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/licenses/status",
+    "to": "/.netlify/functions/license-status",
+    "function": "license-status",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/licenses/settings",
+    "to": "/.netlify/functions/license-settings",
+    "function": "license-settings",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/licenses/plans",
+    "to": "/.netlify/functions/license-plans",
+    "function": "license-plans",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/licenses/grants",
+    "to": "/.netlify/functions/license-grants",
+    "function": "license-grants",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/licenses/grants/*",
+    "to": "/.netlify/functions/license-grants",
+    "function": "license-grants",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/licenses/assign",
+    "to": "/.netlify/functions/license-assign",
+    "function": "license-assign",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/licenses/unassign",
+    "to": "/.netlify/functions/license-assign",
+    "function": "license-assign",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/stripe/checkout",
+    "to": "/.netlify/functions/stripe-checkout",
+    "function": "stripe-checkout",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/stripe/portal",
+    "to": "/.netlify/functions/stripe-portal",
+    "function": "stripe-portal",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/stripe/webhook",
+    "to": "/.netlify/functions/stripe-webhook",
+    "function": "stripe-webhook",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/workspace-billing/webhook",
+    "to": "/.netlify/functions/workspace-billing-webhook",
+    "function": "workspace-billing-webhook",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/workspace-billing/*",
+    "to": "/.netlify/functions/workspace-billing",
+    "function": "workspace-billing",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/licensing/reconcile",
+    "to": "/.netlify/functions/licensing-reconcile",
+    "function": "licensing-reconcile",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/dashboard/data",
+    "to": "/.netlify/functions/dashboard-data",
+    "function": "dashboard-data",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/audit/log",
+    "to": "/.netlify/functions/audit-log",
+    "function": "audit-log",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/superadmin/actions",
+    "to": "/.netlify/functions/superadmin-actions",
+    "function": "superadmin-actions",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/superadmin/settings",
+    "to": "/.netlify/functions/superadmin-settings",
+    "function": "superadmin-settings",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/superadmin/stats",
+    "to": "/.netlify/functions/superadmin-stats",
+    "function": "superadmin-stats",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/superadmin/users",
+    "to": "/.netlify/functions/superadmin-users",
+    "function": "superadmin-users",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/superadmin/workspaces",
+    "to": "/.netlify/functions/superadmin-workspaces",
+    "function": "superadmin-workspaces",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/superadmin/workspaces/*",
+    "to": "/.netlify/functions/superadmin-workspaces",
+    "function": "superadmin-workspaces",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/superadmin/billing/*",
+    "to": "/.netlify/functions/superadmin-billing",
+    "function": "superadmin-billing",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/reports/export",
+    "to": "/.netlify/functions/report-export",
+    "function": "report-export",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/reports/download",
+    "to": "/.netlify/functions/report-download",
+    "function": "report-download",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/signup-links/resolve/*",
+    "to": "/.netlify/functions/signup-link-resolve",
+    "function": "signup-link-resolve",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/signup-links/*",
+    "to": "/.netlify/functions/signup-link-crud",
+    "function": "signup-link-crud",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/signup-links",
+    "to": "/.netlify/functions/signup-link-crud",
+    "function": "signup-link-crud",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/api-keys/*",
+    "to": "/.netlify/functions/api-key-crud",
+    "function": "api-key-crud",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/roles/rbac",
+    "to": "/.netlify/functions/roles-rbac",
+    "function": "roles-rbac",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/api/migrate",
+    "to": "/.netlify/functions/migrate",
+    "function": "migrate",
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  },
+  {
+    "from": "/*",
+    "to": "/index.html",
+    "function": null,
+    "status": "200",
+    "force": null,
+    "conditions": {}
+  }
+]

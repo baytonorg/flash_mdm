@@ -1,0 +1,554 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  SECRETS_SCAN_OMIT_KEYS = "VITE_GOOGLE_MAPS_API_KEY"
+
+[functions]
+  node_bundler = "esbuild"
+  directory = "netlify/functions"
+
+[dev]
+  command = "npm run dev"
+  targetPort = 5173
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Content-Security-Policy = "default-src 'self'; script-src 'self' https://apis.google.com https://www.gstatic.com https://ssl.gstatic.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: https:; connect-src 'self' https://accounts.google.com https://oauth2.googleapis.com https://androidmanagement.googleapis.com; media-src 'self' blob:; worker-src 'self' blob:; frame-src https://play.google.com https://accounts.google.com https://enterprise.google.com; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self' https://accounts.google.com;"
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains; preload"
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "microphone=(), camera=(), geolocation=(self)"
+
+[[headers]]
+  for = "/policies"
+  [headers.values]
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-eval' https://apis.google.com https://www.gstatic.com https://ssl.gstatic.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: https:; connect-src 'self' https://accounts.google.com https://oauth2.googleapis.com https://androidmanagement.googleapis.com; media-src 'self' blob:; worker-src 'self' blob:; frame-src https://play.google.com https://accounts.google.com https://enterprise.google.com; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self' https://accounts.google.com;"
+
+[[headers]]
+  for = "/policies/*"
+  [headers.values]
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-eval' https://apis.google.com https://www.gstatic.com https://ssl.gstatic.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: https:; connect-src 'self' https://accounts.google.com https://oauth2.googleapis.com https://androidmanagement.googleapis.com; media-src 'self' blob:; worker-src 'self' blob:; frame-src https://play.google.com https://accounts.google.com https://enterprise.google.com; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self' https://accounts.google.com;"
+
+[[headers]]
+  for = "/api/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "https://flash-mdm.netlify.app"
+    Access-Control-Allow-Credentials = "true"
+    Access-Control-Allow-Headers = "Content-Type, X-Requested-With, Authorization, X-API-Key"
+    Access-Control-Allow-Methods = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    Vary = "Origin"
+
+# API routes -> Netlify Functions
+# Auth (explicit routes only)
+[[redirects]]
+  from = "/api/auth/config"
+  to = "/.netlify/functions/auth-config"
+  status = 200
+[[redirects]]
+  from = "/api/auth/login"
+  to = "/.netlify/functions/auth-login"
+  status = 200
+[[redirects]]
+  from = "/api/auth/logout"
+  to = "/.netlify/functions/auth-logout"
+  status = 200
+[[redirects]]
+  from = "/api/auth/register"
+  to = "/.netlify/functions/auth-register"
+  status = 200
+[[redirects]]
+  from = "/api/auth/session"
+  to = "/.netlify/functions/auth-session"
+  status = 200
+[[redirects]]
+  from = "/api/auth/magic-link-start"
+  to = "/.netlify/functions/auth-magic-link-start"
+  status = 200
+[[redirects]]
+  from = "/api/auth/magic-link-verify"
+  to = "/.netlify/functions/auth-magic-link-verify"
+  status = 200
+[[redirects]]
+  from = "/api/auth/magic-link-complete"
+  to = "/.netlify/functions/auth-magic-link-complete"
+  status = 200
+[[redirects]]
+  from = "/api/auth/password-change"
+  to = "/.netlify/functions/auth-password-change"
+  status = 200
+[[redirects]]
+  from = "/api/auth/password-reset-start"
+  to = "/.netlify/functions/auth-password-reset-start"
+  status = 200
+[[redirects]]
+  from = "/api/auth/password-reset-complete"
+  to = "/.netlify/functions/auth-password-reset-complete"
+  status = 200
+[[redirects]]
+  from = "/api/auth/totp-setup"
+  to = "/.netlify/functions/auth-totp-setup"
+  status = 200
+[[redirects]]
+  from = "/api/auth/totp-verify"
+  to = "/.netlify/functions/auth-totp-verify"
+  status = 200
+[[redirects]]
+  from = "/api/auth/totp-verify/verify"
+  to = "/.netlify/functions/auth-totp-verify"
+  status = 200
+[[redirects]]
+  from = "/api/auth/totp-verify/disable"
+  to = "/.netlify/functions/auth-totp-verify"
+  status = 200
+
+# Workspaces (specific files first, then catch-all to workspace-crud)
+[[redirects]]
+  from = "/api/workspaces/users"
+  to = "/.netlify/functions/workspace-users"
+  status = 200
+[[redirects]]
+  from = "/api/workspaces/users/*"
+  to = "/.netlify/functions/workspace-users"
+  status = 200
+[[redirects]]
+  from = "/api/workspaces/invite"
+  to = "/.netlify/functions/workspace-invite"
+  status = 200
+[[redirects]]
+  from = "/api/invites/*"
+  to = "/.netlify/functions/workspace-invite"
+  status = 200
+[[redirects]]
+  from = "/api/workspaces/*"
+  to = "/.netlify/functions/workspace-crud"
+  status = 200
+
+# Environments (specific files first, then catch-all to environment-crud)
+[[redirects]]
+  from = "/api/environments/bind"
+  to = "/.netlify/functions/environment-bind"
+  status = 200
+[[redirects]]
+  from = "/api/environments/renew"
+  to = "/.netlify/functions/environment-renew"
+  status = 200
+[[redirects]]
+  from = "/api/environments/enterprise"
+  to = "/.netlify/functions/environment-enterprise"
+  status = 200
+[[redirects]]
+  from = "/api/environments/zero-touch"
+  to = "/.netlify/functions/environment-zero-touch"
+  status = 200
+[[redirects]]
+  from = "/api/environments/*"
+  to = "/.netlify/functions/environment-crud"
+  status = 200
+
+# Groups (all handled by group-crud)
+[[redirects]]
+  from = "/api/groups/*"
+  to = "/.netlify/functions/group-crud"
+  status = 200
+
+# Devices (specific files first, then ID-based GET to device-get)
+[[redirects]]
+  from = "/api/devices/list"
+  to = "/.netlify/functions/device-list"
+  status = 200
+[[redirects]]
+  from = "/api/devices/bulk"
+  to = "/.netlify/functions/device-bulk"
+  status = 200
+[[redirects]]
+  from = "/api/devices/command"
+  to = "/.netlify/functions/device-command"
+  status = 200
+[[redirects]]
+  from = "/api/devices/operations"
+  to = "/.netlify/functions/device-operations"
+  status = 200
+[[redirects]]
+  from = "/api/devices/operations/*"
+  to = "/.netlify/functions/device-operations"
+  status = 200
+[[redirects]]
+  from = "/api/devices/*"
+  to = "/.netlify/functions/device-get/:splat"
+  status = 200
+
+# Policies (specific files first, then catch-all to policy-crud)
+[[redirects]]
+  from = "/api/policies/assign"
+  to = "/.netlify/functions/policy-assign"
+  status = 200
+[[redirects]]
+  from = "/api/policies/unassign"
+  to = "/.netlify/functions/policy-assign"
+  status = 200
+[[redirects]]
+  from = "/api/policies/assignments"
+  to = "/.netlify/functions/policy-assign"
+  status = 200
+[[redirects]]
+  from = "/api/policies/effective"
+  to = "/.netlify/functions/policy-assign"
+  status = 200
+[[redirects]]
+  from = "/api/policies/overrides"
+  to = "/.netlify/functions/policy-overrides"
+  status = 200
+[[redirects]]
+  from = "/api/policies/overrides/*"
+  to = "/.netlify/functions/policy-overrides"
+  status = 200
+[[redirects]]
+  from = "/api/policies/clone"
+  to = "/.netlify/functions/policy-clone"
+  status = 200
+[[redirects]]
+  from = "/api/policies/*/versions"
+  to = "/.netlify/functions/policy-versions"
+  status = 200
+[[redirects]]
+  from = "/api/policies/*/versions/*"
+  to = "/.netlify/functions/policy-versions"
+  status = 200
+[[redirects]]
+  from = "/api/policies/*"
+  to = "/.netlify/functions/policy-crud"
+  status = 200
+
+# Components (specific files first, then catch-all to component-crud)
+[[redirects]]
+  from = "/api/components/assign"
+  to = "/.netlify/functions/component-assign"
+  status = 200
+[[redirects]]
+  from = "/api/components/unassign"
+  to = "/.netlify/functions/component-assign"
+  status = 200
+[[redirects]]
+  from = "/api/components/policy/*"
+  to = "/.netlify/functions/component-assign"
+  status = 200
+[[redirects]]
+  from = "/api/components/*"
+  to = "/.netlify/functions/component-crud"
+  status = 200
+
+# Apps (specific routes first, then package-name detail catch-all to app-details)
+[[redirects]]
+  from = "/api/apps/list"
+  to = "/.netlify/functions/app-list"
+  status = 200
+[[redirects]]
+  from = "/api/apps/search"
+  to = "/.netlify/functions/app-search"
+  status = 200
+[[redirects]]
+  from = "/api/apps/deploy"
+  to = "/.netlify/functions/app-deploy"
+  status = 200
+[[redirects]]
+  from = "/api/apps/web-token"
+  to = "/.netlify/functions/app-web-token"
+  status = 200
+[[redirects]]
+  from = "/api/apps/catalog"
+  to = "/.netlify/functions/app-crud"
+  status = 200
+[[redirects]]
+  from = "/api/apps/import"
+  to = "/.netlify/functions/app-crud"
+  status = 200
+[[redirects]]
+  from = "/api/apps/deployments/*"
+  to = "/.netlify/functions/app-crud"
+  status = 200
+# App scope config routes (new model: /api/apps/:id/configs)
+[[redirects]]
+  from = "/api/apps/*/configs"
+  to = "/.netlify/functions/app-crud"
+  status = 200
+[[redirects]]
+  from = "/api/apps/*/configs/*"
+  to = "/.netlify/functions/app-crud"
+  status = 200
+# Catch-all for app details (by package name) and app CRUD (by UUID)
+[[redirects]]
+  from = "/api/apps/*"
+  to = "/.netlify/functions/app-crud"
+  status = 200
+[[redirects]]
+  from = "/api/app-feedback/*"
+  to = "/.netlify/functions/app-feedback"
+  status = 200
+[[redirects]]
+  from = "/api/app-feedback"
+  to = "/.netlify/functions/app-feedback"
+  status = 200
+
+# Networks (Open Wi-Fi / ONC deployments)
+[[redirects]]
+  from = "/api/networks/list"
+  to = "/.netlify/functions/network-list"
+  status = 200
+[[redirects]]
+  from = "/api/networks/deploy"
+  to = "/.netlify/functions/network-deploy"
+  status = 200
+[[redirects]]
+  from = "/api/networks/*"
+  to = "/.netlify/functions/network-crud"
+  status = 200
+
+# Audit log
+[[redirects]]
+  from = "/api/audit-log"
+  to = "/.netlify/functions/audit-log"
+  status = 200
+
+# Sign-in enrollment (public device-side flow + admin config)
+[[redirects]]
+  from = "/api/signin/config"
+  to = "/.netlify/functions/signin-config"
+  status = 200
+[[redirects]]
+  from = "/api/signin/enroll"
+  to = "/.netlify/functions/signin-enroll"
+  status = 200
+
+# Enrolment (specific routes first, then catch-all for ID-based ops)
+[[redirects]]
+  from = "/api/enrolment/create"
+  to = "/.netlify/functions/enrollment-create"
+  status = 200
+[[redirects]]
+  from = "/api/enrolment/list"
+  to = "/.netlify/functions/enrollment-list"
+  status = 200
+[[redirects]]
+  from = "/api/enrolment/sync"
+  to = "/.netlify/functions/enrollment-sync"
+  status = 200
+[[redirects]]
+  from = "/api/enrolment/*"
+  to = "/.netlify/functions/enrollment-crud"
+  status = 200
+
+# Certificates (all handled by certificate-crud)
+[[redirects]]
+  from = "/api/certificates/*"
+  to = "/.netlify/functions/certificate-crud"
+  status = 200
+
+# Deployments (deployment-jobs)
+[[redirects]]
+  from = "/api/deployments"
+  to = "/.netlify/functions/deployment-jobs"
+  status = 200
+[[redirects]]
+  from = "/api/deployments/*"
+  to = "/.netlify/functions/deployment-jobs"
+  status = 200
+
+# PubSub
+[[redirects]]
+  from = "/api/pubsub/webhook"
+  to = "/.netlify/functions/pubsub-webhook"
+  status = 200
+
+# Workflows (all handled by workflow-crud)
+[[redirects]]
+  from = "/api/workflows/*"
+  to = "/.netlify/functions/workflow-crud"
+  status = 200
+
+# Geofences (all handled by geofence-crud)
+[[redirects]]
+  from = "/api/geofences/*"
+  to = "/.netlify/functions/geofence-crud"
+  status = 200
+
+# Licenses (explicit routes only)
+[[redirects]]
+  from = "/api/licenses/status"
+  to = "/.netlify/functions/license-status"
+  status = 200
+[[redirects]]
+  from = "/api/licenses/settings"
+  to = "/.netlify/functions/license-settings"
+  status = 200
+[[redirects]]
+  from = "/api/licenses/plans"
+  to = "/.netlify/functions/license-plans"
+  status = 200
+[[redirects]]
+  from = "/api/licenses/grants"
+  to = "/.netlify/functions/license-grants"
+  status = 200
+[[redirects]]
+  from = "/api/licenses/grants/*"
+  to = "/.netlify/functions/license-grants"
+  status = 200
+[[redirects]]
+  from = "/api/licenses/assign"
+  to = "/.netlify/functions/license-assign"
+  status = 200
+[[redirects]]
+  from = "/api/licenses/unassign"
+  to = "/.netlify/functions/license-assign"
+  status = 200
+
+# Stripe (explicit routes only)
+[[redirects]]
+  from = "/api/stripe/checkout"
+  to = "/.netlify/functions/stripe-checkout"
+  status = 200
+[[redirects]]
+  from = "/api/stripe/portal"
+  to = "/.netlify/functions/stripe-portal"
+  status = 200
+[[redirects]]
+  from = "/api/stripe/webhook"
+  to = "/.netlify/functions/stripe-webhook"
+  status = 200
+
+# Workspace-owned billing (customer billing under each workspace)
+[[redirects]]
+  from = "/api/workspace-billing/webhook"
+  to = "/.netlify/functions/workspace-billing-webhook"
+  status = 200
+[[redirects]]
+  from = "/api/workspace-billing/*"
+  to = "/.netlify/functions/workspace-billing"
+  status = 200
+
+# Internal licensing reconcile trigger
+[[redirects]]
+  from = "/api/licensing/reconcile"
+  to = "/.netlify/functions/licensing-reconcile"
+  status = 200
+
+# Dashboard (explicit routes only)
+[[redirects]]
+  from = "/api/dashboard/data"
+  to = "/.netlify/functions/dashboard-data"
+  status = 200
+
+# Audit (explicit routes only)
+[[redirects]]
+  from = "/api/audit/log"
+  to = "/.netlify/functions/audit-log"
+  status = 200
+
+# Superadmin (explicit routes only)
+[[redirects]]
+  from = "/api/superadmin/actions"
+  to = "/.netlify/functions/superadmin-actions"
+  status = 200
+[[redirects]]
+  from = "/api/superadmin/settings"
+  to = "/.netlify/functions/superadmin-settings"
+  status = 200
+[[redirects]]
+  from = "/api/superadmin/stats"
+  to = "/.netlify/functions/superadmin-stats"
+  status = 200
+[[redirects]]
+  from = "/api/superadmin/users"
+  to = "/.netlify/functions/superadmin-users"
+  status = 200
+[[redirects]]
+  from = "/api/superadmin/workspaces"
+  to = "/.netlify/functions/superadmin-workspaces"
+  status = 200
+[[redirects]]
+  from = "/api/superadmin/workspaces/*"
+  to = "/.netlify/functions/superadmin-workspaces"
+  status = 200
+[[redirects]]
+  from = "/api/superadmin/billing/*"
+  to = "/.netlify/functions/superadmin-billing"
+  status = 200
+
+# Reports (explicit routes only)
+[[redirects]]
+  from = "/api/reports/export"
+  to = "/.netlify/functions/report-export"
+  status = 200
+[[redirects]]
+  from = "/api/reports/download"
+  to = "/.netlify/functions/report-download"
+  status = 200
+
+# Signup Links (resolve must come before the catch-all)
+[[redirects]]
+  from = "/api/signup-links/resolve/*"
+  to = "/.netlify/functions/signup-link-resolve"
+  status = 200
+[[redirects]]
+  from = "/api/signup-links/*"
+  to = "/.netlify/functions/signup-link-crud"
+  status = 200
+[[redirects]]
+  from = "/api/signup-links"
+  to = "/.netlify/functions/signup-link-crud"
+  status = 200
+
+# API keys (scoped local/external client access)
+[[redirects]]
+  from = "/api/api-keys/*"
+  to = "/.netlify/functions/api-key-crud"
+  status = 200
+
+# Roles / RBAC matrix management
+[[redirects]]
+  from = "/api/roles/rbac"
+  to = "/.netlify/functions/roles-rbac"
+  status = 200
+
+# Misc
+[[redirects]]
+  from = "/api/migrate"
+  to = "/.netlify/functions/migrate"
+  status = 200
+
+# AMAPI MCP proxy
+[[redirects]]
+  from = "/api/mcp/amapi"
+  to = "/.netlify/functions/mcp-amapi"
+  status = 200
+
+# Flashi assistant
+[[redirects]]
+  from = "/api/flashagent/chat"
+  to = "/.netlify/functions/flashagent-chat"
+  status = 200
+[[redirects]]
+  from = "/api/flashagent/chat-history"
+  to = "/.netlify/functions/flashagent-chat-history"
+  status = 200
+[[redirects]]
+  from = "/api/flashagent/settings"
+  to = "/.netlify/functions/flashagent-settings"
+  status = 200
+[[redirects]]
+  from = "/api/flashagent/download"
+  to = "/.netlify/functions/flashagent-download"
+  status = 200
+[[redirects]]
+  from = "/api/flashagent/workspace-settings"
+  to = "/.netlify/functions/flashagent-workspace-settings"
+  status = 200
+
+# SPA fallback
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

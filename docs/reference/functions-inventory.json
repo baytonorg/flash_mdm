@@ -1,0 +1,350 @@
+[
+  {
+    "name": "api-key-crud",
+    "file": "netlify/functions/api-key-crud.ts"
+  },
+  {
+    "name": "app-crud",
+    "file": "netlify/functions/app-crud.ts"
+  },
+  {
+    "name": "app-deploy",
+    "file": "netlify/functions/app-deploy.ts"
+  },
+  {
+    "name": "app-details",
+    "file": "netlify/functions/app-details.ts"
+  },
+  {
+    "name": "app-list",
+    "file": "netlify/functions/app-list.ts"
+  },
+  {
+    "name": "app-search",
+    "file": "netlify/functions/app-search.ts"
+  },
+  {
+    "name": "app-web-token",
+    "file": "netlify/functions/app-web-token.ts"
+  },
+  {
+    "name": "audit-log",
+    "file": "netlify/functions/audit-log.ts"
+  },
+  {
+    "name": "auth-config",
+    "file": "netlify/functions/auth-config.ts"
+  },
+  {
+    "name": "auth-login",
+    "file": "netlify/functions/auth-login.ts"
+  },
+  {
+    "name": "auth-logout",
+    "file": "netlify/functions/auth-logout.ts"
+  },
+  {
+    "name": "auth-magic-link-complete",
+    "file": "netlify/functions/auth-magic-link-complete.ts"
+  },
+  {
+    "name": "auth-magic-link-start",
+    "file": "netlify/functions/auth-magic-link-start.ts"
+  },
+  {
+    "name": "auth-magic-link-verify",
+    "file": "netlify/functions/auth-magic-link-verify.ts"
+  },
+  {
+    "name": "auth-password-change",
+    "file": "netlify/functions/auth-password-change.ts"
+  },
+  {
+    "name": "auth-password-reset-complete",
+    "file": "netlify/functions/auth-password-reset-complete.ts"
+  },
+  {
+    "name": "auth-password-reset-start",
+    "file": "netlify/functions/auth-password-reset-start.ts"
+  },
+  {
+    "name": "auth-register",
+    "file": "netlify/functions/auth-register.ts"
+  },
+  {
+    "name": "auth-session",
+    "file": "netlify/functions/auth-session.ts"
+  },
+  {
+    "name": "auth-totp-setup",
+    "file": "netlify/functions/auth-totp-setup.ts"
+  },
+  {
+    "name": "auth-totp-verify",
+    "file": "netlify/functions/auth-totp-verify.ts"
+  },
+  {
+    "name": "certificate-crud",
+    "file": "netlify/functions/certificate-crud.ts"
+  },
+  {
+    "name": "cleanup-scheduled",
+    "file": "netlify/functions/cleanup-scheduled.ts"
+  },
+  {
+    "name": "component-assign",
+    "file": "netlify/functions/component-assign.ts"
+  },
+  {
+    "name": "component-crud",
+    "file": "netlify/functions/component-crud.ts"
+  },
+  {
+    "name": "dashboard-data",
+    "file": "netlify/functions/dashboard-data.ts"
+  },
+  {
+    "name": "deployment-jobs-background",
+    "file": "netlify/functions/deployment-jobs-background.ts"
+  },
+  {
+    "name": "deployment-jobs",
+    "file": "netlify/functions/deployment-jobs.ts"
+  },
+  {
+    "name": "device-bulk",
+    "file": "netlify/functions/device-bulk.ts"
+  },
+  {
+    "name": "device-command",
+    "file": "netlify/functions/device-command.ts"
+  },
+  {
+    "name": "device-get",
+    "file": "netlify/functions/device-get.ts"
+  },
+  {
+    "name": "device-list",
+    "file": "netlify/functions/device-list.ts"
+  },
+  {
+    "name": "device-operations",
+    "file": "netlify/functions/device-operations.ts"
+  },
+  {
+    "name": "enrollment-create",
+    "file": "netlify/functions/enrollment-create.ts"
+  },
+  {
+    "name": "enrollment-crud",
+    "file": "netlify/functions/enrollment-crud.ts"
+  },
+  {
+    "name": "enrollment-list",
+    "file": "netlify/functions/enrollment-list.ts"
+  },
+  {
+    "name": "enrollment-sync",
+    "file": "netlify/functions/enrollment-sync.ts"
+  },
+  {
+    "name": "environment-bind",
+    "file": "netlify/functions/environment-bind.ts"
+  },
+  {
+    "name": "environment-crud",
+    "file": "netlify/functions/environment-crud.ts"
+  },
+  {
+    "name": "environment-enterprise",
+    "file": "netlify/functions/environment-enterprise.ts"
+  },
+  {
+    "name": "environment-renew",
+    "file": "netlify/functions/environment-renew.ts"
+  },
+  {
+    "name": "geofence-check-scheduled",
+    "file": "netlify/functions/geofence-check-scheduled.ts"
+  },
+  {
+    "name": "geofence-crud",
+    "file": "netlify/functions/geofence-crud.ts"
+  },
+  {
+    "name": "group-crud",
+    "file": "netlify/functions/group-crud.ts"
+  },
+  {
+    "name": "license-assign",
+    "file": "netlify/functions/license-assign.ts"
+  },
+  {
+    "name": "license-grants",
+    "file": "netlify/functions/license-grants.ts"
+  },
+  {
+    "name": "license-plans",
+    "file": "netlify/functions/license-plans.ts"
+  },
+  {
+    "name": "license-settings",
+    "file": "netlify/functions/license-settings.ts"
+  },
+  {
+    "name": "license-status",
+    "file": "netlify/functions/license-status.ts"
+  },
+  {
+    "name": "licensing-reconcile-scheduled",
+    "file": "netlify/functions/licensing-reconcile-scheduled.ts"
+  },
+  {
+    "name": "licensing-reconcile",
+    "file": "netlify/functions/licensing-reconcile.ts"
+  },
+  {
+    "name": "migrate",
+    "file": "netlify/functions/migrate.ts"
+  },
+  {
+    "name": "network-crud",
+    "file": "netlify/functions/network-crud.ts"
+  },
+  {
+    "name": "network-deploy",
+    "file": "netlify/functions/network-deploy.ts"
+  },
+  {
+    "name": "network-list",
+    "file": "netlify/functions/network-list.ts"
+  },
+  {
+    "name": "policy-assign",
+    "file": "netlify/functions/policy-assign.ts"
+  },
+  {
+    "name": "policy-clone",
+    "file": "netlify/functions/policy-clone.ts"
+  },
+  {
+    "name": "policy-crud",
+    "file": "netlify/functions/policy-crud.ts"
+  },
+  {
+    "name": "policy-overrides",
+    "file": "netlify/functions/policy-overrides.ts"
+  },
+  {
+    "name": "policy-versions",
+    "file": "netlify/functions/policy-versions.ts"
+  },
+  {
+    "name": "pubsub-webhook",
+    "file": "netlify/functions/pubsub-webhook.ts"
+  },
+  {
+    "name": "report-download",
+    "file": "netlify/functions/report-download.ts"
+  },
+  {
+    "name": "report-export",
+    "file": "netlify/functions/report-export.ts"
+  },
+  {
+    "name": "roles-rbac",
+    "file": "netlify/functions/roles-rbac.ts"
+  },
+  {
+    "name": "signin-config",
+    "file": "netlify/functions/signin-config.ts"
+  },
+  {
+    "name": "signin-enroll",
+    "file": "netlify/functions/signin-enroll.ts"
+  },
+  {
+    "name": "signup-link-crud",
+    "file": "netlify/functions/signup-link-crud.ts"
+  },
+  {
+    "name": "signup-link-resolve",
+    "file": "netlify/functions/signup-link-resolve.ts"
+  },
+  {
+    "name": "stripe-checkout",
+    "file": "netlify/functions/stripe-checkout.ts"
+  },
+  {
+    "name": "stripe-portal",
+    "file": "netlify/functions/stripe-portal.ts"
+  },
+  {
+    "name": "stripe-webhook",
+    "file": "netlify/functions/stripe-webhook.ts"
+  },
+  {
+    "name": "superadmin-actions",
+    "file": "netlify/functions/superadmin-actions.ts"
+  },
+  {
+    "name": "superadmin-billing",
+    "file": "netlify/functions/superadmin-billing.ts"
+  },
+  {
+    "name": "superadmin-settings",
+    "file": "netlify/functions/superadmin-settings.ts"
+  },
+  {
+    "name": "superadmin-stats",
+    "file": "netlify/functions/superadmin-stats.ts"
+  },
+  {
+    "name": "superadmin-users",
+    "file": "netlify/functions/superadmin-users.ts"
+  },
+  {
+    "name": "superadmin-workspaces",
+    "file": "netlify/functions/superadmin-workspaces.ts"
+  },
+  {
+    "name": "sync-process-background",
+    "file": "netlify/functions/sync-process-background.ts"
+  },
+  {
+    "name": "sync-reconcile-scheduled",
+    "file": "netlify/functions/sync-reconcile-scheduled.ts"
+  },
+  {
+    "name": "workflow-cron-scheduled",
+    "file": "netlify/functions/workflow-cron-scheduled.ts"
+  },
+  {
+    "name": "workflow-crud",
+    "file": "netlify/functions/workflow-crud.ts"
+  },
+  {
+    "name": "workflow-evaluate-background",
+    "file": "netlify/functions/workflow-evaluate-background.ts"
+  },
+  {
+    "name": "workspace-billing-webhook",
+    "file": "netlify/functions/workspace-billing-webhook.ts"
+  },
+  {
+    "name": "workspace-billing",
+    "file": "netlify/functions/workspace-billing.ts"
+  },
+  {
+    "name": "workspace-crud",
+    "file": "netlify/functions/workspace-crud.ts"
+  },
+  {
+    "name": "workspace-invite",
+    "file": "netlify/functions/workspace-invite.ts"
+  },
+  {
+    "name": "workspace-users",
+    "file": "netlify/functions/workspace-users.ts"
+  }
+]

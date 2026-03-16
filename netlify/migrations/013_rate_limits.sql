@@ -1,0 +1,7 @@
+CREATE TABLE rate_limit_buckets (
+  id VARCHAR(255) PRIMARY KEY,
+  tokens DOUBLE PRECISION NOT NULL,
+  max_tokens DOUBLE PRECISION NOT NULL,
+  refill_rate DOUBLE PRECISION NOT NULL,
+  last_refill_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

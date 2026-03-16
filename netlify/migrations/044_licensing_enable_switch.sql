@@ -1,0 +1,1 @@
+-- Consolidated into 043_licensing_free_tier_notifications.sql (kept for migration runner tracking)

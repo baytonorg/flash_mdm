@@ -1,0 +1,49 @@
+---
+import { Image } from 'astro:assets';
+import dashboardImg from '../assets/screenshots/dashboard.png';
+---
+
+<section class="pt-28 pb-16 sm:pt-36 sm:pb-24 bg-gradient-to-b from-white to-primary-50/40">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <!-- Text -->
+    <div class="text-center max-w-3xl mx-auto">
+      <h1 class="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-gray-900">
+        Production-grade Android device management
+      </h1>
+      <p class="mt-6 text-lg sm:text-xl text-gray-600 leading-relaxed">
+        Manage devices, deploy policies, and automate workflows from a single intuitive dashboard. Built on Google's Android Management API.
+      </p>
+      <div class="mt-8 flex flex-col sm:flex-row items-center justify-center gap-4">
+        <a
+          href="https://flash-mdm.netlify.app"
+          class="inline-flex items-center px-6 py-3 text-base font-semibold text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors shadow-lg shadow-primary-600/25"
+        >
+          Get Started
+        </a>
+        <a
+          href="https://flash-mdm.netlify.app"
+          class="inline-flex items-center px-6 py-3 text-base font-semibold text-primary-700 bg-white rounded-lg border border-primary-200 hover:bg-primary-50 transition-colors"
+        >
+          Documentation
+        </a>
+      </div>
+    </div>
+
+    <!-- Dashboard screenshot -->
+    <div class="mt-16 sm:mt-20 relative">
+      <div class="rounded-xl overflow-hidden shadow-2xl border border-gray-200">
+        <Image
+          src={dashboardImg}
+          alt="Flash MDM dashboard showing real-time device metrics, enrolment trends chart, compliance rate, OEM breakdown, and Flashi AI assistant"
+          width={1400}
+          quality={95}
+          format="webp"
+          loading="eager"
+          class="w-full"
+        />
+      </div>
+      <!-- Glow effect behind -->
+      <div class="absolute -inset-4 -z-10 bg-gradient-to-r from-primary-100 to-primary-200/50 rounded-2xl blur-2xl opacity-40"></div>
+    </div>
+  </div>
+</section>

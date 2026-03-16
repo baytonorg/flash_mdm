@@ -1,0 +1,110 @@
+---
+import { Image } from 'astro:assets';
+
+import deviceDetail from '../assets/screenshots/device-detail.png';
+import policyEditor from '../assets/screenshots/policy-editor.png';
+import policyJson from '../assets/screenshots/policy-json.png';
+import applications from '../assets/screenshots/applications.png';
+import enrollment from '../assets/screenshots/enrollment.png';
+import workflowBuilder from '../assets/screenshots/workflow-builder.png';
+import deviceLocation from '../assets/screenshots/device-location.png';
+import settingsApi from '../assets/screenshots/settings-api.png';
+
+const showcases = [
+  {
+    title: 'Complete device visibility',
+    description: 'Every device in your fleet at your fingertips. View hardware details, management status, installed applications, applied policies, and location — all from a single detail view. Send remote commands like lock, reboot, or wipe, and track operations history in real time.',
+    bullets: ['Full device inventory with bulk actions', 'Remote commands with progress tracking', 'Location tracking with coordinate history', 'Per-device policy and app assignments'],
+    image: deviceDetail,
+    alt: 'Device detail view showing identity, management status, installed applications, and policy assignments',
+    reverse: false,
+  },
+  {
+    title: 'Powerful policy engine',
+    description: 'Build policies visually or edit JSON directly with syntax highlighting and live documentation. The component-based system lets you create reusable policy fragments that deep-merge by priority. Derivatives are auto-generated per scope — environment, group, or device — with variable substitution for dynamic values.',
+    bullets: ['Visual editor with collapsible sections', 'JSON editor with real-time documentation', 'Component-based reusable fragments', 'Version history with rollback support'],
+    image: policyEditor,
+    alt: 'Visual policy editor with collapsible sections for security, device settings, applications, and network configuration',
+    reverse: true,
+  },
+  {
+    title: 'Managed app deployment',
+    description: 'Browse and deploy applications from Managed Google Play directly within Flash. Configure app settings, assign apps across environments, groups, or individual devices, and manage your entire application catalogue from one place. Import and export configurations for consistency across environments.',
+    bullets: ['Managed Google Play integration', 'Multi-tiered deployment scoping', 'App configuration management', 'Catalogue import and export'],
+    image: applications,
+    alt: 'Application catalogue with Managed Google Play integration, app deployment configurations, and store configurations',
+    reverse: false,
+  },
+  {
+    title: 'Flexible enrolment options',
+    description: 'Get devices managed in minutes with QR code tokens, zero-touch provisioning, or sign-in enrolment. Configure token duration (1-365 days), one-time use restrictions, and provisioning extras like Wi-Fi credentials, locale, and timezone — all merged into the QR payload automatically.',
+    bullets: ['QR code and zero-touch provisioning', 'Group-scoped enrolment tokens', 'Configurable provisioning extras', 'Sign-in enrolment for BYOD'],
+    image: enrollment,
+    alt: 'Enrolment tokens list with QR codes, one-time use indicators, group scoping, and expiry management',
+    reverse: true,
+  },
+  {
+    title: 'Automated workflows',
+    description: 'Eliminate manual device operations with event-driven and scheduled automation. Trigger actions when devices enrol, change compliance state, enter a geofence, or on a cron schedule. Define conditions with field/operator/value rules and let Flash handle the rest.',
+    bullets: ['Event-driven and scheduled triggers', 'Conditional evaluation rules', 'Device command and policy actions', 'Execution history and manual testing'],
+    image: workflowBuilder,
+    alt: 'Workflow builder with event triggers including device enrolled, compliance changed, geofence entered, and scheduled options',
+    reverse: false,
+  },
+  {
+    title: 'API-first platform',
+    description: '87 HTTP endpoints with a full OpenAPI specification. Create workspace and environment-scoped API keys with last-used IP tracking. Integrate Flash into your existing toolchain with Bearer token or X-API-Key authentication and comprehensive CRUD coverage across every resource.',
+    bullets: ['Full OpenAPI specification', 'Workspace and environment-scoped keys', 'Last-used IP tracking and revocation', 'Comprehensive REST API coverage'],
+    image: settingsApi,
+    alt: 'API settings showing OpenAPI specification download, workspace API keys with usage tracking, and environment-scoped keys',
+    reverse: true,
+  },
+];
+---
+
+<section class="py-20 sm:py-24 bg-white">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-24 sm:space-y-32">
+    {showcases.map((item) => (
+      <div class:list={[
+        'flex flex-col gap-12 lg:gap-16 items-center',
+        item.reverse ? 'lg:flex-row-reverse' : 'lg:flex-row',
+      ]}>
+        <!-- Text -->
+        <div class="flex-1 max-w-xl">
+          <h3 class="text-2xl sm:text-3xl font-bold text-gray-900">
+            {item.title}
+          </h3>
+          <p class="mt-4 text-base text-gray-600 leading-relaxed">
+            {item.description}
+          </p>
+          <ul class="mt-6 space-y-3">
+            {item.bullets.map((bullet) => (
+              <li class="flex items-start gap-3 text-sm text-gray-700">
+                <svg class="w-5 h-5 text-primary-600 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                </svg>
+                {bullet}
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <!-- Screenshot -->
+        <div class="flex-1 relative">
+          <div class="rounded-xl overflow-hidden shadow-xl border border-gray-200">
+            <Image
+              src={item.image}
+              alt={item.alt}
+              width={800}
+              quality={95}
+              format="webp"
+              loading="lazy"
+              class="w-full"
+            />
+          </div>
+          <div class="absolute -inset-3 -z-10 bg-gradient-to-br from-primary-50 to-primary-100/50 rounded-2xl blur-xl opacity-30"></div>
+        </div>
+      </div>
+    ))}
+  </div>
+</section>

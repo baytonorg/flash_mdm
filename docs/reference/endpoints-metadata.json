@@ -1,0 +1,1537 @@
+[
+  {
+    "function": "api-key-crud",
+    "file": "netlify/functions/api-key-crud.ts",
+    "routes": [
+      "/api/api-keys/*"
+    ],
+    "methods": [
+      "GET",
+      "POST"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "workspace",
+        "resource": "workspace",
+        "action": "manage_settings"
+      },
+      {
+        "scope": "workspace",
+        "resource": "workspace",
+        "action": "manage_settings"
+      }
+    ]
+  },
+  {
+    "function": "app-crud",
+    "file": "netlify/functions/app-crud.ts",
+    "routes": [
+      "/api/apps/*",
+      "/api/apps/*/configs",
+      "/api/apps/*/configs/*",
+      "/api/apps/catalog",
+      "/api/apps/deployments/*",
+      "/api/apps/import"
+    ],
+    "methods": [
+      "DELETE",
+      "GET",
+      "POST",
+      "PUT"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "read"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "read"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "read"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      }
+    ]
+  },
+  {
+    "function": "app-deploy",
+    "file": "netlify/functions/app-deploy.ts",
+    "routes": [
+      "/api/apps/deploy"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      }
+    ]
+  },
+  {
+    "function": "app-list",
+    "file": "netlify/functions/app-list.ts",
+    "routes": [
+      "/api/apps/list"
+    ],
+    "methods": [
+      "GET"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "read"
+      }
+    ]
+  },
+  {
+    "function": "app-search",
+    "file": "netlify/functions/app-search.ts",
+    "routes": [
+      "/api/apps/search"
+    ],
+    "methods": [
+      "GET"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "read"
+      }
+    ]
+  },
+  {
+    "function": "app-web-token",
+    "file": "netlify/functions/app-web-token.ts",
+    "routes": [
+      "/api/apps/web-token"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      }
+    ]
+  },
+  {
+    "function": "audit-log",
+    "file": "netlify/functions/audit-log.ts",
+    "routes": [
+      "/api/audit-log",
+      "/api/audit/log"
+    ],
+    "methods": [
+      "GET"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "auth-config",
+    "file": "netlify/functions/auth-config.ts",
+    "routes": [
+      "/api/auth/config"
+    ],
+    "methods": [
+      "GET"
+    ],
+    "auth_required": false,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "auth-login",
+    "file": "netlify/functions/auth-login.ts",
+    "routes": [
+      "/api/auth/login"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": false,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "auth-logout",
+    "file": "netlify/functions/auth-logout.ts",
+    "routes": [
+      "/api/auth/logout"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": false,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "auth-magic-link-complete",
+    "file": "netlify/functions/auth-magic-link-complete.ts",
+    "routes": [
+      "/api/auth/magic-link-complete"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": false,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "auth-magic-link-start",
+    "file": "netlify/functions/auth-magic-link-start.ts",
+    "routes": [
+      "/api/auth/magic-link-start"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": false,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "auth-magic-link-verify",
+    "file": "netlify/functions/auth-magic-link-verify.ts",
+    "routes": [
+      "/api/auth/magic-link-verify"
+    ],
+    "methods": [],
+    "auth_required": false,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "auth-password-change",
+    "file": "netlify/functions/auth-password-change.ts",
+    "routes": [
+      "/api/auth/password-change"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": false,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "auth-password-reset-complete",
+    "file": "netlify/functions/auth-password-reset-complete.ts",
+    "routes": [
+      "/api/auth/password-reset-complete"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": false,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "auth-password-reset-start",
+    "file": "netlify/functions/auth-password-reset-start.ts",
+    "routes": [
+      "/api/auth/password-reset-start"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": false,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "auth-register",
+    "file": "netlify/functions/auth-register.ts",
+    "routes": [
+      "/api/auth/register"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": false,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "auth-session",
+    "file": "netlify/functions/auth-session.ts",
+    "routes": [
+      "/api/auth/session"
+    ],
+    "methods": [
+      "GET",
+      "POST"
+    ],
+    "auth_required": false,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "auth-totp-setup",
+    "file": "netlify/functions/auth-totp-setup.ts",
+    "routes": [
+      "/api/auth/totp-setup"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": false,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "auth-totp-verify",
+    "file": "netlify/functions/auth-totp-verify.ts",
+    "routes": [
+      "/api/auth/totp-verify",
+      "/api/auth/totp-verify/disable",
+      "/api/auth/totp-verify/verify"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": false,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "certificate-crud",
+    "file": "netlify/functions/certificate-crud.ts",
+    "routes": [
+      "/api/certificates/*"
+    ],
+    "methods": [
+      "DELETE",
+      "GET",
+      "POST"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "component-assign",
+    "file": "netlify/functions/component-assign.ts",
+    "routes": [
+      "/api/components/assign",
+      "/api/components/policy/*",
+      "/api/components/unassign"
+    ],
+    "methods": [
+      "GET",
+      "POST"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "component-crud",
+    "file": "netlify/functions/component-crud.ts",
+    "routes": [
+      "/api/components/*"
+    ],
+    "methods": [
+      "DELETE",
+      "GET",
+      "POST",
+      "PUT"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "dashboard-data",
+    "file": "netlify/functions/dashboard-data.ts",
+    "routes": [
+      "/api/dashboard/data"
+    ],
+    "methods": [
+      "GET"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "deployment-jobs",
+    "file": "netlify/functions/deployment-jobs.ts",
+    "routes": [
+      "/api/deployments",
+      "/api/deployments/*"
+    ],
+    "methods": [],
+    "auth_required": true,
+    "internal_only_hint": true,
+    "permissions": [
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "read"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "read"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      }
+    ]
+  },
+  {
+    "function": "device-bulk",
+    "file": "netlify/functions/device-bulk.ts",
+    "routes": [
+      "/api/devices/bulk"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": true,
+    "internal_only_hint": true,
+    "permissions": []
+  },
+  {
+    "function": "device-command",
+    "file": "netlify/functions/device-command.ts",
+    "routes": [
+      "/api/devices/command"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "device-get",
+    "file": "netlify/functions/device-get.ts",
+    "routes": [
+      "/api/devices/*"
+    ],
+    "methods": [
+      "DELETE",
+      "GET",
+      "POST",
+      "PUT"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "device-list",
+    "file": "netlify/functions/device-list.ts",
+    "routes": [
+      "/api/devices/list"
+    ],
+    "methods": [
+      "GET"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "device-operations",
+    "file": "netlify/functions/device-operations.ts",
+    "routes": [
+      "/api/devices/operations",
+      "/api/devices/operations/*"
+    ],
+    "methods": [
+      "GET",
+      "POST"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "enrollment-create",
+    "file": "netlify/functions/enrollment-create.ts",
+    "routes": [
+      "/api/enrolment/create"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      }
+    ]
+  },
+  {
+    "function": "enrollment-crud",
+    "file": "netlify/functions/enrollment-crud.ts",
+    "routes": [
+      "/api/enrolment/*"
+    ],
+    "methods": [
+      "DELETE",
+      "GET",
+      "POST"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "read"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      }
+    ]
+  },
+  {
+    "function": "enrollment-list",
+    "file": "netlify/functions/enrollment-list.ts",
+    "routes": [
+      "/api/enrolment/list"
+    ],
+    "methods": [
+      "GET"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "read"
+      }
+    ]
+  },
+  {
+    "function": "enrollment-sync",
+    "file": "netlify/functions/enrollment-sync.ts",
+    "routes": [
+      "/api/enrolment/sync"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      }
+    ]
+  },
+  {
+    "function": "environment-bind",
+    "file": "netlify/functions/environment-bind.ts",
+    "routes": [
+      "/api/environments/bind"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "environment-crud",
+    "file": "netlify/functions/environment-crud.ts",
+    "routes": [
+      "/api/environments/*"
+    ],
+    "methods": [
+      "DELETE",
+      "GET",
+      "POST",
+      "PUT"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "workspace",
+        "resource": "environment",
+        "action": "read"
+      },
+      {
+        "scope": "workspace",
+        "resource": "environment",
+        "action": "write"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "read"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "delete"
+      }
+    ]
+  },
+  {
+    "function": "environment-enterprise",
+    "file": "netlify/functions/environment-enterprise.ts",
+    "routes": [
+      "/api/environments/enterprise"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": true,
+    "internal_only_hint": true,
+    "permissions": []
+  },
+  {
+    "function": "environment-renew",
+    "file": "netlify/functions/environment-renew.ts",
+    "routes": [
+      "/api/environments/renew"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "geofence-crud",
+    "file": "netlify/functions/geofence-crud.ts",
+    "routes": [
+      "/api/geofences/*"
+    ],
+    "methods": [
+      "DELETE",
+      "GET",
+      "POST",
+      "PUT"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "group-crud",
+    "file": "netlify/functions/group-crud.ts",
+    "routes": [
+      "/api/groups/*"
+    ],
+    "methods": [
+      "DELETE",
+      "GET",
+      "POST",
+      "PUT"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "license-assign",
+    "file": "netlify/functions/license-assign.ts",
+    "routes": [
+      "/api/licenses/assign",
+      "/api/licenses/unassign"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      }
+    ]
+  },
+  {
+    "function": "license-grants",
+    "file": "netlify/functions/license-grants.ts",
+    "routes": [
+      "/api/licenses/grants",
+      "/api/licenses/grants/*"
+    ],
+    "methods": [
+      "GET",
+      "POST"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "workspace",
+        "resource": "workspace",
+        "action": "read"
+      },
+      {
+        "scope": "workspace",
+        "resource": "billing",
+        "action": "license_view"
+      },
+      {
+        "scope": "workspace",
+        "resource": "workspace",
+        "action": "read"
+      },
+      {
+        "scope": "workspace",
+        "resource": "billing",
+        "action": "billing_manage"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "read"
+      }
+    ]
+  },
+  {
+    "function": "license-plans",
+    "file": "netlify/functions/license-plans.ts",
+    "routes": [
+      "/api/licenses/plans"
+    ],
+    "methods": [
+      "DELETE",
+      "GET",
+      "PUT"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "workspace",
+        "resource": "workspace",
+        "action": "read"
+      },
+      {
+        "scope": "workspace",
+        "resource": "billing",
+        "action": "license_view"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "read"
+      }
+    ]
+  },
+  {
+    "function": "license-settings",
+    "file": "netlify/functions/license-settings.ts",
+    "routes": [
+      "/api/licenses/settings"
+    ],
+    "methods": [
+      "GET",
+      "PUT"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "workspace",
+        "resource": "workspace",
+        "action": "read"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "read"
+      }
+    ]
+  },
+  {
+    "function": "license-status",
+    "file": "netlify/functions/license-status.ts",
+    "routes": [
+      "/api/licenses/status"
+    ],
+    "methods": [
+      "GET"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "workspace",
+        "resource": "workspace",
+        "action": "read"
+      },
+      {
+        "scope": "workspace",
+        "resource": "billing",
+        "action": "license_view"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "read"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "read"
+      }
+    ]
+  },
+  {
+    "function": "licensing-reconcile",
+    "file": "netlify/functions/licensing-reconcile.ts",
+    "routes": [
+      "/api/licensing/reconcile"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": false,
+    "internal_only_hint": true,
+    "permissions": []
+  },
+  {
+    "function": "migrate",
+    "file": "netlify/functions/migrate.ts",
+    "routes": [
+      "/api/migrate"
+    ],
+    "methods": [
+      "GET"
+    ],
+    "auth_required": false,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "network-crud",
+    "file": "netlify/functions/network-crud.ts",
+    "routes": [
+      "/api/networks/*"
+    ],
+    "methods": [
+      "DELETE",
+      "GET",
+      "POST",
+      "PUT"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "read"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      }
+    ]
+  },
+  {
+    "function": "network-deploy",
+    "file": "netlify/functions/network-deploy.ts",
+    "routes": [
+      "/api/networks/deploy"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      }
+    ]
+  },
+  {
+    "function": "network-list",
+    "file": "netlify/functions/network-list.ts",
+    "routes": [
+      "/api/networks/list"
+    ],
+    "methods": [
+      "GET"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "read"
+      }
+    ]
+  },
+  {
+    "function": "policy-assign",
+    "file": "netlify/functions/policy-assign.ts",
+    "routes": [
+      "/api/policies/assign",
+      "/api/policies/assignments",
+      "/api/policies/effective",
+      "/api/policies/unassign"
+    ],
+    "methods": [
+      "GET",
+      "POST"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "policy-clone",
+    "file": "netlify/functions/policy-clone.ts",
+    "routes": [
+      "/api/policies/clone"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "policy-crud",
+    "file": "netlify/functions/policy-crud.ts",
+    "routes": [
+      "/api/policies/*"
+    ],
+    "methods": [
+      "DELETE",
+      "GET",
+      "POST",
+      "PUT"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "policy-overrides",
+    "file": "netlify/functions/policy-overrides.ts",
+    "routes": [
+      "/api/policies/overrides",
+      "/api/policies/overrides/*"
+    ],
+    "methods": [
+      "DELETE",
+      "GET",
+      "PUT"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "policy-versions",
+    "file": "netlify/functions/policy-versions.ts",
+    "routes": [
+      "/api/policies/versions"
+    ],
+    "methods": [
+      "GET"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "pubsub-webhook",
+    "file": "netlify/functions/pubsub-webhook.ts",
+    "routes": [
+      "/api/pubsub/webhook"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": false,
+    "internal_only_hint": true,
+    "permissions": []
+  },
+  {
+    "function": "report-download",
+    "file": "netlify/functions/report-download.ts",
+    "routes": [
+      "/api/reports/download"
+    ],
+    "methods": [
+      "GET"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "report-export",
+    "file": "netlify/functions/report-export.ts",
+    "routes": [
+      "/api/reports/export"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "roles-rbac",
+    "file": "netlify/functions/roles-rbac.ts",
+    "routes": [
+      "/api/roles/rbac"
+    ],
+    "methods": [
+      "DELETE",
+      "GET",
+      "PUT"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "signin-config",
+    "file": "netlify/functions/signin-config.ts",
+    "routes": [
+      "/api/signin/config"
+    ],
+    "methods": [
+      "DELETE",
+      "GET",
+      "PUT"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "read"
+      }
+    ]
+  },
+  {
+    "function": "signin-enroll",
+    "file": "netlify/functions/signin-enroll.ts",
+    "routes": [
+      "/api/signin/enroll"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": false,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "signup-link-crud",
+    "file": "netlify/functions/signup-link-crud.ts",
+    "routes": [
+      "/api/signup-links",
+      "/api/signup-links/*"
+    ],
+    "methods": [
+      "DELETE",
+      "GET",
+      "PATCH",
+      "POST"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "workspace",
+        "resource": "invite",
+        "action": "read"
+      },
+      {
+        "scope": "workspace",
+        "resource": "invite",
+        "action": "write"
+      },
+      {
+        "scope": "workspace",
+        "resource": "invite",
+        "action": "write"
+      },
+      {
+        "scope": "workspace",
+        "resource": "invite",
+        "action": "delete"
+      }
+    ]
+  },
+  {
+    "function": "signup-link-resolve",
+    "file": "netlify/functions/signup-link-resolve.ts",
+    "routes": [
+      "/api/signup-links/resolve/*"
+    ],
+    "methods": [
+      "GET"
+    ],
+    "auth_required": false,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "stripe-checkout",
+    "file": "netlify/functions/stripe-checkout.ts",
+    "routes": [
+      "/api/stripe/checkout"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "workspace",
+        "resource": "workspace",
+        "action": "read"
+      },
+      {
+        "scope": "workspace",
+        "resource": "billing",
+        "action": "billing_manage"
+      }
+    ]
+  },
+  {
+    "function": "stripe-portal",
+    "file": "netlify/functions/stripe-portal.ts",
+    "routes": [
+      "/api/stripe/portal"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "workspace",
+        "resource": "workspace",
+        "action": "read"
+      },
+      {
+        "scope": "workspace",
+        "resource": "billing",
+        "action": "billing_manage"
+      }
+    ]
+  },
+  {
+    "function": "stripe-webhook",
+    "file": "netlify/functions/stripe-webhook.ts",
+    "routes": [
+      "/api/stripe/webhook"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": false,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "superadmin-actions",
+    "file": "netlify/functions/superadmin-actions.ts",
+    "routes": [
+      "/api/superadmin/actions"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": false,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "superadmin-billing",
+    "file": "netlify/functions/superadmin-billing.ts",
+    "routes": [
+      "/api/superadmin/billing/*"
+    ],
+    "methods": [
+      "GET",
+      "POST"
+    ],
+    "auth_required": false,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "superadmin-settings",
+    "file": "netlify/functions/superadmin-settings.ts",
+    "routes": [
+      "/api/superadmin/settings"
+    ],
+    "methods": [
+      "GET",
+      "POST"
+    ],
+    "auth_required": false,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "superadmin-stats",
+    "file": "netlify/functions/superadmin-stats.ts",
+    "routes": [
+      "/api/superadmin/stats"
+    ],
+    "methods": [
+      "GET"
+    ],
+    "auth_required": false,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "superadmin-users",
+    "file": "netlify/functions/superadmin-users.ts",
+    "routes": [
+      "/api/superadmin/users"
+    ],
+    "methods": [
+      "GET"
+    ],
+    "auth_required": false,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "superadmin-workspaces",
+    "file": "netlify/functions/superadmin-workspaces.ts",
+    "routes": [
+      "/api/superadmin/workspaces",
+      "/api/superadmin/workspaces/*"
+    ],
+    "methods": [
+      "GET"
+    ],
+    "auth_required": false,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "workflow-crud",
+    "file": "netlify/functions/workflow-crud.ts",
+    "routes": [
+      "/api/workflows/*"
+    ],
+    "methods": [
+      "DELETE",
+      "GET",
+      "POST",
+      "PUT"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "read"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "read"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "delete"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      },
+      {
+        "scope": "environment",
+        "resource": "environment",
+        "action": "write"
+      }
+    ]
+  },
+  {
+    "function": "workspace-billing",
+    "file": "netlify/functions/workspace-billing.ts",
+    "routes": [
+      "/api/workspace-billing/*"
+    ],
+    "methods": [],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "workspace",
+        "resource": "workspace",
+        "action": "read"
+      },
+      {
+        "scope": "workspace",
+        "resource": "workspace",
+        "action": "read"
+      },
+      {
+        "scope": "workspace",
+        "resource": "billing",
+        "action": "billing_view"
+      },
+      {
+        "scope": "workspace",
+        "resource": "workspace",
+        "action": "read"
+      },
+      {
+        "scope": "workspace",
+        "resource": "billing",
+        "action": "billing_customer"
+      },
+      {
+        "scope": "workspace",
+        "resource": "workspace",
+        "action": "read"
+      },
+      {
+        "scope": "workspace",
+        "resource": "billing",
+        "action": "billing_view"
+      },
+      {
+        "scope": "workspace",
+        "resource": "workspace",
+        "action": "read"
+      },
+      {
+        "scope": "workspace",
+        "resource": "billing",
+        "action": "billing_manage"
+      },
+      {
+        "scope": "workspace",
+        "resource": "workspace",
+        "action": "read"
+      },
+      {
+        "scope": "workspace",
+        "resource": "billing",
+        "action": "billing_manage"
+      }
+    ]
+  },
+  {
+    "function": "workspace-billing-webhook",
+    "file": "netlify/functions/workspace-billing-webhook.ts",
+    "routes": [
+      "/api/workspace-billing/webhook"
+    ],
+    "methods": [
+      "POST"
+    ],
+    "auth_required": false,
+    "internal_only_hint": false,
+    "permissions": []
+  },
+  {
+    "function": "workspace-crud",
+    "file": "netlify/functions/workspace-crud.ts",
+    "routes": [
+      "/api/workspaces/*"
+    ],
+    "methods": [
+      "GET",
+      "POST",
+      "PUT"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "workspace",
+        "resource": "workspace",
+        "action": "manage_settings"
+      }
+    ]
+  },
+  {
+    "function": "workspace-invite",
+    "file": "netlify/functions/workspace-invite.ts",
+    "routes": [
+      "/api/invites/*",
+      "/api/workspaces/invite"
+    ],
+    "methods": [
+      "GET",
+      "POST"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": [
+      {
+        "scope": "workspace",
+        "resource": "invite",
+        "action": "write"
+      }
+    ]
+  },
+  {
+    "function": "workspace-users",
+    "file": "netlify/functions/workspace-users.ts",
+    "routes": [
+      "/api/workspaces/users",
+      "/api/workspaces/users/*"
+    ],
+    "methods": [
+      "DELETE",
+      "GET",
+      "POST",
+      "PUT"
+    ],
+    "auth_required": true,
+    "internal_only_hint": false,
+    "permissions": []
+  }
+]

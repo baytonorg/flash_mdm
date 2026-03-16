@@ -1,0 +1,272 @@
+[
+  {
+    "key": "AMAPI_LIVE_BEARER_TOKEN",
+    "sources": [
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": false,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "AMAPI_LIVE_EXPECT_CLEARED_TOP_LEVEL_KEY",
+    "sources": [
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": false,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "AMAPI_LIVE_POLICY_BASELINE_JSON",
+    "sources": [
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": false,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "AMAPI_LIVE_POLICY_NAME",
+    "sources": [
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": false,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "AMAPI_LIVE_POLICY_PATCH_JSON",
+    "sources": [
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": false,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "AMAPI_LIVE_POLICY_TEST_ENABLE",
+    "sources": [
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": false,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "AUDIT_LOG_RETENTION_DAYS",
+    "sources": [
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": false,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "BOOTSTRAP_SECRET",
+    "sources": [
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": false,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "DATABASE_URL",
+    "sources": [
+      ".env.example",
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": true,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "DEPLOY_PRIME_URL",
+    "sources": [
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": false,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "DEVICE_LOCATION_RETENTION_DAYS",
+    "sources": [
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": false,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "DEVICE_STATUS_REPORT_RETENTION_DAYS",
+    "sources": [
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": false,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "ENCRYPTION_MASTER_KEY",
+    "sources": [
+      ".env.example",
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": true,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "INTERNAL_FUNCTION_SECRET",
+    "sources": [
+      ".env.example",
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": true,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "LICENSING_DRY_RUN",
+    "sources": [
+      ".env.example",
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": true,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "LICENSING_ENFORCEMENT_ENABLED",
+    "sources": [
+      ".env.example",
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": true,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "MIGRATION_SECRET",
+    "sources": [
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": false,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "NETLIFY_DATABASE_URL",
+    "sources": [
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": false,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "NETLIFY_DEV",
+    "sources": [
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": false,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "NODE_ENV",
+    "sources": [
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": false,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "PUBSUB_SHARED_SECRET",
+    "sources": [
+      ".env.example",
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": true,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "RESEND_API_KEY",
+    "sources": [
+      ".env.example",
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": true,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "RESEND_FROM_EMAIL",
+    "sources": [
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": false,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "SECRETS_SCAN_OMIT_KEYS",
+    "sources": [
+      "netlify.toml"
+    ],
+    "used_in_code": false,
+    "in_env_example": false,
+    "in_netlify_toml": true
+  },
+  {
+    "key": "SOFT_DELETED_DEVICE_RETENTION_DAYS",
+    "sources": [
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": false,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "STRIPE_SECRET_KEY",
+    "sources": [
+      ".env.example",
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": true,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "STRIPE_WEBHOOK_SECRET",
+    "sources": [
+      ".env.example",
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": true,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "URL",
+    "sources": [
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": false,
+    "in_netlify_toml": false
+  },
+  {
+    "key": "VITE_GOOGLE_MAPS_API_KEY",
+    "sources": [
+      ".env.example"
+    ],
+    "used_in_code": false,
+    "in_env_example": true,
+    "in_netlify_toml": false
+  }
+]
