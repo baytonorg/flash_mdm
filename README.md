@@ -279,7 +279,9 @@ Each file in `netlify/functions/` maps to one API route. On a VPS you need a lig
 npm install hono @hono/node-server dotenv tsx
 ```
 
-Create a `server.ts` in the project root. The pattern is mechanical — each handler exports a default async function that accepts `(Request, Context)` and returns a `Response`:
+Create a `server.ts` in the project root. Each handler exports a default async function that accepts `(Request, Context)` and returns a `Response`.
+
+**Important:** The routes must match the **frontend-facing URLs** defined in the `[[redirects]]` section of `netlify.toml`, not the function filenames. For example, the frontend calls `/api/auth/register` (with slashes), which Netlify rewrites to `/.netlify/functions/auth-register`. Your Hono routes must use the slash-based paths:
 
 ```typescript
 // server.ts
@@ -288,14 +290,21 @@ import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import authLogin from './netlify/functions/auth-login.js';
+import authRegister from './netlify/functions/auth-register.js';
 import deviceList from './netlify/functions/device-list.js';
+import deviceGet from './netlify/functions/device-get.js';
 // ... import each handler (~90 files)
+
+const h = (handler: Function) => (c: any) => handler(c.req.raw, {} as any);
 
 const app = new Hono();
 
-app.post('/api/auth-login', (c) => authLogin(c.req.raw, {} as any));
-app.get('/api/device-list', (c) => deviceList(c.req.raw, {} as any));
-// ... one line per handler
+// Routes must match netlify.toml [[redirects]] "from" paths exactly
+app.all('/api/auth/login', h(authLogin));
+app.all('/api/auth/register', h(authRegister));
+app.all('/api/devices/list', h(deviceList));
+app.all('/api/devices/*', h(deviceGet));        // catch-all after specific routes
+// ... one line per redirect rule
 
 // SPA fallback — serve the built frontend
 app.use('/assets/*', serveStatic({ root: './dist' }));
@@ -304,7 +313,7 @@ app.get('*', serveStatic({ root: './dist', path: '/index.html' }));
 serve({ fetch: app.fetch, port: 3000 });
 ```
 
-There are roughly 90 handler files to map. Use `app.all()` for handlers that support multiple HTTP methods (most CRUD handlers accept GET, POST, PUT, DELETE).
+There are roughly 120 redirect rules in `netlify.toml` to replicate. Order matters — specific routes must come before catch-all wildcards (e.g. `/api/devices/list` before `/api/devices/*`). Use `app.all()` since the handlers themselves check HTTP methods internally.
 
 #### 2. Replace blob storage
 
