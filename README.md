@@ -250,17 +250,46 @@ Everything else — database access, encryption, authentication, RBAC, rate limi
 
 ### What you'd need to change
 
-#### 1. Add an HTTP server and route table
+#### 1. Install prerequisites
 
-Each file in `netlify/functions/` maps to one API route. On a VPS you need a lightweight server to wire them up. Frameworks that natively use the `Request`/`Response` API (like [Hono](https://hono.dev)) require the least glue code:
+On Ubuntu/Debian:
+
+```bash
+# Node.js 20
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
+
+# PostgreSQL
+sudo apt-get install -y postgresql postgresql-contrib
+
+# Caddy (or nginx)
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+sudo apt-get update && sudo apt-get install -y caddy
+
+# Build tools (needed for native npm packages)
+sudo apt-get install -y build-essential
+```
+
+#### 2. Add an HTTP server and route table
+
+Each file in `netlify/functions/` maps to one API route. On a VPS you need a lightweight server to wire them up. Install [Hono](https://hono.dev) and [tsx](https://github.com/privatenumber/tsx) (for running TypeScript directly):
+
+```bash
+npm install hono @hono/node-server dotenv tsx
+```
+
+Create a `server.ts` in the project root. The pattern is mechanical — each handler exports a default async function that accepts `(Request, Context)` and returns a `Response`:
 
 ```typescript
-// server.ts — example with Hono
+// server.ts
+import 'dotenv/config';
 import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
+import { serveStatic } from '@hono/node-server/serve-static';
 import authLogin from './netlify/functions/auth-login.js';
 import deviceList from './netlify/functions/device-list.js';
-// ... import each handler
+// ... import each handler (~90 files)
 
 const app = new Hono();
 
@@ -268,10 +297,14 @@ app.post('/api/auth-login', (c) => authLogin(c.req.raw, {} as any));
 app.get('/api/device-list', (c) => deviceList(c.req.raw, {} as any));
 // ... one line per handler
 
+// SPA fallback — serve the built frontend
+app.use('/assets/*', serveStatic({ root: './dist' }));
+app.get('*', serveStatic({ root: './dist', path: '/index.html' }));
+
 serve({ fetch: app.fetch, port: 3000 });
 ```
 
-There are roughly 90 handler files to map. The pattern is mechanical — each handler exports a default async function that accepts `(Request, Context)` and returns a `Response`.
+There are roughly 90 handler files to map. Use `app.all()` for handlers that support multiple HTTP methods (most CRUD handlers accept GET, POST, PUT, DELETE).
 
 #### 2. Replace blob storage
 
@@ -285,32 +318,41 @@ The interface is small enough to swap in an afternoon.
 
 #### 3. Move security headers to your reverse proxy
 
-The `netlify.toml` file sets Content-Security-Policy, HSTS, X-Frame-Options, and other headers. On a VPS, configure these in **nginx** or **Caddy** instead. For example, in Caddy:
+The `netlify.toml` file sets Content-Security-Policy, HSTS, X-Frame-Options, and other headers. On a VPS, configure these in **nginx** or **Caddy** instead.
+
+With Caddy, API requests are reverse-proxied to the Hono server, and everything else is served as static files from the frontend build. Save this as `/etc/caddy/Caddyfile`:
 
 ```
-your-domain.com {
-    reverse_proxy localhost:3000
+:80 {
+    handle /api/* {
+        reverse_proxy localhost:3000
+    }
+    handle {
+        root * /path/to/flash_mdm/dist
+        try_files {path} /index.html
+        file_server
+    }
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
         X-Frame-Options "DENY"
         X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
         Content-Security-Policy "default-src 'self'; script-src 'self'; frame-ancestors 'none'; object-src 'none';"
-    }
-    handle /website/* {
-        root * /var/www/website/dist
-        file_server
-    }
-    handle {
-        root * /var/www/flash_mdm/dist
-        try_files {path} /index.html
-        file_server
     }
 }
 ```
 
-#### 4. Serve the frontend
+Replace `:80` with your domain name (e.g. `mdm.example.com`) to enable automatic HTTPS via Caddy's built-in Let's Encrypt integration.
 
-Build the SPA with `npm run build` and serve the `dist/` folder from your web server. Configure a catch-all fallback to `index.html` for client-side routing (shown in the Caddy example above).
+> **Note:** Caddy runs as its own user and needs to traverse the path to your `dist/` directory. If you cloned into a home directory, ensure the parent directories are world-executable: `chmod o+x /home/youruser /home/youruser/flash_mdm`
+
+#### 4. Build and serve the frontend
+
+```bash
+npm run build
+```
+
+This creates the `dist/` folder. The Caddy config above serves it with a catch-all fallback to `index.html` for client-side routing. If you're using the Hono `serveStatic` middleware instead of Caddy for static files, the server.ts example above includes that too.
 
 #### 5. Replace scheduled functions with cron
 
@@ -345,15 +387,61 @@ The variables themselves are identical regardless of platform — see the [Envir
 
 ### Database
 
-Flash MDM uses PostgreSQL. On a VPS, install Postgres (or use a managed service like Supabase, Neon, or AWS RDS) and run the migrations:
+Flash MDM uses PostgreSQL. On a VPS, install Postgres (or use a managed service like Supabase, Neon, or AWS RDS), create a database and user, then run the migrations:
 
 ```bash
+# Create database and user
+sudo -u postgres psql -c "CREATE ROLE flashmdm WITH LOGIN PASSWORD 'your-strong-password';"
+sudo -u postgres psql -c "CREATE DATABASE flash_mdm OWNER flashmdm;"
+sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE flash_mdm TO flashmdm;"
+
+# Run migrations
+export DATABASE_URL="postgresql://flashmdm:your-strong-password@localhost:5432/flash_mdm?sslmode=disable"
 for f in netlify/migrations/*.sql; do
   psql "$DATABASE_URL" -f "$f"
 done
 ```
 
+> **Note:** Add `?sslmode=disable` to `DATABASE_URL` when connecting to a local Postgres instance that doesn't have SSL configured. Without it, the Node.js `pg` driver will fail with a `DEPTH_ZERO_SELF_SIGNED_CERT` error.
+
 This is the same process as local development — no Netlify-specific database features are used.
+
+### Running the server
+
+You can run the server directly with:
+
+```bash
+npx tsx server.ts
+```
+
+For production, set it up as a **systemd service** so it starts automatically and restarts on failure:
+
+```ini
+# /etc/systemd/system/flashmdm.service
+[Unit]
+Description=Flash MDM Server
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=youruser
+WorkingDirectory=/path/to/flash_mdm
+ExecStart=/path/to/flash_mdm/node_modules/.bin/tsx server.ts
+Restart=on-failure
+RestartSec=5
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Then enable and start it:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable flashmdm
+sudo systemctl start flashmdm
+```
 
 ## Brand customisation
 
