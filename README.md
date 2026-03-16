@@ -67,10 +67,10 @@ The app will be available at `http://localhost:8888` (full stack) or `http://loc
 
 ### 5. Create your first admin account
 
-1. In your `.env` file, set `BOOTSTRAP_SECRET` to any random string (e.g. `my-temp-secret-123`).
-2. Restart the app.
-3. Register a new account — the first user to register will be granted superadmin access.
-4. **Remove** `BOOTSTRAP_SECRET` from your `.env` afterwards (it's only needed once).
+1. Open the app and register a new account — the first user to register is automatically granted **superadmin** access.
+2. After registering, you can optionally enable **invite-only registration** in superadmin settings to prevent anyone else from self-registering.
+
+> **Optional:** If you want to protect bootstrap registration with a secret (e.g. on a publicly accessible server), set `BOOTSTRAP_SECRET` in your `.env` before registering. The first registration will then require an `x-bootstrap-secret` HTTP header matching that value — which means you'll need to register via `curl` or an API client rather than the web UI. Remove `BOOTSTRAP_SECRET` after the first user is created.
 
 ## Deploying to Netlify
 
