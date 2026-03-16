@@ -232,6 +232,129 @@ npm run dev
 
 If you don't need a landing page, you can safely ignore or delete the `website/` folder — nothing else in the project depends on it.
 
+## Deploy outside of Netlify
+
+Flash MDM is built on Netlify, but the backend code is largely platform-agnostic. Every API handler uses the standard web [Request/Response API](https://developer.mozilla.org/en-US/docs/Web/API/Request) rather than a Netlify- or Express-specific format, which means the core logic runs on any Node.js-compatible runtime with relatively little adaptation.
+
+### What's Netlify-specific
+
+Only three things tie the backend to Netlify:
+
+| Dependency | Where | What it does |
+|-----------|-------|-------------|
+| `@netlify/functions` | Handler type imports | Provides the `Context` type — most handlers ignore it (`_context`) |
+| `@netlify/blobs` | `netlify/functions/_lib/blobs.ts` | Key-value file storage used for report exports |
+| `netlify.toml` | Project root | Routing rules, security headers, and redirect configuration |
+
+Everything else — database access, encryption, authentication, RBAC, rate limiting — uses standard Node.js libraries (`pg`, `crypto`, etc.) with no platform lock-in.
+
+### What you'd need to change
+
+#### 1. Add an HTTP server and route table
+
+Each file in `netlify/functions/` maps to one API route. On a VPS you need a lightweight server to wire them up. Frameworks that natively use the `Request`/`Response` API (like [Hono](https://hono.dev)) require the least glue code:
+
+```typescript
+// server.ts — example with Hono
+import { Hono } from 'hono';
+import { serve } from '@hono/node-server';
+import authLogin from './netlify/functions/auth-login.js';
+import deviceList from './netlify/functions/device-list.js';
+// ... import each handler
+
+const app = new Hono();
+
+app.post('/api/auth-login', (c) => authLogin(c.req.raw, {} as any));
+app.get('/api/device-list', (c) => deviceList(c.req.raw, {} as any));
+// ... one line per handler
+
+serve({ fetch: app.fetch, port: 3000 });
+```
+
+There are roughly 90 handler files to map. The pattern is mechanical — each handler exports a default async function that accepts `(Request, Context)` and returns a `Response`.
+
+#### 2. Replace blob storage
+
+The file `netlify/functions/_lib/blobs.ts` wraps `@netlify/blobs` in five simple functions (`storeBlob`, `getBlob`, `getBlobJson`, `deleteBlob`, `listBlobs`). Replace this single file with an equivalent backed by:
+
+- **Local filesystem** — simplest for a single VPS
+- **S3-compatible storage** — MinIO (self-hosted) or AWS S3
+- **Any key-value store** — Redis, SQLite, etc.
+
+The interface is small enough to swap in an afternoon.
+
+#### 3. Move security headers to your reverse proxy
+
+The `netlify.toml` file sets Content-Security-Policy, HSTS, X-Frame-Options, and other headers. On a VPS, configure these in **nginx** or **Caddy** instead. For example, in Caddy:
+
+```
+your-domain.com {
+    reverse_proxy localhost:3000
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Frame-Options "DENY"
+        X-Content-Type-Options "nosniff"
+        Content-Security-Policy "default-src 'self'; script-src 'self'; frame-ancestors 'none'; object-src 'none';"
+    }
+    handle /website/* {
+        root * /var/www/website/dist
+        file_server
+    }
+    handle {
+        root * /var/www/flash_mdm/dist
+        try_files {path} /index.html
+        file_server
+    }
+}
+```
+
+#### 4. Serve the frontend
+
+Build the SPA with `npm run build` and serve the `dist/` folder from your web server. Configure a catch-all fallback to `index.html` for client-side routing (shown in the Caddy example above).
+
+#### 5. Replace scheduled functions with cron
+
+Five handlers run on a schedule on Netlify. On a VPS, trigger them with **cron** by calling each endpoint or invoking the function directly:
+
+| Handler | Schedule | What it does |
+|---------|----------|-------------|
+| `cleanup-scheduled` | Daily at 03:00 | Purges expired sessions and stale data |
+| `geofence-check-scheduled` | Every 10 minutes | Evaluates geofence boundary triggers |
+| `licensing-reconcile-scheduled` | Every hour | Reconciles licence state with Stripe |
+| `sync-reconcile-scheduled` | Every 15 minutes | Syncs device state with AMAPI |
+| `workflow-cron-scheduled` | Every 5 minutes | Runs pending workflow automations |
+
+Example crontab entry: `*/15 * * * * curl -s http://localhost:3000/api/sync-reconcile-scheduled`
+
+#### 6. Handle background functions
+
+Some handlers (named `*-background.ts`) run as long-lived background tasks on Netlify. On a VPS these can run as normal handlers (there's no execution time limit), or you can push them onto a job queue (e.g. BullMQ with Redis) if you want async processing.
+
+### Environment variables
+
+On Netlify, environment variables are set in **Site Settings > Environment Variables**. On a VPS, you have several options:
+
+| Method | How | Best for |
+|--------|-----|----------|
+| **`.env` file** | Copy `.env.example` to `.env` and fill in values. Load with [dotenv](https://www.npmjs.com/package/dotenv) in your server entry point (`import 'dotenv/config'`) | Local development, simple deployments |
+| **System environment** | `export DATABASE_URL=postgres://...` in your shell profile, or set them in your systemd service file under `Environment=` | Single-server production |
+| **Docker** | Pass with `docker run -e DATABASE_URL=...` or use `env_file` in `docker-compose.yml` | Containerised deployments |
+| **Secret manager** | Store in AWS Secrets Manager, HashiCorp Vault, or similar, and inject at startup | Teams and regulated environments |
+
+The variables themselves are identical regardless of platform — see the [Environment Variables](#environment-variables) table and `.env.example` for the full list. The only variable that behaves differently is `DATABASE_URL`: on Netlify it's provided automatically by Netlify DB, but on a VPS you'll need to point it at your own Postgres instance.
+
+### Database
+
+Flash MDM uses PostgreSQL. On a VPS, install Postgres (or use a managed service like Supabase, Neon, or AWS RDS) and run the migrations:
+
+```bash
+for f in netlify/migrations/*.sql; do
+  psql "$DATABASE_URL" -f "$f"
+done
+```
+
+This is the same process as local development — no Netlify-specific database features are used.
+
 ## Brand customisation
 
 To rename the product or change branding, edit these two files:
