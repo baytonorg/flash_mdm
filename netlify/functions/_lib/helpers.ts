@@ -53,9 +53,13 @@ export function assertSameOriginRequest(request: Request): void {
   const origin = request.headers.get('origin');
   if (!origin) return; // Non-browser clients and same-origin GETs may omit Origin
 
+  // Behind a reverse proxy, request.url reflects the internal address (e.g. localhost:3000),
+  // not the public URL. Prefer process.env.URL when available.
   let requestOrigin: string;
   try {
-    requestOrigin = new URL(request.url).origin;
+    requestOrigin = process.env.URL
+      ? new URL(process.env.URL).origin
+      : new URL(request.url).origin;
   } catch {
     throw new Response(JSON.stringify({ error: 'Invalid request URL' }), {
       status: 400,

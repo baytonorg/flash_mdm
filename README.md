@@ -45,12 +45,10 @@ Now open `.env` in a text editor and fill in the values. Each variable is explai
 
 **On Netlify (recommended):** The database is provided automatically when you enable Netlify DB on your site. Migrations (database setup scripts) run automatically on each deploy.
 
-**For local development:** If you have a local Postgres database, apply the migrations manually:
+**For local development:** If you have a local Postgres database, start the app with `npx netlify dev` and then run migrations via the built-in endpoint:
 
 ```bash
-for f in netlify/migrations/*.sql; do
-  psql "$DATABASE_URL" -f "$f"
-done
+curl http://localhost:8888/api/migrate -H "x-migration-secret: $MIGRATION_SECRET"
 ```
 
 ### 4. Run the app
@@ -95,8 +93,11 @@ Copy `.env.example` to `.env` for local development. On Netlify, set these in **
 | `RESEND_FROM_EMAIL` | No | Custom "from" email address (e.g. `noreply@yourdomain.com`) |
 | `STRIPE_SECRET_KEY` | For billing | Your Stripe secret key (starts with `sk_`) |
 | `STRIPE_WEBHOOK_SECRET` | For billing | Stripe webhook signing secret (starts with `whsec_`) |
+| `MIGRATION_SECRET` | Yes | Secret to authenticate the migration endpoint. Generate one: `node -e "console.log(require('crypto').randomBytes(16).toString('hex'))"` |
+| `INTERNAL_FUNCTION_SECRET` | Yes | Secret for internal function-to-function calls. Generate one the same way as `MIGRATION_SECRET` |
 | `PUBSUB_SHARED_SECRET` | Recommended | A secret string to authenticate incoming device notifications from Google. Pick any strong random string |
 | `VITE_GOOGLE_MAPS_API_KEY` | For geofencing | A Google Maps JavaScript API key (for the map views) |
+| `URL` | For non-Netlify | The public URL of your deployment (e.g. `https://mdm.example.com`). Set automatically on Netlify |
 | `BOOTSTRAP_SECRET` | First run only | Temporary secret to create the first admin account (remove after setup) |
 
 ### Setting up Google Cloud (Android Management API)
@@ -295,7 +296,16 @@ import deviceList from './netlify/functions/device-list.js';
 import deviceGet from './netlify/functions/device-get.js';
 // ... import each handler (~90 files)
 
-const h = (handler: Function) => (c: any) => handler(c.req.raw, {} as any);
+// Wrap each Netlify handler for Hono. Catches Response objects thrown by
+// auth/RBAC guards and returns them as normal responses.
+const h = (handler: Function) => async (c: any) => {
+  try {
+    return await handler(c.req.raw, {} as any);
+  } catch (e) {
+    if (e instanceof Response) return e;
+    throw e;
+  }
+};
 
 const app = new Hono();
 
@@ -315,7 +325,9 @@ serve({ fetch: app.fetch, port: 3000 });
 
 There are roughly 120 redirect rules in `netlify.toml` to replicate. Order matters — specific routes must come before catch-all wildcards (e.g. `/api/devices/list` before `/api/devices/*`). Use `app.all()` since the handlers themselves check HTTP methods internally.
 
-#### 2. Replace blob storage
+> **Important:** The `URL` environment variable must be set to your public URL (e.g. `https://mdm.example.com`). Behind a reverse proxy, the request URL seen by handlers is `http://localhost:3000`, but the browser sends `Origin: https://mdm.example.com`. The origin-check middleware uses `URL` to validate same-origin requests — without it, all mutating requests will fail with a 500.
+
+#### 3. Replace blob storage
 
 The file `netlify/functions/_lib/blobs.ts` wraps `@netlify/blobs` in five simple functions (`storeBlob`, `getBlob`, `getBlobJson`, `deleteBlob`, `listBlobs`). Replace this single file with an equivalent backed by:
 
@@ -325,14 +337,14 @@ The file `netlify/functions/_lib/blobs.ts` wraps `@netlify/blobs` in five simple
 
 The interface is small enough to swap in an afternoon.
 
-#### 3. Move security headers to your reverse proxy
+#### 4. Move security headers to your reverse proxy
 
 The `netlify.toml` file sets Content-Security-Policy, HSTS, X-Frame-Options, and other headers. On a VPS, configure these in **nginx** or **Caddy** instead.
 
 With Caddy, API requests are reverse-proxied to the Hono server, and everything else is served as static files from the frontend build. Save this as `/etc/caddy/Caddyfile`:
 
 ```
-:80 {
+mdm.example.com {
     handle /api/* {
         reverse_proxy localhost:3000
     }
@@ -351,11 +363,11 @@ With Caddy, API requests are reverse-proxied to the Hono server, and everything 
 }
 ```
 
-Replace `:80` with your domain name (e.g. `mdm.example.com`) to enable automatic HTTPS via Caddy's built-in Let's Encrypt integration.
+Replace `mdm.example.com` with your actual domain. Caddy will automatically provision a Let's Encrypt TLS certificate — no extra configuration needed. If you're testing without a domain, use `:80` instead (and set `NODE_ENV=development` in your `.env` so session cookies work over HTTP).
 
 > **Note:** Caddy runs as its own user and needs to traverse the path to your `dist/` directory. If you cloned into a home directory, ensure the parent directories are world-executable: `chmod o+x /home/youruser /home/youruser/flash_mdm`
 
-#### 4. Build and serve the frontend
+#### 5. Build and serve the frontend
 
 ```bash
 npm run build
@@ -363,7 +375,7 @@ npm run build
 
 This creates the `dist/` folder. The Caddy config above serves it with a catch-all fallback to `index.html` for client-side routing. If you're using the Hono `serveStatic` middleware instead of Caddy for static files, the server.ts example above includes that too.
 
-#### 5. Replace scheduled functions with cron
+#### 6. Replace scheduled functions with cron
 
 Five handlers run on a schedule on Netlify. On a VPS, trigger them with **cron** by calling each endpoint or invoking the function directly:
 
@@ -377,7 +389,7 @@ Five handlers run on a schedule on Netlify. On a VPS, trigger them with **cron**
 
 Example crontab entry: `*/15 * * * * curl -s http://localhost:3000/api/sync-reconcile-scheduled`
 
-#### 6. Handle background functions
+#### 7. Handle background functions
 
 Some handlers (named `*-background.ts`) run as long-lived background tasks on Netlify. On a VPS these can run as normal handlers (there's no execution time limit), or you can push them onto a job queue (e.g. BullMQ with Redis) if you want async processing.
 
@@ -392,7 +404,14 @@ On Netlify, environment variables are set in **Site Settings > Environment Varia
 | **Docker** | Pass with `docker run -e DATABASE_URL=...` or use `env_file` in `docker-compose.yml` | Containerised deployments |
 | **Secret manager** | Store in AWS Secrets Manager, HashiCorp Vault, or similar, and inject at startup | Teams and regulated environments |
 
-The variables themselves are identical regardless of platform — see the [Environment Variables](#environment-variables) table and `.env.example` for the full list. The only variable that behaves differently is `DATABASE_URL`: on Netlify it's provided automatically by Netlify DB, but on a VPS you'll need to point it at your own Postgres instance.
+The variables themselves are identical regardless of platform — see the [Environment Variables](#environment-variables) table and `.env.example` for the full list. A few variables behave differently on a VPS:
+
+| Variable | Why it's needed on a VPS |
+|----------|-------------------------|
+| `DATABASE_URL` | On Netlify this is provided automatically by Netlify DB. On a VPS, point it at your own Postgres instance (append `?sslmode=disable` for local Postgres without SSL) |
+| `URL` | The public URL of your deployment (e.g. `https://mdm.example.com`). Used to generate magic-link emails and other absolute URLs. On Netlify this is set automatically |
+| `RESEND_FROM_EMAIL` | The "from" address for outbound emails (e.g. `App Name <noreply@yourdomain.com>`). The domain must be [verified in your Resend account](https://resend.com/docs/dashboard/domains/introduction). If not set, the app falls back to the default in `netlify/functions/_lib/brand.ts`, which uses the Netlify domain and will fail on non-Netlify deployments |
+| `NODE_ENV` | Set to `production` when running behind HTTPS. If you're testing over plain HTTP (no TLS), set to `development` — otherwise session cookies will include the `Secure` flag and browsers will silently reject them over HTTP |
 
 ### Database
 
@@ -404,12 +423,21 @@ sudo -u postgres psql -c "CREATE ROLE flashmdm WITH LOGIN PASSWORD 'your-strong-
 sudo -u postgres psql -c "CREATE DATABASE flash_mdm OWNER flashmdm;"
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE flash_mdm TO flashmdm;"
 
-# Run migrations
+# Set your connection string
 export DATABASE_URL="postgresql://flashmdm:your-strong-password@localhost:5432/flash_mdm?sslmode=disable"
-for f in netlify/migrations/*.sql; do
-  psql "$DATABASE_URL" -f "$f"
-done
 ```
+
+Then start the server and run migrations via the built-in migration endpoint:
+
+```bash
+# Start the server (if not already running)
+npx tsx server.ts &
+
+# Run all migrations (requires MIGRATION_SECRET from your .env)
+curl http://localhost:3000/api/migrate -H "x-migration-secret: $MIGRATION_SECRET"
+```
+
+The migration endpoint is idempotent — it skips migrations that have already been applied, so it's safe to run on every deploy.
 
 > **Note:** Add `?sslmode=disable` to `DATABASE_URL` when connecting to a local Postgres instance that doesn't have SSL configured. Without it, the Node.js `pg` driver will fail with a `DEPTH_ZERO_SELF_SIGNED_CERT` error.
 
