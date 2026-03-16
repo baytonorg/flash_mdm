@@ -152,6 +152,7 @@ flash_mdm/
     functions/                # Backend API endpoints (serverless functions)
       _lib/                   # Shared backend code (auth, database, encryption, etc.)
     migrations/               # Database setup scripts (run in order)
+  website/                    # Optional marketing / landing page (Astro)
 ```
 
 ## Useful commands
@@ -209,6 +210,27 @@ All API endpoints live under `/api/` and are documented with Swagger. Once the a
 | `/api/dashboard/*` | Dashboard statistics |
 | `/api/audit/*` | Activity audit log |
 | `/api/superadmin/*` | Platform administration |
+
+## Website (optional)
+
+The `website/` folder contains a standalone [Astro](https://astro.build) site — a marketing / landing page for Flash MDM. It's entirely optional and isn't required to run the platform.
+
+If you'd like to deploy it:
+
+1. In Netlify, create a **separate site** (don't add it to the main Flash MDM site).
+2. Set the **base directory** to `website/` in the site's build settings.
+3. Netlify will pick up `website/netlify.toml` automatically — build command and publish directory are already configured.
+4. Deploy. That's it.
+
+For local development:
+
+```bash
+cd website
+npm install
+npm run dev
+```
+
+If you don't need a landing page, you can safely ignore or delete the `website/` folder — nothing else in the project depends on it.
 
 ## Brand customisation
 
