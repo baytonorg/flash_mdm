@@ -32,6 +32,10 @@ export default async (request: Request, _context: Context) => {
     return errorResponse('Method not allowed', 405);
   }
 
+  if (!process.env.RESEND_API_KEY) {
+    return errorResponse('Email delivery is not configured. Set the RESEND_API_KEY environment variable.', 503);
+  }
+
   const body = await parseJsonBody<PasswordResetStartBody>(request);
   const email = body.email?.toLowerCase().trim();
   if (!email) return errorResponse('Email is required');

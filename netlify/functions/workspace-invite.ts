@@ -28,6 +28,9 @@ export default async (request: Request, context: Context) => {
 
     // POST /api/workspaces/invite — create and send invite
     if (request.method === 'POST' && segments[0] === 'workspaces' && segments[1] === 'invite') {
+      if (!process.env.RESEND_API_KEY) {
+        return errorResponse('Email delivery is not configured. Set the RESEND_API_KEY environment variable.', 503);
+      }
       const auth = await requireAuth(request);
       const body = await parseJsonBody<{
         workspace_id?: string;

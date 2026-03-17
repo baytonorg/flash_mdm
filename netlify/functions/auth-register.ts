@@ -51,6 +51,10 @@ export default async (request: Request, _context: Context) => {
   const redirectPath = sanitizeRedirectPath(body.redirect_path);
   const isInviteRedirect = !!redirectPath && redirectPath.startsWith('/invite/');
 
+  if (!process.env.RESEND_API_KEY) {
+    return errorResponse('Email delivery is not configured. Set the RESEND_API_KEY environment variable before allowing registrations.', 503);
+  }
+
   if (!email || !first_name || !last_name) {
     return errorResponse('Email, first name, and last name are required');
   }

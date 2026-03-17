@@ -20,6 +20,10 @@ export default async (request: Request, context: Context) => {
   const email = body.email?.toLowerCase().trim();
   const redirectPath = sanitizeRedirectPath(body.redirect_path);
 
+  if (!process.env.RESEND_API_KEY) {
+    return errorResponse('Email delivery is not configured. Set the RESEND_API_KEY environment variable.', 503);
+  }
+
   if (!email) {
     return errorResponse('Email is required');
   }
