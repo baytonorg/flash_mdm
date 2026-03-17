@@ -1,6 +1,6 @@
 # Flash MDM
 
-An Android device management platform built on Google's [Android Management API](https://developers.google.com/android/management) (AMAPI). It lets you manage Android devices — set policies, deploy apps, track locations, run automated workflows, and more — all from a web dashboard.
+An Android device management platform built on Google's [Android Management API](https://developers.google.com/android/management) (AMAPI). It lets you manage Android devices - set policies, deploy apps, track locations, run automated workflows, and more - all from a web dashboard.
 
 Flash MDM runs on [Netlify](https://netlify.com) with a React frontend and a serverless Node.js backend backed by Postgres.
 
@@ -54,7 +54,7 @@ curl http://localhost:8888/api/migrate -H "x-migration-secret: $MIGRATION_SECRET
 ### 4. Run the app
 
 ```bash
-# Full app (frontend + backend) — requires the Netlify CLI
+# Full app (frontend + backend) - requires the Netlify CLI
 npx netlify dev
 
 # Or frontend only (useful for UI work)
@@ -65,10 +65,10 @@ The app will be available at `http://localhost:8888` (full stack) or `http://loc
 
 ### 5. Create your first admin account
 
-1. Open the app and register a new account — the first user to register is automatically granted **superadmin** access.
+1. Open the app and register a new account - the first user to register is automatically granted **superadmin** access.
 2. After registering, you can optionally enable **invite-only registration** in superadmin settings to prevent anyone else from self-registering.
 
-> **Optional:** If you want to protect bootstrap registration with a secret (e.g. on a publicly accessible server), set `BOOTSTRAP_SECRET` in your `.env` before registering. The first registration will then require an `x-bootstrap-secret` HTTP header matching that value — which means you'll need to register via `curl` or an API client rather than the web UI. Remove `BOOTSTRAP_SECRET` after the first user is created.
+> **Optional:** If you want to protect bootstrap registration with a secret (e.g. on a publicly accessible server), set `BOOTSTRAP_SECRET` in your `.env` before registering. The first registration will then require an `x-bootstrap-secret` HTTP header matching that value - which means you'll need to register via `curl` or an API client rather than the web UI. Remove `BOOTSTRAP_SECRET` after the first user is created.
 
 ## Deploying to Netlify
 
@@ -77,7 +77,7 @@ The app will be available at `http://localhost:8888` (full stack) or `http://loc
 3. Netlify will detect `netlify.toml` and configure the build automatically.
 4. Go to **Site Settings > Environment Variables** and add all the variables from your `.env` file.
 5. Enable **Netlify DB** on your site (Site Settings > Database).
-6. Trigger a deploy — the database migrations will run automatically.
+6. Trigger a deploy - the database migrations will run automatically.
 
 For a more detailed walkthrough, see the [step-by-step deployment guide](./docs/deployment/netlify-step-by-step.md).
 
@@ -105,16 +105,16 @@ Copy `.env.example` to `.env` for local development. On Netlify, set these in **
 This is what connects Flash MDM to your Android devices.
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com) and create a new project (or use an existing one).
-2. Enable the **Android Management API** — search for it in the API Library.
-3. **Apply for AMAPI access** — after enabling the API, visit the [Permissible Usage](https://developers.google.com/android/management/permissible-usage) page and submit the quota request form. You'll need to describe your business case (what you're managing and why). Google reviews these manually and will grant enrolment quotas once approved. You can't enrol devices until this is done.
+2. Enable the **Android Management API** - search for it in the API Library.
+3. **Apply for AMAPI access** - after enabling the API, visit the [Permissible Usage](https://developers.google.com/android/management/permissible-usage) page and submit the quota request form. You'll need to describe your business case (what you're managing and why). Google reviews these manually and will grant enrolment quotas once approved. You can't enrol devices until this is done.
 4. Go to **IAM & Admin > Service Accounts** and create a new service account.
 5. Give it the **Android Management User** role.
 6. Create a JSON key for the service account and download it.
 7. In Flash MDM, go to **Settings** and upload the JSON key file. It will be encrypted and stored securely in the database.
 
-> **Note:** The JSON key file is sensitive. Don't place it inside the repository folder — it's listed in `.gitignore` as a safety net, but it's best practice to keep it elsewhere.
+> **Note:** The JSON key file is sensitive. Don't place it inside the repository folder - it's listed in `.gitignore` as a safety net, but it's best practice to keep it elsewhere.
 
-### Setting up Stripe (optional — for billing)
+### Setting up Stripe (optional - for billing)
 
 If you want to charge for device licences:
 
@@ -176,17 +176,17 @@ Flash MDM is organised around **workspaces**, **environments**, and **groups**:
 ```
 Workspace (your organisation)
   └── Environment (a Google Cloud project with AMAPI enabled)
-       └── Group (folders for organising devices — can be nested)
+       └── Group (folders for organising devices - can be nested)
             ├── Devices
             └── Policies (rules applied to devices)
 ```
 
 Key concepts:
 
-- **Policy components** — reusable policy building blocks that can be assigned at any level in the hierarchy and are combined automatically by priority.
-- **Roles** — four permission levels (workspace owner, admin, operator, viewer) that control what each user can do.
-- **Authentication** — password login with optional two-factor authentication (TOTP), plus email magic links.
-- **Encryption** — all sensitive data (credentials, certificates, API keys) is encrypted before being stored in the database.
+- **Policy components** - reusable policy building blocks that can be assigned at any level in the hierarchy and are combined automatically by priority.
+- **Roles** - four permission levels (workspace owner, admin, operator, viewer) that control what each user can do.
+- **Authentication** - password login with optional two-factor authentication (TOTP), plus email magic links.
+- **Encryption** - all sensitive data (credentials, certificates, API keys) is encrypted before being stored in the database.
 
 ## API reference
 
@@ -214,13 +214,13 @@ All API endpoints live under `/api/` and are documented with Swagger. Once the a
 
 ## Website (optional)
 
-The `website/` folder contains a standalone [Astro](https://astro.build) site — a marketing / landing page for Flash MDM. It's entirely optional and isn't required to run the platform.
+The `website/` folder contains a standalone [Astro](https://astro.build) site - a marketing / landing page for Flash MDM. It's entirely optional and isn't required to run the platform.
 
 If you'd like to deploy it:
 
 1. In Netlify, create a **separate site** (don't add it to the main Flash MDM site).
 2. Set the **base directory** to `website/` in the site's build settings.
-3. Netlify will pick up `website/netlify.toml` automatically — build command and publish directory are already configured.
+3. Netlify will pick up `website/netlify.toml` automatically - build command and publish directory are already configured.
 4. Deploy. That's it.
 
 For local development:
@@ -231,7 +231,7 @@ npm install
 npm run dev
 ```
 
-If you don't need a landing page, you can safely ignore or delete the `website/` folder — nothing else in the project depends on it.
+If you don't need a landing page, you can safely ignore or delete the `website/` folder - nothing else in the project depends on it.
 
 ## Deploy outside of Netlify
 
@@ -258,7 +258,7 @@ export FLASH_REPO_URL=https://github.com/baytonorg/flash_mdm.git
 curl -fsSL https://raw.githubusercontent.com/baytonorg/flash_mdm/main/install.sh | bash
 ```
 
-All `FLASH_*` variables are optional — the script will prompt for any that aren't provided. See the full list of supported variables in [`install.sh`](install.sh).
+All `FLASH_*` variables are optional - the script will prompt for any that aren't provided. See the full list of supported variables in [`install.sh`](install.sh).
 
 ### Manual deployment
 
@@ -270,11 +270,11 @@ Only three things tie the backend to Netlify:
 
 | Dependency | Where | What it does |
 |-----------|-------|-------------|
-| `@netlify/functions` | Handler type imports | Provides the `Context` type — most handlers ignore it (`_context`) |
+| `@netlify/functions` | Handler type imports | Provides the `Context` type - most handlers ignore it (`_context`) |
 | `@netlify/blobs` | `netlify/functions/_lib/blobs.ts` | Key-value file storage used for report exports |
 | `netlify.toml` | Project root | Routing rules, security headers, and redirect configuration |
 
-Everything else — database access, encryption, authentication, RBAC, rate limiting — uses standard Node.js libraries (`pg`, `crypto`, etc.) with no platform lock-in.
+Everything else - database access, encryption, authentication, RBAC, rate limiting - uses standard Node.js libraries (`pg`, `crypto`, etc.) with no platform lock-in.
 
 ### What you'd need to change
 
@@ -343,24 +343,24 @@ app.all('/api/devices/list', h(deviceList));
 app.all('/api/devices/*', h(deviceGet));        // catch-all after specific routes
 // ... one line per redirect rule
 
-// SPA fallback — serve the built frontend
+// SPA fallback - serve the built frontend
 app.use('/assets/*', serveStatic({ root: './dist' }));
 app.get('*', serveStatic({ root: './dist', path: '/index.html' }));
 
 serve({ fetch: app.fetch, port: 3000 });
 ```
 
-There are roughly 120 redirect rules in `netlify.toml` to replicate. Order matters — specific routes must come before catch-all wildcards (e.g. `/api/devices/list` before `/api/devices/*`). Use `app.all()` since the handlers themselves check HTTP methods internally.
+There are roughly 120 redirect rules in `netlify.toml` to replicate. Order matters - specific routes must come before catch-all wildcards (e.g. `/api/devices/list` before `/api/devices/*`). Use `app.all()` since the handlers themselves check HTTP methods internally.
 
-> **Important:** The `URL` environment variable must be set to your public URL (e.g. `https://mdm.example.com`). Behind a reverse proxy, the request URL seen by handlers is `http://localhost:3000`, but the browser sends `Origin: https://mdm.example.com`. The origin-check middleware uses `URL` to validate same-origin requests — without it, all mutating requests will fail with a 500.
+> **Important:** The `URL` environment variable must be set to your public URL (e.g. `https://mdm.example.com`). Behind a reverse proxy, the request URL seen by handlers is `http://localhost:3000`, but the browser sends `Origin: https://mdm.example.com`. The origin-check middleware uses `URL` to validate same-origin requests - without it, all mutating requests will fail with a 500.
 
 #### 3. Replace blob storage
 
 The file `netlify/functions/_lib/blobs.ts` wraps `@netlify/blobs` in five simple functions (`storeBlob`, `getBlob`, `getBlobJson`, `deleteBlob`, `listBlobs`). Replace this single file with an equivalent backed by:
 
-- **Local filesystem** — simplest for a single VPS
-- **S3-compatible storage** — MinIO (self-hosted) or AWS S3
-- **Any key-value store** — Redis, SQLite, etc.
+- **Local filesystem** - simplest for a single VPS
+- **S3-compatible storage** - MinIO (self-hosted) or AWS S3
+- **Any key-value store** - Redis, SQLite, etc.
 
 The interface is small enough to swap in an afternoon.
 
@@ -390,7 +390,7 @@ mdm.example.com {
 }
 ```
 
-Replace `mdm.example.com` with your actual domain. Caddy will automatically provision a Let's Encrypt TLS certificate — no extra configuration needed. If you're testing without a domain, use `:80` instead (and set `NODE_ENV=development` in your `.env` so session cookies work over HTTP).
+Replace `mdm.example.com` with your actual domain. Caddy will automatically provision a Let's Encrypt TLS certificate - no extra configuration needed. If you're testing without a domain, use `:80` instead (and set `NODE_ENV=development` in your `.env` so session cookies work over HTTP).
 
 > **Note:** Caddy runs as its own user and needs to traverse the path to your `dist/` directory. If you cloned into a home directory, ensure the parent directories are world-executable: `chmod o+x /home/youruser /home/youruser/flash_mdm`
 
@@ -431,14 +431,14 @@ On Netlify, environment variables are set in **Site Settings > Environment Varia
 | **Docker** | Pass with `docker run -e DATABASE_URL=...` or use `env_file` in `docker-compose.yml` | Containerised deployments |
 | **Secret manager** | Store in AWS Secrets Manager, HashiCorp Vault, or similar, and inject at startup | Teams and regulated environments |
 
-The variables themselves are identical regardless of platform — see the [Environment Variables](#environment-variables) table and `.env.example` for the full list. A few variables behave differently on a VPS:
+The variables themselves are identical regardless of platform - see the [Environment Variables](#environment-variables) table and `.env.example` for the full list. A few variables behave differently on a VPS:
 
 | Variable | Why it's needed on a VPS |
 |----------|-------------------------|
 | `DATABASE_URL` | On Netlify this is provided automatically by Netlify DB. On a VPS, point it at your own Postgres instance (append `?sslmode=disable` for local Postgres without SSL) |
 | `URL` | The public URL of your deployment (e.g. `https://mdm.example.com`). Used to generate magic-link emails and other absolute URLs. On Netlify this is set automatically |
 | `RESEND_FROM_EMAIL` | The "from" address for outbound emails (e.g. `App Name <noreply@yourdomain.com>`). The domain must be [verified in your Resend account](https://resend.com/docs/dashboard/domains/introduction). If not set, the app falls back to the default in `netlify/functions/_lib/brand.ts`, which uses the Netlify domain and will fail on non-Netlify deployments |
-| `NODE_ENV` | Set to `production` when running behind HTTPS. If you're testing over plain HTTP (no TLS), set to `development` — otherwise session cookies will include the `Secure` flag and browsers will silently reject them over HTTP |
+| `NODE_ENV` | Set to `production` when running behind HTTPS. If you're testing over plain HTTP (no TLS), set to `development` - otherwise session cookies will include the `Secure` flag and browsers will silently reject them over HTTP |
 
 ### Database
 
@@ -464,11 +464,11 @@ npx tsx server.ts &
 curl http://localhost:3000/api/migrate -H "x-migration-secret: $MIGRATION_SECRET"
 ```
 
-The migration endpoint is idempotent — it skips migrations that have already been applied, so it's safe to run on every deploy.
+The migration endpoint is idempotent - it skips migrations that have already been applied, so it's safe to run on every deploy.
 
 > **Note:** Add `?sslmode=disable` to `DATABASE_URL` when connecting to a local Postgres instance that doesn't have SSL configured. Without it, the Node.js `pg` driver will fail with a `DEPTH_ZERO_SELF_SIGNED_CERT` error.
 
-This is the same process as local development — no Netlify-specific database features are used.
+This is the same process as local development - no Netlify-specific database features are used.
 
 ### Running the server
 
@@ -520,11 +520,13 @@ All UI text, email templates, and authenticator app labels pull from these files
 
 The [`docs/`](./docs/) directory has detailed documentation on every aspect of the platform:
 
-- [Deployment step-by-step](./docs/deployment/netlify-step-by-step.md) — full walkthrough from zero to running instance
-- [Security overview](./docs/security/overview.md) — authentication, access control, encryption, and hardening
-- [API endpoints reference](./docs/reference/endpoints.md) — full endpoint inventory
-- [Environment variables](./docs/reference/environment-variables.md) — complete env var reference
+- [Deployment step-by-step](./docs/deployment/netlify-step-by-step.md) - full walkthrough from zero to running instance
+- [Security overview](./docs/security/overview.md) - authentication, access control, encryption, and hardening
+- [API endpoints reference](./docs/reference/endpoints.md) - full endpoint inventory
+- [Environment variables](./docs/reference/environment-variables.md) - complete env var reference
 
 ## Licence
 
-This project is licensed under the [GNU General Public License v3.0](./LICENSE). See the `LICENSE` file for the full text.
+This project is licensed under the [GNU Affero General Public License v3.0](./LICENSE) (AGPL-3.0). See the `LICENSE` file for the full text.
+
+If you'd like to use Flash MDM under different terms - for example, to include it in a proprietary product or run a modified version as a hosted service without the AGPL's source-sharing requirements - commercial licences are available. Contact [jason@bayton.org](mailto:jason@bayton.org) for details.
