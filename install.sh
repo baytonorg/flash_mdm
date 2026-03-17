@@ -1,10 +1,35 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
 #  Flash MDM — VPS Installer
-#  Usage:  curl -fsSL https://raw.githubusercontent.com/user/flash_mdm/main/install.sh | bash
-#          or:  bash install.sh
+#
+#  Interactive:
+#    curl -fsSL https://flash.bayton.net/install.sh | bash
+#    bash install.sh
+#
+#  Non-interactive (set env vars before running):
+#    export FLASH_DOMAIN=mdm.example.com
+#    export FLASH_DB_PASS=supersecret
+#    export FLASH_REPO_URL=https://github.com/baytonorg/flash_mdm.git
+#    bash install.sh
+#
+#  All FLASH_* env vars are optional overrides; the script will skip
+#  the corresponding prompt when they are set.
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
+
+# ── TTY handling ─────────────────────────────────────────────────────────────
+# When piped via curl | bash, stdin is the pipe, not the terminal.
+# We reopen /dev/tty so interactive prompts still work.
+HAS_TTY=false
+if [[ -t 0 ]]; then
+  HAS_TTY=true
+elif [[ -r /dev/tty ]] && (echo < /dev/tty) 2>/dev/null; then
+  # stdin is piped (e.g. curl | bash) but a TTY is available
+  exec </dev/tty
+  HAS_TTY=true
+fi
+# If no TTY is available (e.g. non-interactive SSH), prompts will use
+# defaults or FLASH_* env var overrides. Missing required values will fail.
 
 # ── Colours & helpers ────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -15,8 +40,25 @@ success() { printf "${GREEN}✔${NC} %s\n" "$*"; }
 warn()    { printf "${YELLOW}⚠${NC} %s\n" "$*"; }
 fail()    { printf "${RED}✖ %s${NC}\n" "$*" >&2; exit 1; }
 
+# ask PROMPT DEFAULT VARNAME — skips prompt if FLASH_VARNAME is set
 ask() {
-  local prompt="$1" default="${2:-}" var="$3" value
+  local prompt="$1" default="${2:-}" var="$3" value env_key="FLASH_$3"
+  # Check for env var override
+  if [[ -n "${!env_key:-}" ]]; then
+    eval "$var=\${!env_key}"
+    info "$prompt → ${!env_key} (from $env_key)"
+    return
+  fi
+  # No TTY and no env override — use default or fail
+  if [[ "$HAS_TTY" != "true" ]]; then
+    if [[ -n "$default" ]]; then
+      eval "$var=\$default"
+      info "$prompt → $default (default, no TTY)"
+      return
+    else
+      fail "No TTY available and $env_key not set. Cannot prompt for: $prompt"
+    fi
+  fi
   if [[ -n "$default" ]]; then
     printf "${BOLD}%s${NC} [%s]: " "$prompt" "$default"
   else
@@ -28,8 +70,17 @@ ask() {
   eval "$var=\$value"
 }
 
+# ask_secret PROMPT VARNAME — skips prompt if FLASH_VARNAME is set
 ask_secret() {
-  local prompt="$1" var="$2" value
+  local prompt="$1" var="$2" value env_key="FLASH_$2"
+  if [[ -n "${!env_key:-}" ]]; then
+    eval "$var=\${!env_key}"
+    info "$prompt → ••••••• (from $env_key)"
+    return
+  fi
+  if [[ "$HAS_TTY" != "true" ]]; then
+    fail "No TTY available and $env_key not set. Cannot prompt for: $prompt"
+  fi
   printf "${BOLD}%s${NC}: " "$prompt"
   read -rs value
   echo
@@ -39,13 +90,29 @@ ask_secret() {
 
 ask_yn() {
   local prompt="$1" default="${2:-y}" answer
+  # If no TTY, skip optional prompts (default to "n")
+  # Users can enable features via FLASH_* env vars instead
+  if [[ "$HAS_TTY" != "true" ]]; then
+    answer="n"
+    return 1
+  fi
   printf "${BOLD}%s${NC} [%s]: " "$prompt" "$default"
   read -r answer
   answer="${answer:-$default}"
   [[ "$answer" =~ ^[Yy] ]]
 }
 
-gen_hex() { node -e "console.log(require('crypto').randomBytes($1).toString('hex'))"; }
+gen_hex() {
+  # Use node if available, otherwise openssl, otherwise /dev/urandom
+  if command -v node >/dev/null 2>&1; then
+    node -e "console.log(require('crypto').randomBytes($1).toString('hex'))"
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex "$1"
+  else
+    head -c "$1" /dev/urandom | xxd -p | tr -d '\n'
+    echo
+  fi
+}
 
 # ── Banner ───────────────────────────────────────────────────────────────────
 clear 2>/dev/null || true
@@ -98,42 +165,52 @@ echo
 printf "${BOLD}${CYAN}── Email (Resend) ─────────────────────────────────────────${NC}\n"
 echo
 
-RESEND_API_KEY=""
-if ask_yn "Configure Resend for transactional email?" "y"; then
+RESEND_API_KEY="${FLASH_RESEND_API_KEY:-}"
+RESEND_FROM="${FLASH_RESEND_FROM:-}"
+if [[ -n "$RESEND_API_KEY" ]]; then
+  info "Resend API key → ••••••• (from FLASH_RESEND_API_KEY)"
+  [[ -n "$RESEND_FROM" ]] && info "Resend from → $RESEND_FROM (from FLASH_RESEND_FROM)"
+elif ask_yn "Configure Resend for transactional email?" "y"; then
   ask_secret "Resend API key" RESEND_API_KEY
   ask "Resend from address (e.g. Flash MDM <noreply@example.com>)" "" RESEND_FROM
-else
-  RESEND_FROM=""
 fi
 
 echo
 printf "${BOLD}${CYAN}── Optional services ──────────────────────────────────────${NC}\n"
 echo
 
-STRIPE_SECRET=""
-STRIPE_WEBHOOK=""
-if ask_yn "Configure Stripe for billing?" "n"; then
+STRIPE_SECRET="${FLASH_STRIPE_SECRET:-}"
+STRIPE_WEBHOOK="${FLASH_STRIPE_WEBHOOK:-}"
+if [[ -n "$STRIPE_SECRET" ]]; then
+  info "Stripe → configured (from env)"
+elif ask_yn "Configure Stripe for billing?" "n"; then
   ask_secret "Stripe secret key" STRIPE_SECRET
   ask_secret "Stripe webhook secret" STRIPE_WEBHOOK
 fi
 
-GOOGLE_MAPS_KEY=""
-if ask_yn "Configure Google Maps for geofencing?" "n"; then
+GOOGLE_MAPS_KEY="${FLASH_GOOGLE_MAPS_KEY:-}"
+if [[ -n "$GOOGLE_MAPS_KEY" ]]; then
+  info "Google Maps → configured (from env)"
+elif ask_yn "Configure Google Maps for geofencing?" "n"; then
   ask_secret "Google Maps API key" GOOGLE_MAPS_KEY
 fi
 
-BOOTSTRAP_SECRET=""
-if ask_yn "Set a bootstrap secret for first-user registration?" "y"; then
+BOOTSTRAP_SECRET="${FLASH_BOOTSTRAP_SECRET:-}"
+if [[ -n "$BOOTSTRAP_SECRET" ]]; then
+  info "Bootstrap secret → set (from env)"
+elif ask_yn "Set a bootstrap secret for first-user registration?" "y"; then
   ask_secret "Bootstrap secret (required to register the first admin)" BOOTSTRAP_SECRET
 fi
 
-PUBSUB_SECRET=""
-if ask_yn "Configure Google Pub/Sub shared secret?" "n"; then
+PUBSUB_SECRET="${FLASH_PUBSUB_SECRET:-}"
+if [[ -n "$PUBSUB_SECRET" ]]; then
+  info "Pub/Sub secret → set (from env)"
+elif ask_yn "Configure Google Pub/Sub shared secret?" "n"; then
   ask_secret "Pub/Sub shared secret" PUBSUB_SECRET
 fi
 
 REPO_URL=""
-ask "Git repository URL" "https://github.com/user/flash_mdm.git" REPO_URL
+ask "Git repository URL" "https://github.com/baytonorg/flash_mdm.git" REPO_URL
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo
@@ -148,9 +225,11 @@ info "Google Maps:     ${GOOGLE_MAPS_KEY:+configured}${GOOGLE_MAPS_KEY:-skipped}
 info "Bootstrap:       ${BOOTSTRAP_SECRET:+set}${BOOTSTRAP_SECRET:-not set (first user auto-promoted)}"
 echo
 
-if ! ask_yn "Proceed with installation?" "y"; then
-  info "Aborted."
-  exit 0
+if [[ "$HAS_TTY" == "true" ]]; then
+  if ! ask_yn "Proceed with installation?" "y"; then
+    info "Aborted."
+    exit 0
+  fi
 fi
 
 # ── 1. Install system dependencies ──────────────────────────────────────────
@@ -159,10 +238,10 @@ printf "${BOLD}${CYAN}── Step 1/9: System dependencies ───────
 echo
 
 info "Updating package index..."
-sudo apt-get update -qq
+sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
 
 info "Installing build essentials, git, curl..."
-sudo apt-get install -y -qq git curl build-essential > /dev/null
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git curl build-essential > /dev/null
 
 # Node.js 20
 if command -v node >/dev/null && [[ "$(node -v)" == v20.* || "$(node -v)" == v22.* ]]; then
@@ -170,7 +249,7 @@ if command -v node >/dev/null && [[ "$(node -v)" == v20.* || "$(node -v)" == v22
 else
   info "Installing Node.js 20..."
   curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - > /dev/null 2>&1
-  sudo apt-get install -y -qq nodejs > /dev/null
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nodejs > /dev/null
   success "Node.js $(node -v) installed"
 fi
 
@@ -179,7 +258,7 @@ if command -v psql >/dev/null; then
   success "PostgreSQL already installed"
 else
   info "Installing PostgreSQL..."
-  sudo apt-get install -y -qq postgresql postgresql-contrib > /dev/null
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql postgresql-contrib > /dev/null
   sudo systemctl enable --now postgresql
   success "PostgreSQL installed and started"
 fi
@@ -189,11 +268,11 @@ if command -v caddy >/dev/null; then
   success "Caddy already installed"
 else
   info "Installing Caddy..."
-  sudo apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https > /dev/null 2>&1
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https > /dev/null 2>&1
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg 2>/dev/null
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list > /dev/null
-  sudo apt-get update -qq
-  sudo apt-get install -y -qq caddy > /dev/null
+  sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq caddy > /dev/null
   success "Caddy installed"
 fi
 
@@ -278,16 +357,16 @@ echo
 
 cd "$INSTALL_DIR"
 
-info "Installing npm dependencies..."
-npm ci --omit=dev 2>/dev/null || npm install 2>/dev/null
+info "Installing npm dependencies (this may take a minute)..."
+npm ci 2>&1 | tail -1 || npm install 2>&1 | tail -1
 success "npm packages installed"
 
 info "Installing VPS runtime dependencies..."
-npm install --save hono @hono/node-server dotenv tsx 2>/dev/null
+npm install --save hono @hono/node-server dotenv tsx 2>&1 | tail -1
 success "VPS runtime packages installed"
 
-info "Building frontend..."
-npm run build
+info "Building frontend (this may take a minute)..."
+npm run build 2>&1 | tail -5
 success "Frontend built to dist/"
 
 # ── 6. Generate server.ts ────────────────────────────────────────────────────
@@ -716,7 +795,7 @@ CRON_BLOCK="# Flash MDM scheduled functions
 
 # Add cron jobs if not already present
 if ! crontab -l 2>/dev/null | grep -q "Flash MDM scheduled"; then
-  (crontab -l 2>/dev/null; echo ""; echo "$CRON_BLOCK") | crontab -
+  (crontab -l 2>/dev/null || true; echo ""; echo "$CRON_BLOCK") | crontab - 2>/dev/null
   success "Cron jobs installed"
 else
   success "Cron jobs already present"
@@ -753,5 +832,5 @@ else
 fi
 
 echo
-info "Documentation: https://github.com/user/flash_mdm#deploy-outside-of-netlify-vps--bare-metal"
+info "Documentation: https://github.com/baytonorg/flash_mdm#deploy-outside-of-netlify-vps--bare-metal"
 echo

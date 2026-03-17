@@ -237,6 +237,33 @@ If you don't need a landing page, you can safely ignore or delete the `website/`
 
 Flash MDM is built on Netlify, but the backend code is largely platform-agnostic. Every API handler uses the standard web [Request/Response API](https://developer.mozilla.org/en-US/docs/Web/API/Request) rather than a Netlify- or Express-specific format, which means the core logic runs on any Node.js-compatible runtime with relatively little adaptation.
 
+### Automated installer (recommended)
+
+The fastest way to deploy on a VPS is the one-line installer. It installs all system dependencies, sets up PostgreSQL, builds the frontend, configures Caddy with auto-TLS, creates a systemd service, runs migrations, and sets up cron jobs:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/baytonorg/flash_mdm/main/install.sh | bash
+```
+
+The script will interactively ask for your domain, database credentials, and optional service keys (Resend, Stripe, etc.).
+
+For non-interactive/scripted deployments, set environment variables before running:
+
+```bash
+export FLASH_DOMAIN=mdm.example.com
+export FLASH_DB_PASS=your-db-password
+export FLASH_RESEND_API_KEY=re_xxxxx
+export FLASH_RESEND_FROM="Flash MDM <noreply@example.com>"
+export FLASH_REPO_URL=https://github.com/baytonorg/flash_mdm.git
+curl -fsSL https://raw.githubusercontent.com/baytonorg/flash_mdm/main/install.sh | bash
+```
+
+All `FLASH_*` variables are optional — the script will prompt for any that aren't provided. See the full list of supported variables in [`install.sh`](install.sh).
+
+### Manual deployment
+
+If you prefer to deploy manually, or want to understand what the installer does, read on.
+
 ### What's Netlify-specific
 
 Only three things tie the backend to Netlify:
