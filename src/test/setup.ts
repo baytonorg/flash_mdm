@@ -1,5 +1,10 @@
 import '@testing-library/jest-dom/vitest'
 
+// Backend handlers guard email-dependent flows (register, magic-link, invite,
+// password-reset) with an early check for RESEND_API_KEY.  Set a dummy value
+// so the guards pass in tests — the actual sendEmail is mocked by each test.
+process.env.RESEND_API_KEY ??= 'test_re_dummy_key';
+
 if (
   typeof globalThis.localStorage === 'undefined' ||
   typeof globalThis.localStorage.getItem !== 'function'
