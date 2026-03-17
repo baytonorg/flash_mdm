@@ -221,9 +221,9 @@ echo
 info "Domain:          $DOMAIN"
 info "Install dir:     $INSTALL_DIR"
 info "Database:        $DB_NAME (user: $DB_USER)"
-info "Resend:          ${RESEND_API_KEY:+configured}${RESEND_API_KEY:-skipped}"
-info "Stripe:          ${STRIPE_SECRET:+configured}${STRIPE_SECRET:-skipped}"
-info "Google Maps:     ${GOOGLE_MAPS_KEY:+configured}${GOOGLE_MAPS_KEY:-skipped}"
+info "Resend:          $(if [[ -n "$RESEND_API_KEY" ]]; then echo configured; else echo skipped; fi)"
+info "Stripe:          $(if [[ -n "$STRIPE_SECRET" ]]; then echo configured; else echo skipped; fi)"
+info "Google Maps:     $(if [[ -n "$GOOGLE_MAPS_KEY" ]]; then echo configured; else echo skipped; fi)"
 info "Bootstrap:       ${BOOTSTRAP_SECRET:+set}${BOOTSTRAP_SECRET:-not set (first user auto-promoted)}"
 echo
 
@@ -788,6 +788,13 @@ success "Caddy started (TLS will auto-provision for $DOMAIN)"
 
 # ── Cron jobs for scheduled functions ────────────────────────────────────────
 info "Setting up cron jobs for scheduled functions..."
+
+# Ensure cron is installed (Debian minimal doesn't include it)
+if ! command -v crontab >/dev/null 2>&1; then
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq cron > /dev/null
+  sudo systemctl enable --now cron 2>/dev/null || true
+fi
+
 CRON_BLOCK="# Flash MDM scheduled functions
 */5 * * * * curl -sf http://localhost:3000/api/workflow-cron-scheduled > /dev/null 2>&1
 */10 * * * * curl -sf http://localhost:3000/api/geofence-check-scheduled > /dev/null 2>&1
@@ -797,7 +804,7 @@ CRON_BLOCK="# Flash MDM scheduled functions
 
 # Add cron jobs if not already present
 if ! crontab -l 2>/dev/null | grep -q "Flash MDM scheduled"; then
-  (crontab -l 2>/dev/null || true; echo ""; echo "$CRON_BLOCK") | crontab - 2>/dev/null
+  (crontab -l 2>/dev/null || true; echo ""; echo "$CRON_BLOCK") | crontab -
   success "Cron jobs installed"
 else
   success "Cron jobs already present"
