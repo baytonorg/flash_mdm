@@ -170,7 +170,9 @@ RESEND_FROM="${FLASH_RESEND_FROM:-}"
 if [[ -n "$RESEND_API_KEY" ]]; then
   info "Resend API key → ••••••• (from FLASH_RESEND_API_KEY)"
   [[ -n "$RESEND_FROM" ]] && info "Resend from → $RESEND_FROM (from FLASH_RESEND_FROM)"
-elif ask_yn "Configure Resend for transactional email?" "y"; then
+else
+  info "Flash MDM requires Resend (https://resend.com) for transactional email."
+  info "Registration, magic links, and invitations all depend on email delivery."
   ask_secret "Resend API key" RESEND_API_KEY
   ask "Resend from address (e.g. Flash MDM <noreply@example.com>)" "" RESEND_FROM
 fi

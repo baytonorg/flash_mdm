@@ -245,7 +245,7 @@ The fastest way to deploy on a VPS is the one-line installer. It installs all sy
 curl -fsSL https://raw.githubusercontent.com/baytonorg/flash_mdm/main/install.sh | bash
 ```
 
-The script will interactively ask for your domain, database credentials, and optional service keys (Resend, Stripe, etc.).
+The script will interactively ask for your domain, database credentials, Resend API key (required for email delivery), and optional service keys (Stripe, Google Maps, etc.).
 
 For non-interactive/scripted deployments, set environment variables before running:
 
