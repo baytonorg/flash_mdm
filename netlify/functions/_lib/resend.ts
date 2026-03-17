@@ -12,7 +12,10 @@ interface SendEmailOptions {
 
 export async function sendEmail(options: SendEmailOptions): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) throw new Error('RESEND_API_KEY environment variable is required');
+  if (!apiKey) {
+    console.warn(`[resend] RESEND_API_KEY not configured — skipping email to ${options.to}: "${options.subject}"`);
+    return;
+  }
 
   const from = options.from ?? process.env.RESEND_FROM_EMAIL ?? BRAND.emailFrom;
 
