@@ -126,7 +126,7 @@ describe('device-command AMAPI error passthrough', () => {
 
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toEqual({
-      error: 'Failed to issue command. Please try again or contact support.',
+      error: 'AMAPI rejected the LOCK command: INVALID_ARGUMENT. Review function logs for details.',
     });
     expect(mockRequireEnvironmentResourcePermission).toHaveBeenCalledWith(
       expect.anything(),
@@ -148,7 +148,7 @@ describe('device-command AMAPI error passthrough', () => {
 
     expect(res.status).toBe(503);
     await expect(res.json()).resolves.toEqual({
-      error: 'Failed to issue command. Please try again or contact support.',
+      error: 'AMAPI rejected the LOCK command: Service Unavailable. Review function logs for details.',
     });
   });
 

@@ -182,7 +182,11 @@ export default async (request: Request, context: Context) => {
       const message = err instanceof Error ? err.message : 'Unknown error';
       console.error(`Failed to issue command ${command}:`, message);
       const status = getAmapiErrorHttpStatus(err) ?? 502;
-      return errorResponse('Failed to issue command. Please try again or contact support.', Number.isFinite(status) ? status : 502);
+      const amapiDetail = /^AMAPI error \(\d+\):\s*(.+)$/i.exec(message)?.[1];
+      const clientMessage = amapiDetail
+        ? `AMAPI rejected the ${command} command: ${amapiDetail}. Review function logs for details.`
+        : 'Failed to issue command. Review function logs for details.';
+      return errorResponse(clientMessage, Number.isFinite(status) ? status : 502);
     }
   } catch (err) {
     if (err instanceof Response) return err;

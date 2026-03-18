@@ -171,9 +171,8 @@ export function buildAmapiCommandPayload(
       if (wipeReason) wipeParams.wipeReason = wipeReason;
       if (wipeDataFlags?.length) wipeParams.wipeDataFlags = wipeDataFlags;
 
-      if (Object.keys(wipeParams).length) {
-        commandBody.wipeParams = wipeParams;
-      }
+      // AMAPI requires wipeParams to be present even when empty
+      commandBody.wipeParams = wipeParams;
       return commandBody;
     }
 

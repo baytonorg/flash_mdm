@@ -128,8 +128,15 @@ describe('buildAmapiCommandPayload', () => {
   });
 
   it('builds WIPE command and filters invalid wipeDataFlags', () => {
+    // Invalid flags are filtered out; wipeParams is always present (AMAPI requires it)
     expect(buildAmapiCommandPayload('WIPE', { wipeDataFlags: ['WIPE_RESET_PROTECTION_DATA'] }))
-      .toEqual({ type: 'WIPE' });
+      .toEqual({ type: 'WIPE', wipeParams: {} });
+  });
+
+  it('builds WIPE command with empty params when none provided', () => {
+    // AMAPI requires wipeParams even when empty
+    expect(buildAmapiCommandPayload('WIPE', {}))
+      .toEqual({ type: 'WIPE', wipeParams: {} });
   });
 
   it('passes through unknown commands only when allowUnknown is enabled', () => {
