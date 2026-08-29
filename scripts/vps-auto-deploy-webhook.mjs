@@ -56,8 +56,14 @@ export function isEntrypoint(argvPath = process.argv[1]) {
 }
 
 function defaultStartDeployment(sha) {
-  execFile('/usr/bin/sudo', ['/usr/local/libexec/flashmdm-auto-deploy-launcher', sha], (error) => {
-    if (error) console.error('Could not start Flash MDM deployment:', error.message);
+  return new Promise((resolve, reject) => {
+    execFile('/usr/bin/sudo', ['/usr/local/libexec/flashmdm-auto-deploy-launcher', sha], (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
   });
 }
 
@@ -81,7 +87,7 @@ export function createWebhookServer(config, { startDeployment = defaultStartDepl
         chunks.push(chunk);
       }
     });
-    request.on('end', () => {
+    request.on('end', async () => {
       if (tooLarge) {
         response.writeHead(413).end();
         return;
@@ -110,8 +116,13 @@ export function createWebhookServer(config, { startDeployment = defaultStartDepl
         response.writeHead(400).end();
         return;
       }
-      startDeployment(payload.after.toLowerCase());
-      response.writeHead(202).end();
+      try {
+        await startDeployment(payload.after.toLowerCase());
+        response.writeHead(202).end();
+      } catch (error) {
+        console.error('Could not start Flash MDM deployment:', error instanceof Error ? error.message : String(error));
+        response.writeHead(503).end();
+      }
     });
   });
   server.requestTimeout = 15_000;

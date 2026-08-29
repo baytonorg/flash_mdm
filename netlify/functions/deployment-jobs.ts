@@ -198,76 +198,9 @@ export default async function handler(request: Request, _context: Context) {
 
   // ── POST /api/deployments?action=rollback — Rollback to pre-deploy ─
   if (method === 'POST' && params.get('action') === 'rollback') {
-    const body = await parseJsonBody<{ job_id: string }>(request);
-    if (!body.job_id) return errorResponse('job_id is required');
-
-    const job = await queryOne<DeploymentJobRow>(
-      'SELECT * FROM deployment_jobs WHERE id = $1',
-      [body.job_id]
-    );
-    if (!job) return errorResponse('Deployment job not found', 404);
-    await requireEnvironmentPermission(auth, job.environment_id, 'write');
-
-    if (job.status !== 'completed' && job.status !== 'failed') {
-      return errorResponse(`Cannot rollback job with status: ${job.status}. Must be completed or failed.`, 400);
-    }
-
-    const snapshot = typeof job.rollback_snapshot === 'string'
-      ? JSON.parse(job.rollback_snapshot)
-      : job.rollback_snapshot;
-
-    if (!snapshot || Object.keys(snapshot).length === 0) {
-      return errorResponse('No rollback snapshot available for this job', 400);
-    }
-
-    // Mark the job as rolling back
-    await execute(
-      `UPDATE deployment_jobs SET status = 'rolling_back', updated_at = now() WHERE id = $1`,
-      [body.job_id]
-    );
-
-    // Re-sync derivatives from the base policy (effectively regenerates from current state)
-    const amapiContext = await getPolicyAmapiContext(job.environment_id);
-    if (!amapiContext) {
-      return errorResponse('Environment is not bound to an enterprise', 400);
-    }
-
-    const policy = await queryOne<{ config: Record<string, unknown> | string | null }>(
-      'SELECT config FROM policies WHERE id = $1',
-      [job.policy_id]
-    );
-
-    try {
-      await syncPolicyDerivativesForPolicy({
-        policyId: job.policy_id,
-        environmentId: job.environment_id,
-        baseConfig: policy?.config ?? {},
-        amapiContext,
-      });
-
-      await execute(
-        `UPDATE deployment_jobs SET status = 'rolled_back', updated_at = now() WHERE id = $1`,
-        [body.job_id]
-      );
-
-      await logAudit({
-        environment_id: job.environment_id,
-        user_id: auth.user.id,
-        action: 'deployment.rollback',
-        resource_type: 'deployment_job',
-        resource_id: body.job_id,
-        details: { policy_id: job.policy_id },
-        ip_address: getClientIp(request),
-      });
-
-      return jsonResponse({ status: 'rolled_back' });
-    } catch (err) {
-      await execute(
-        `UPDATE deployment_jobs SET status = 'rollback_failed', updated_at = now() WHERE id = $1`,
-        [body.job_id]
-      );
-      return errorResponse(`Rollback failed: ${err instanceof Error ? err.message : String(err)}`, 500);
-    }
+    // Current snapshots only contain derivative identity and hashes; they cannot
+    // restore a previous AMAPI policy payload. Reject rather than falsely claim a rollback.
+    return errorResponse('Deployment rollback is unavailable until versioned policy restoration is implemented', 409);
   }
 
     return errorResponse('Method not allowed', 405);

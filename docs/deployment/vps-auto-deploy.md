@@ -29,7 +29,7 @@ export FLASH_REPO_SSH_KNOWN_HOSTS_B64="$(base64 -w0 github-known_hosts)"
 
 For SSH repositories, the known-hosts file is mandatory. Obtain the host key from an authoritative provider channel and review it before provisioning it; do not use `StrictHostKeyChecking=accept-new` for unattended deployment.
 
-The listener verifies GitHub's `X-Hub-Signature-256` HMAC, accepts only `push` events for the configured repository and branch, and starts a SHA-addressed one-shot release service. The release service verifies that the signed `after` SHA is still the configured remote branch head before calling the installer. It exits without a restart when that SHA is already active. Use the default loopback bind for single-container Caddy. When Caddy is in a separate LXD container, bind only to the Flash container's private address so that Caddy can reach it.
+The listener verifies GitHub's `X-Hub-Signature-256` HMAC, accepts only `push` events for the configured repository and branch, and starts a SHA-addressed one-shot release service. It returns `202` only after the privileged launcher has successfully handed the release to systemd; a failed handoff returns `503` so GitHub retries the delivery. The release service verifies that the signed `after` SHA is still the configured remote branch head before calling the installer. It exits without a restart when that SHA is already active. Use the default loopback bind for single-container Caddy. When Caddy is in a separate LXD container, bind only to the Flash container's private address so that Caddy can reach it.
 
 For an external Caddy deployment, add this route before the catch-all Flash proxy in the public Caddy configuration and reload it as the Caddy administrator:
 
