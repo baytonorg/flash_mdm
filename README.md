@@ -522,6 +522,8 @@ All UI text, email templates, and authenticator app labels pull from these files
 
 ## Documentation
 
+GitHub Actions validates pull requests and pushes to `main` with `npm run lint`, `npm run build`, and `npm test`. The lint command blocks configured errors; existing legacy warnings are retained as a visible cleanup backlog.
+
 The [`docs/`](./docs/) directory has detailed documentation on every aspect of the platform:
 
 - [Deployment step-by-step](./docs/deployment/netlify-step-by-step.md) - full walkthrough from zero to running instance

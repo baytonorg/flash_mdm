@@ -161,6 +161,20 @@ describe('deployment-jobs handler POST dispatching', () => {
     mockAssignPolicyToDeviceWithDerivative.mockResolvedValue(undefined as never);
   });
 
+  it('rejects rollback until snapshots can restore a prior AMAPI state', async () => {
+    const response = await handler(
+      new Request('http://localhost/.netlify/functions/deployment-jobs?action=rollback', { method: 'POST' }),
+      {} as never
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Deployment rollback is unavailable until versioned policy restoration is implemented',
+    });
+    expect(mockQueryOne).not.toHaveBeenCalled();
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
   it('awaits background trigger dispatch and does not start processing inline before returning', async () => {
     mockQueryOne
       .mockResolvedValueOnce({ id: 'policy_1', config: {} } as never) // policy lookup

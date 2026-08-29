@@ -5,7 +5,6 @@ import {
   CheckCircle2,
   XCircle,
   Ban,
-  RotateCcw,
   ChevronDown,
   ChevronUp,
   AlertTriangle,
@@ -15,8 +14,6 @@ import {
   useDeploymentJob,
   useCreateDeployment,
   useCancelDeployment,
-  useRollbackDeployment,
-  type DeploymentJob,
 } from '@/api/queries/deployments';
 
 interface DeploymentProgressProps {
@@ -35,8 +32,8 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: typeof
   completed: { label: 'Completed', color: 'text-green-600', icon: CheckCircle2 },
   failed: { label: 'Failed', color: 'text-red-600', icon: XCircle },
   cancelled: { label: 'Cancelled', color: 'text-gray-500', icon: Ban },
-  rolling_back: { label: 'Rolling back', color: 'text-amber-600', icon: RotateCcw },
-  rolled_back: { label: 'Rolled back', color: 'text-amber-600', icon: RotateCcw },
+  rolling_back: { label: 'Rolling back', color: 'text-amber-600', icon: Loader2 },
+  rolled_back: { label: 'Rolled back', color: 'text-amber-600', icon: CheckCircle2 },
   rollback_failed: { label: 'Rollback failed', color: 'text-red-600', icon: XCircle },
 };
 
@@ -52,7 +49,6 @@ export default function DeploymentProgress({
   const { data: jobData } = useDeploymentJob(activeJobId);
   const createMutation = useCreateDeployment();
   const cancelMutation = useCancelDeployment();
-  const rollbackMutation = useRollbackDeployment();
 
   const job = jobData?.job;
 
@@ -74,11 +70,6 @@ export default function DeploymentProgress({
   const handleCancel = () => {
     if (!activeJobId) return;
     cancelMutation.mutate({ job_id: activeJobId });
-  };
-
-  const handleRollback = () => {
-    if (!activeJobId) return;
-    rollbackMutation.mutate({ job_id: activeJobId });
   };
 
   // No active job — show deploy button
@@ -149,16 +140,6 @@ export default function DeploymentProgress({
             >
               <Ban className="h-3 w-3" />
               Cancel
-            </button>
-          )}
-          {isDone && (
-            <button
-              onClick={handleRollback}
-              disabled={rollbackMutation.isPending}
-              className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50"
-            >
-              <RotateCcw className={clsx('h-3 w-3', rollbackMutation.isPending && 'animate-spin')} />
-              Rollback
             </button>
           )}
         </div>

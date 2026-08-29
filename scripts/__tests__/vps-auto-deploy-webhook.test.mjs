@@ -28,6 +28,16 @@ async function withWebhook(run) {
   }
 }
 
+async function withFailingWebhook(run) {
+  const server = createWebhookServer(config, { startDeployment: async () => { throw new Error('systemd unavailable'); } });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    await run(server.address().port);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+}
+
 function post(port, body, headers = {}) {
   return new Promise((resolve, reject) => {
     const req = request({
@@ -65,6 +75,16 @@ test('starts only the exact signed pushed SHA', async () => withWebhook(async (p
     'x-github-event': 'push', 'x-hub-signature-256': sign(body),
   }), 202);
   assert.deepEqual(deployments, [sha]);
+}));
+
+test('returns a retryable error when deployment handoff fails', async () => withFailingWebhook(async (port) => {
+  const sha = 'b'.repeat(40);
+  const body = Buffer.from(JSON.stringify({
+    ref: 'refs/heads/main', after: sha, repository: { full_name: 'baytonorg/flash_mdm' },
+  }));
+  assert.equal(await post(port, body, {
+    'x-github-event': 'push', 'x-hub-signature-256': sign(body),
+  }), 503);
 }));
 
 test('requires a valid after SHA and bounds request bodies', async () => withWebhook(async (port, deployments) => {

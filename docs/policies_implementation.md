@@ -492,12 +492,10 @@ An admin can cancel a running deployment. Between batches, the job checks its st
 
 ### Rollback
 
-After a deployment completes (or fails), an admin can trigger a rollback:
-1. Status transitions to `rolling_back`
-2. The system re-syncs all derivatives from the current base config
-3. Status transitions to `rolled_back`
-
-Note: Rollback regenerates derivatives from the current policy state, which effectively reverses the deployment if the policy hasn't been modified since.
+Deployment rollback is currently unavailable. A deployment records derivative
+identifiers and hashes, not the complete pre-deployment AMAPI payloads needed to
+restore a previous state. The API rejects rollback requests rather than reporting
+a successful rollback without restoring anything.
 
 ### Error handling
 

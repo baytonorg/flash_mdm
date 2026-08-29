@@ -62,9 +62,9 @@
 - The background processor checks for cancellation before each batch.
 
 ### Rollback (POST /?action=rollback)
-- Only `completed` or `failed` jobs can be rolled back.
-- Sets status to `rolling_back`, then re-syncs all derivatives from the current base policy config.
-- On success, sets status to `rolled_back`; on failure, sets `rollback_failed`.
+- Currently returns `409 Conflict`. Historical snapshots do not contain enough
+  data to restore a prior AMAPI policy state, so rollback remains unavailable
+  until versioned policy restoration is implemented.
 
 ### processDeploymentJob (exported)
 1. Sets job status to `running`.
