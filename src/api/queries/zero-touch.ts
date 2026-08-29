@@ -44,9 +44,10 @@ export function useZeroTouchOptions(environmentId?: string) {
 
 export function useZeroTouchIframeToken() {
   return useMutation({
-    mutationFn: (environment_id: string) =>
+    mutationFn: ({ environment_id, token_id }: { environment_id: string; token_id: string }) =>
       apiClient.post<{ iframe_token: string; iframe_url: string }>('/api/environments/zero-touch', {
         environment_id,
+        token_id,
         action: 'create_iframe_token',
       }),
   });

@@ -186,7 +186,7 @@ Key concepts:
 - **Policy components** - reusable policy building blocks that can be assigned at any level in the hierarchy and are combined automatically by priority.
 - **Roles** - four permission levels (workspace owner, admin, operator, viewer) that control what each user can do.
 - **Authentication** - password login with optional two-factor authentication (TOTP), plus email magic links.
-- **Encryption** - all sensitive data (credentials, certificates, API keys) is encrypted before being stored in the database.
+- **Encryption** - credentials, API keys, and other secrets are encrypted before database storage. Public Wi-Fi CA certificates are stored in the configured blob store and never include private keys.
 
 ## API reference
 
@@ -203,7 +203,7 @@ All API endpoints live under `/api/` and are documented with Swagger. Once the a
 | `/api/components/*` | Policy component management |
 | `/api/apps/*` | App search, details, and deployment |
 | `/api/enrollment/*` | Enrolment token and QR code generation |
-| `/api/certificates/*` | Certificate management |
+| `/api/certificates/*` | Wi-Fi trusted CA library used by network policy generation |
 | `/api/workflows/*` | Automated workflow configuration |
 | `/api/geofences/*` | Geofence boundaries and triggers |
 | `/api/licenses/*` | Licence status and assignment |
@@ -246,6 +246,8 @@ curl -fsSL https://raw.githubusercontent.com/baytonorg/flash_mdm/main/install.sh
 ```
 
 The script will interactively ask for your domain, database credentials, Resend API key (required for email delivery), and optional service keys (Stripe, Google Maps, etc.).
+
+On an existing installation, the installer preserves `.env` and its encryption/database credentials, validates database connectivity, builds a versioned candidate release, and switches the `current` symlink only after the candidate is ready. Failed activation restores the previous code release. Database migrations are forward-only, so production upgrades should still be preceded by a database and blob backup.
 
 For non-interactive/scripted deployments, set environment variables before running:
 

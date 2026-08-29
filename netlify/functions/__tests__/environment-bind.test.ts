@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../_lib/db.js', () => ({
+  query: vi.fn(),
   queryOne: vi.fn(),
   execute: vi.fn(),
+  transaction: vi.fn(),
 }));
 
 vi.mock('../_lib/auth.js', () => ({
@@ -22,19 +24,31 @@ vi.mock('../_lib/audit.js', () => ({
   logAudit: vi.fn(),
 }));
 
-import { queryOne, execute } from '../_lib/db.js';
+vi.mock('../_lib/policy-derivatives.js', () => ({
+  syncPolicyDerivativesForPolicy: vi.fn(),
+}));
+
+vi.mock('../signin-config.js', () => ({
+  syncSigninDetailsToAmapi: vi.fn(),
+}));
+
+import { query, queryOne, execute, transaction } from '../_lib/db.js';
 import { requireAuth } from '../_lib/auth.js';
 import { requireEnvironmentResourcePermission } from '../_lib/rbac.js';
 import { amapiCall } from '../_lib/amapi.js';
 import { logAudit } from '../_lib/audit.js';
+import { syncPolicyDerivativesForPolicy } from '../_lib/policy-derivatives.js';
 import handler from '../environment-bind.ts';
 
+const mockQuery = vi.mocked(query);
 const mockQueryOne = vi.mocked(queryOne);
 const mockExecute = vi.mocked(execute);
+const mockTransaction = vi.mocked(transaction);
 const mockRequireAuth = vi.mocked(requireAuth);
 const mockRequireEnvironmentResourcePermission = vi.mocked(requireEnvironmentResourcePermission);
 const mockAmapiCall = vi.mocked(amapiCall);
 const mockLogAudit = vi.mocked(logAudit);
+const mockSyncPolicyDerivatives = vi.mocked(syncPolicyDerivativesForPolicy);
 
 function makeRequest(body: Record<string, unknown>): Request {
   return new Request('http://localhost/.netlify/functions/environment-bind', {
@@ -46,20 +60,109 @@ function makeRequest(body: Record<string, unknown>): Request {
 
 beforeEach(() => {
   mockQueryOne.mockReset();
+  mockQuery.mockReset();
   mockExecute.mockReset();
+  mockTransaction.mockReset();
   mockRequireAuth.mockReset();
   mockRequireEnvironmentResourcePermission.mockReset();
   mockAmapiCall.mockReset();
   mockLogAudit.mockReset();
+  mockSyncPolicyDerivatives.mockReset();
 
   mockRequireAuth.mockResolvedValue({
     sessionId: 'sess_1',
     user: { id: 'user_1', is_superadmin: false },
   } as never);
   mockRequireEnvironmentResourcePermission.mockResolvedValue('admin' as never);
+  mockQuery.mockResolvedValue([] as never);
+  mockSyncPolicyDerivatives.mockResolvedValue({} as never);
 });
 
 describe('environment-bind finalize enterprise create payload', () => {
+  it('preserves connectivity siblings when policies regenerate after binding', async () => {
+    mockQueryOne
+      .mockResolvedValueOnce({
+        id: 'env_1',
+        workspace_id: 'ws_1',
+        name: 'QA Env',
+        enterprise_name: null,
+        signup_url_name: 'signupUrls/123',
+        pubsub_topic: null,
+        workspace_default_pubsub_topic: null,
+      } as never)
+      .mockResolvedValueOnce({ gcp_project_id: 'project_1' } as never);
+    mockQuery.mockResolvedValueOnce([{
+      id: 'policy_1',
+      config: {
+        applications: [{ packageName: 'com.example.app' }],
+        openNetworkConfiguration: { Type: 'UnencryptedConfiguration' },
+        cameraDisabled: true,
+        deviceConnectivityManagement: {
+          tetheringSettings: 'DISALLOW_ALL_TETHERING',
+          wifiSsidPolicy: {
+            wifiSsidPolicyType: 'WIFI_SSID_DENYLIST',
+            wifiSsids: [{ wifiSsid: 'Guest' }],
+          },
+          apnPolicy: { apnSettings: [{ displayName: 'Old', apn: 'old.example' }] },
+        },
+      },
+    }] as never);
+    mockAmapiCall.mockResolvedValue({
+      name: 'enterprises/e1',
+      enterpriseDisplayName: 'QA Env',
+    } as never);
+
+    const response = await handler(
+      makeRequest({ environment_id: 'env_1', enterprise_token: 'token_123' }),
+      {} as never
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockSyncPolicyDerivatives).toHaveBeenCalledWith(expect.objectContaining({
+      baseConfig: {
+        cameraDisabled: true,
+        deviceConnectivityManagement: {
+          tetheringSettings: 'DISALLOW_ALL_TETHERING',
+          wifiSsidPolicy: {
+            wifiSsidPolicyType: 'WIFI_SSID_DENYLIST',
+            wifiSsids: [{ wifiSsid: 'Guest' }],
+          },
+        },
+      },
+    }));
+  });
+
+  it('unbinds atomically while preserving policy assignment intent for rebind', async () => {
+    const clientQuery = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 });
+    mockTransaction.mockImplementation(async (fn) => fn({ query: clientQuery } as never));
+    mockQueryOne.mockResolvedValueOnce({
+      id: 'env_1',
+      workspace_id: 'ws_1',
+      name: 'QA Env',
+      enterprise_name: 'enterprises/old',
+      signup_url_name: null,
+      pubsub_topic: null,
+      workspace_default_pubsub_topic: null,
+    } as never);
+
+    const res = await handler(
+      makeRequest({ environment_id: 'env_1', action: 'unbind' }),
+      {} as never
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockTransaction).toHaveBeenCalledOnce();
+    const sql = clientQuery.mock.calls.map(([statement]) => String(statement)).join('\n');
+    expect(sql).toContain('DELETE FROM policy_derivatives');
+    expect(sql).toContain('last_policy_sync_name = NULL');
+    expect(sql).not.toContain('DELETE FROM policy_assignments');
+    expect(sql).not.toContain('policy_id = NULL');
+    expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'environment.enterprise_unbound',
+      details: { previous_enterprise: 'enterprises/old' },
+    }));
+  });
+
   it('returns a generic 500 error body for unexpected internal failures', async () => {
     mockRequireAuth.mockRejectedValueOnce(new Error('db: duplicate key value violates unique constraint'));
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});

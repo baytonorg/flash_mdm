@@ -46,6 +46,8 @@ const WORKSPACE_ID = '123e4567-e89b-12d3-a456-426614174000';
 
 beforeEach(() => {
   process.env.STRIPE_SECRET_KEY = 'sk_test';
+  delete process.env.URL;
+  delete process.env.FLASH_RUNTIME;
 
   mockRequireAuth.mockReset();
   mockQueryOne.mockReset();
@@ -93,6 +95,8 @@ describe('stripe-portal', () => {
   });
 
   it('creates a portal URL for workspace customer', async () => {
+    process.env.URL = 'https://flash.example.test';
+    process.env.FLASH_RUNTIME = 'vps';
     mockRequireAuth.mockResolvedValue({
       authType: 'session',
       user: { id: 'user_1', workspace_id: WORKSPACE_ID },
@@ -131,7 +135,7 @@ describe('stripe-portal', () => {
       'billing',
       'billing_manage'
     );
-    expect(mockCreatePortalSession).toHaveBeenCalledWith('cus_123', 'http://localhost/licenses');
+    expect(mockCreatePortalSession).toHaveBeenCalledWith('cus_123', 'https://flash.example.test/licenses');
     expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({
       action: 'stripe.portal.created',
     }));

@@ -2,7 +2,7 @@ import type { Context } from '@netlify/functions';
 import { requireAuth } from './_lib/auth.js';
 import { query, queryOne } from './_lib/db.js';
 import { requireWorkspaceResourcePermission } from './_lib/rbac.js';
-import { jsonResponse, errorResponse, parseJsonBody, isValidUuid } from './_lib/helpers.js';
+import { jsonResponse, errorResponse, parseJsonBody, isValidUuid, getPublicOrigin } from './_lib/helpers.js';
 import { getStripe, createCheckoutSession } from './_lib/stripe.js';
 import { logAudit } from './_lib/audit.js';
 import { getWorkspaceAvailableGiftSeats, getWorkspaceLicensingSettings } from './_lib/licensing.js';
@@ -110,7 +110,7 @@ export default async function handler(request: Request, _context: Context) {
     }
 
     // Create checkout session
-    const origin = new URL(request.url).origin;
+    const origin = getPublicOrigin(request);
     const returnUrl = `${origin}/licenses`;
     const rawSeatCount = Number(body.seat_count);
     const normalizedSeatCount = Number.isFinite(rawSeatCount) ? rawSeatCount : 1;

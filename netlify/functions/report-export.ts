@@ -2,7 +2,7 @@ import type { Context } from '@netlify/functions';
 import { requireAuth } from './_lib/auth.js';
 import { requireEnvironmentAccessScopeForPermission } from './_lib/rbac.js';
 import { query, queryOne } from './_lib/db.js';
-import { jsonResponse, errorResponse, parseJsonBody, getClientIp } from './_lib/helpers.js';
+import { jsonResponse, errorResponse, parseJsonBody, getClientIp, getPublicOrigin } from './_lib/helpers.js';
 import { storeBlob } from './_lib/blobs.js';
 import { logAudit } from './_lib/audit.js';
 import { v4 as uuidv4 } from 'uuid';
@@ -84,7 +84,7 @@ export default async function handler(request: Request, _context: Context) {
     });
 
     // Return download URL (served from a download endpoint)
-    const origin = new URL(request.url).origin;
+    const origin = getPublicOrigin(request);
     const exportUrl = `${origin}/api/reports/download?id=${exportId}&workspace_id=${env.workspace_id}&format=${body.format}`;
 
     return jsonResponse({

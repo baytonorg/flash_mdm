@@ -4,7 +4,7 @@ import { requireAuth } from './_lib/auth.js';
 import { requireEnvironmentPermission, requireWorkspaceResourcePermission } from './_lib/rbac.js';
 import { encrypt } from './_lib/crypto.js';
 import { createWorkspaceStripeClient, getWorkspaceStripeCredentials } from './_lib/workspace-stripe.js';
-import { getSearchParams, jsonResponse, errorResponse, parseJsonBody, isValidUuid, getClientIp } from './_lib/helpers.js';
+import { getSearchParams, jsonResponse, errorResponse, parseJsonBody, isValidUuid, getClientIp, getPublicOrigin } from './_lib/helpers.js';
 import { logAudit } from './_lib/audit.js';
 import { getWorkspaceLicensingSettings } from './_lib/licensing.js';
 
@@ -299,7 +299,7 @@ function resolveCheckoutReturnUrl(
   providedUrl: string | undefined,
   fallbackState: 'success' | 'cancelled'
 ): string {
-  const requestOrigin = new URL(request.url).origin;
+  const requestOrigin = getPublicOrigin(request);
   const fallback = `${requestOrigin}/licenses?workspace_billing=${fallbackState}`;
   const trimmed = providedUrl?.trim();
   if (!trimmed) return fallback;
@@ -1035,7 +1035,7 @@ async function handlePostPortal(request: Request, _route: ParsedRoute, auth: Aut
     return errorResponse('Workspace Stripe billing is not configured', 400);
   }
   const stripe = createWorkspaceStripeClient(creds.secretKey);
-  const returnUrl = `${new URL(request.url).origin}/licenses`;
+  const returnUrl = `${getPublicOrigin(request)}/licenses`;
   const portal = await stripe.billingPortal.sessions.create({
     customer: customer.stripe_customer_id,
     return_url: returnUrl,

@@ -24,6 +24,7 @@ type AppRow = {
   default_auto_update_mode: string;
   default_managed_config: Record<string, unknown> | string | null;
   icon_url: string | null;
+  distribution_channel: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -66,6 +67,7 @@ type LegacyDeploymentRow = {
 type AmapiAppDetailLite = {
   title?: string;
   iconUrl?: string;
+  distributionChannel?: string;
 };
 
 type AmapiAppMetadataContext = {
@@ -127,6 +129,7 @@ async function fetchAmapiAppMetadata(
     return {
       title: app?.title?.trim() || null,
       icon_url: app?.iconUrl?.trim() || null,
+      distribution_channel: app?.distributionChannel || null,
     };
   } catch (err) {
     const status = getAmapiErrorHttpStatus(err);
@@ -149,8 +152,13 @@ async function hydrateAppMetadataCache(
   const merged = mergeHydratedAppMetadata(app, meta);
   const nextDisplayName = merged.display_name;
   const nextIconUrl = merged.icon_url;
+  const nextDistributionChannel = merged.distribution_channel;
 
-  if (nextDisplayName === app.display_name && nextIconUrl === app.icon_url) {
+  if (
+    nextDisplayName === app.display_name &&
+    nextIconUrl === app.icon_url &&
+    nextDistributionChannel === app.distribution_channel
+  ) {
     return app;
   }
 
@@ -158,12 +166,13 @@ async function hydrateAppMetadataCache(
     `UPDATE apps
      SET display_name = $1,
          icon_url = $2,
+         distribution_channel = $3,
          updated_at = now()
-     WHERE id = $3
+     WHERE id = $4
      RETURNING *`,
-    [nextDisplayName, nextIconUrl, app.id]
+    [nextDisplayName, nextIconUrl, nextDistributionChannel, app.id]
   );
-  return updated ?? { ...app, display_name: nextDisplayName, icon_url: nextIconUrl };
+  return updated ?? { ...app, display_name: nextDisplayName, icon_url: nextIconUrl, distribution_channel: nextDistributionChannel };
 }
 
 // ── Router ────────────────────────────────────────────────────────────────────
@@ -283,6 +292,7 @@ async function handleCatalog(request: Request) {
       default_auto_update_mode: a.default_auto_update_mode,
       default_managed_config: parseJson(a.default_managed_config),
       icon_url: a.icon_url,
+      distribution_channel: a.distribution_channel,
       scope_configs_count: a.scope_configs_count,
       created_at: a.created_at,
       updated_at: a.updated_at,

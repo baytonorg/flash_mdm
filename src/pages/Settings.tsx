@@ -1507,7 +1507,7 @@ function SigninEnrollmentConfig({ environmentId }: { environmentId: string }) {
   );
 }
 
-function ZeroTouchConfig({ environmentId }: { environmentId: string }) {
+export function ZeroTouchConfig({ environmentId }: { environmentId: string }) {
   const [mode, setMode] = useState<'existing' | 'create'>('existing');
   const [selectedTokenId, setSelectedTokenId] = useState('');
   const [groupId, setGroupId] = useState('');
@@ -1524,8 +1524,15 @@ function ZeroTouchConfig({ environmentId }: { environmentId: string }) {
 
   const handleOpenIframe = async () => {
     setFeedback({});
+    if (!selectedTokenId) {
+      setFeedback({ error: 'Select or create an enrollment token first.' });
+      return;
+    }
     try {
-      const result = await iframeTokenMutation.mutateAsync(environmentId);
+      const result = await iframeTokenMutation.mutateAsync({
+        environment_id: environmentId,
+        token_id: selectedTokenId,
+      });
       const parsedUrl = new URL(result.iframe_url);
       if (parsedUrl.protocol !== 'https:') throw new Error('Invalid zero-touch iframe URL');
       setIframeUrl(parsedUrl.toString());
@@ -1589,8 +1596,11 @@ function ZeroTouchConfig({ environmentId }: { environmentId: string }) {
 
           {mode === 'existing' && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Enrollment token</label>
+              <label htmlFor="zero-touch-enrollment-token" className="block text-sm font-medium text-gray-700 mb-1">
+                Enrollment token
+              </label>
               <select
+                id="zero-touch-enrollment-token"
                 value={selectedTokenId}
                 onChange={(e) => setSelectedTokenId(e.target.value)}
                 className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:ring-1 focus:ring-accent outline-none"
@@ -1664,7 +1674,7 @@ function ZeroTouchConfig({ environmentId }: { environmentId: string }) {
             <button
               type="button"
               onClick={handleOpenIframe}
-              disabled={iframeTokenMutation.isPending}
+              disabled={iframeTokenMutation.isPending || !selectedTokenId}
               className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
             >
               <ExternalLink className="h-3.5 w-3.5" />
@@ -2433,7 +2443,7 @@ function ApiTab() {
 
 // ---- Profile Tab ----
 
-function ProfileTab() {
+export function ProfileTab() {
   const { user, fetchSession } = useAuthStore();
   const totpEnabled = user?.totp_enabled ?? false;
 
@@ -2470,6 +2480,7 @@ function ProfileTab() {
         last_name: lastName.trim(),
         email: email.trim(),
       });
+      await fetchSession();
       setProfileFeedback({ success: 'Profile updated.' });
     } catch (err) {
       setProfileFeedback({ error: err instanceof Error ? err.message : 'Failed to update profile' });

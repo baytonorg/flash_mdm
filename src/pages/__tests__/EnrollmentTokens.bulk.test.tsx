@@ -7,6 +7,9 @@ const mocks = vi.hoisted(() => ({
   clearSelection: vi.fn(),
   selectionPayload: { ids: ['t1', 't2'] },
   invalidateQueries: vi.fn(),
+  deleteMutate: vi.fn(),
+  deleteReset: vi.fn(),
+  deleteError: null as Error | null,
 }));
 
 vi.mock('@tanstack/react-query', async () => {
@@ -25,8 +28,25 @@ vi.mock('@/stores/context', () => ({
 
 vi.mock('@/api/queries/enrollment', () => ({
   enrollmentKeys: { all: ['enrollment'] },
-  useEnrollmentTokens: () => ({ data: [], isLoading: false }),
-  useDeleteEnrollmentToken: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useEnrollmentTokens: () => ({
+    data: [{
+      id: 't1',
+      name: 'Test token',
+      qr_data: null,
+      token_value: null,
+      allow_personal_usage: false,
+      expiry: null,
+      created_at: '2026-01-01T00:00:00Z',
+    }],
+    isLoading: false,
+  }),
+  useDeleteEnrollmentToken: () => ({
+    mutate: mocks.deleteMutate,
+    reset: mocks.deleteReset,
+    isPending: false,
+    isError: mocks.deleteError !== null,
+    error: mocks.deleteError,
+  }),
   useSyncEnrollmentTokens: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
   useBulkEnrollmentAction: () => ({ mutate: mocks.bulkMutate, isPending: false }),
 }));
@@ -53,6 +73,7 @@ import EnrollmentTokens from '@/pages/EnrollmentTokens';
 describe('Enrollment tokens bulk actions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.deleteError = null;
   });
 
   it('submits bulk token delete payload after confirmation', async () => {
@@ -83,5 +104,21 @@ describe('Enrollment tokens bulk actions', () => {
     await user.click(screen.getByRole('button', { name: 'Delete' }));
 
     expect(mocks.bulkMutate).not.toHaveBeenCalled();
+  });
+
+  it('shows a token deletion error and clears mutation state when dismissed', async () => {
+    const user = userEvent.setup();
+    const view = render(<EnrollmentTokens />);
+
+    await user.click(screen.getByTitle('Delete token'));
+    expect(mocks.deleteReset).toHaveBeenCalledOnce();
+
+    mocks.deleteError = new Error('Token delete failed');
+    view.rerender(<EnrollmentTokens />);
+    expect(screen.getByRole('alert')).toHaveTextContent('Token delete failed');
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(mocks.deleteReset).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });

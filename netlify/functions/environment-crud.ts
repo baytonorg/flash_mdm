@@ -206,62 +206,64 @@ export default async (request: Request, _context: Context) => {
 
     const id = crypto.randomUUID();
     const rootGroupId = crypto.randomUUID();
-
-    await execute(
-      'INSERT INTO environments (id, workspace_id, name) VALUES ($1, $2, $3)',
-      [id, body.workspace_id, body.name]
-    );
-
-    // Customer onboarding setup flow grants owner on their first environment.
     const environmentRole = onboardingSetupCreate ? 'owner' : 'admin';
-    await execute(
-      'INSERT INTO environment_memberships (environment_id, user_id, role) VALUES ($1, $2, $3)',
-      [id, auth.user.id, environmentRole]
-    );
-
-    // Do not elevate workspace_memberships.role during onboarding setup.
-    // Customer setup users remain scoped and receive ownership only on their environment/group grants.
-
-    // Create root group named after the environment
-    await execute(
-      'INSERT INTO groups (id, environment_id, name, description) VALUES ($1, $2, $3, $4)',
-      [rootGroupId, id, body.name, 'Root group']
-    );
-    await execute(
-      'INSERT INTO group_closures (ancestor_id, descendant_id, depth) VALUES ($1, $2, $3)',
-      [rootGroupId, rootGroupId, 0]
-    );
-    await execute(
-      `INSERT INTO group_memberships (group_id, user_id, role, permissions)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (group_id, user_id) DO UPDATE SET role = EXCLUDED.role, permissions = EXCLUDED.permissions`,
-      [
-        rootGroupId,
-        auth.user.id,
-        environmentRole,
-        JSON.stringify({ devices: true, policies: true, apps: true, reports: true, settings: true, users: true }),
-      ]
-    );
-
-    // Create a default safety-net policy and assign it at the environment level.
-    // This ensures devices always have a basic all-defaults policy even if they
-    // lose all group membership.
     const defaultPolicyId = crypto.randomUUID();
-    await execute(
-      `INSERT INTO policies (id, environment_id, name, description, deployment_scenario, config, status)
-       VALUES ($1, $2, 'Default', 'Default safety-net policy applied when no group policy is assigned', 'fm', '{}', 'draft')`,
-      [defaultPolicyId, id]
-    );
-    await execute(
-      `INSERT INTO policy_versions (id, policy_id, version, config, changed_by)
-       VALUES ($1, $2, 1, '{}', $3)`,
-      [crypto.randomUUID(), defaultPolicyId, auth.user.id]
-    );
-    await execute(
-      `INSERT INTO policy_assignments (id, policy_id, scope_type, scope_id)
-       VALUES ($1, $2, 'environment', $3)`,
-      [crypto.randomUUID(), defaultPolicyId, id]
-    );
+
+    await transaction(async (client) => {
+      await client.query(
+        'INSERT INTO environments (id, workspace_id, name) VALUES ($1, $2, $3)',
+        [id, body.workspace_id, body.name]
+      );
+
+      // Customer onboarding setup flow grants owner on their first environment.
+      await client.query(
+        'INSERT INTO environment_memberships (environment_id, user_id, role) VALUES ($1, $2, $3)',
+        [id, auth.user.id, environmentRole]
+      );
+
+      // Do not elevate workspace_memberships.role during onboarding setup.
+      // Customer setup users remain scoped and receive ownership only on their environment/group grants.
+
+      // Create root group named after the environment.
+      await client.query(
+        'INSERT INTO groups (id, environment_id, name, description) VALUES ($1, $2, $3, $4)',
+        [rootGroupId, id, body.name, 'Root group']
+      );
+      await client.query(
+        'INSERT INTO group_closures (ancestor_id, descendant_id, depth) VALUES ($1, $2, $3)',
+        [rootGroupId, rootGroupId, 0]
+      );
+      await client.query(
+        `INSERT INTO group_memberships (group_id, user_id, role, permissions)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (group_id, user_id) DO UPDATE SET role = EXCLUDED.role, permissions = EXCLUDED.permissions`,
+        [
+          rootGroupId,
+          auth.user.id,
+          environmentRole,
+          JSON.stringify({ devices: true, policies: true, apps: true, reports: true, settings: true, users: true }),
+        ]
+      );
+
+      // Create a default safety-net policy and assign it at the environment level.
+      // This ensures devices always have a basic all-defaults policy even if they
+      // lose all group membership.
+      await client.query(
+        `INSERT INTO policies (id, environment_id, name, description, deployment_scenario, config, status)
+         VALUES ($1, $2, 'Default', 'Default safety-net policy applied when no group policy is assigned', 'fm', '{}', 'draft')`,
+        [defaultPolicyId, id]
+      );
+      await client.query(
+        `INSERT INTO policy_versions (id, policy_id, version, config, changed_by)
+         VALUES ($1, $2, 1, '{}', $3)`,
+        [crypto.randomUUID(), defaultPolicyId, auth.user.id]
+      );
+      await client.query(
+        `INSERT INTO policy_assignments (id, policy_id, scope_type, scope_id)
+         VALUES ($1, $2, 'environment', $3)`,
+        [crypto.randomUUID(), defaultPolicyId, id]
+      );
+    });
 
     await logAudit({
       workspace_id: body.workspace_id,

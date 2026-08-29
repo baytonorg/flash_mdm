@@ -10,6 +10,8 @@
     "prebuild": "npm run monaco:copy",
     "build": "tsc -b && vite build",
     "openapi:generate": "node scripts/generate-openapi.mjs",
+    "amapi-schema:update": "node scripts/generate-amapi-policy-schema.mjs",
+    "amapi-schema:check": "node scripts/generate-amapi-policy-schema.mjs --check",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
@@ -17,6 +19,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@hono/node-server": "^2.1.1",
     "@hookform/resolvers": "^5.2.2",
     "@monaco-editor/react": "^4.7.0",
     "@netlify/blobs": "^10.7.0",
@@ -27,7 +30,9 @@
     "chart.js": "^4.5.1",
     "clsx": "^2.1.1",
     "dompurify": "^3.3.1",
+    "dotenv": "^17.4.2",
     "google-auth-library": "^10.5.0",
+    "hono": "^4.13.5",
     "lucide-react": "^0.575.0",
     "pg": "^8.18.0",
     "qrcode": "^1.5.4",
@@ -36,6 +41,7 @@
     "react-dom": "^19.2.0",
     "react-hook-form": "^7.71.2",
     "react-router": "^7.13.0",
+    "tsx": "^4.23.12",
     "zod": "^4.3.6",
     "zustand": "^5.0.11"
   },

@@ -6,6 +6,7 @@ import { amapiCall, getAmapiErrorHttpStatus } from './_lib/amapi.js';
 import { logAudit } from './_lib/audit.js';
 import { jsonResponse, errorResponse, parseJsonBody, getClientIp } from './_lib/helpers.js';
 import { buildEnterpriseUpgradeStatus } from './_lib/enterprise-upgrade.js';
+import { internalFunctionUrl, shouldTriggerBackgroundFunction } from './_lib/runtime.js';
 
 export default async (request: Request, _context: Context) => {
   if (request.method !== 'POST') {
@@ -228,11 +229,12 @@ export default async (request: Request, _context: Context) => {
 };
 
 async function triggerQueueWorker(request: Request): Promise<void> {
-  const origin = new URL(request.url).origin;
+  if (!shouldTriggerBackgroundFunction()) return;
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 1500);
   try {
-    await fetch(`${origin}/.netlify/functions/sync-process-background`, {
+    await fetch(internalFunctionUrl(request, 'sync-process-background'), {
       method: 'POST',
       headers: {
         'x-internal-secret': process.env.INTERNAL_FUNCTION_SECRET ?? '',

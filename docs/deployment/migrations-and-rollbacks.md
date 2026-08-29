@@ -2,11 +2,12 @@
 
 ## 1) What "rollback" means here
 
-Flash MDM is deployed on Netlify, so application rollbacks are straightforward.
+Flash MDM supports Netlify and versioned VPS releases, so application rollbacks are separate from database recovery.
 
 Database rollback is a different problem:
 
 - **App rollback:** revert to a previous Netlify deploy via the Netlify dashboard.
+- **VPS app rollback:** the installer builds under `<install-root>/releases/`, atomically switches `<install-root>/current`, and restores the previous target when service readiness, migration, worker startup, or Caddy activation fails.
 - **DB rollback:** generally achieved by applying a new migration that reverses/adjusts prior changes.
 - **DB recovery:** restore from snapshot (operator-managed), used for catastrophic scenarios.
 
@@ -26,6 +27,7 @@ curl https://<your-site>/api/migrate \
 ```
 
 The endpoint requires `MIGRATION_SECRET` to be set in environment variables. It returns `500` if the variable is absent, `401` if the header value does not match.
+It also returns `500` with `summary.errors > 0` when an individual migration fails. Installers and automation must require both an HTTP success status and a zero error count.
 
 ### Local development
 
@@ -42,6 +44,7 @@ Or use the migration endpoint via `netlify dev`.
 ## 3) Operational guidance
 
 - Take a snapshot before schema migrations that affect critical workflows.
+- A VPS code rollback does not reverse migrations that committed before a later activation check failed. Keep migrations backward-compatible with the previous retained release.
 - Prefer additive, backward-compatible changes.
 - If you must do a breaking change:
   - deploy code that supports both old and new schema

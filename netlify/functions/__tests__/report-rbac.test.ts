@@ -32,6 +32,7 @@ vi.mock('../_lib/helpers.js', () => ({
   }),
   parseJsonBody: vi.fn(async (req: Request) => req.json()),
   getClientIp: vi.fn(() => '127.0.0.1'),
+  getPublicOrigin: vi.fn(() => 'https://flash.example.test'),
   getSearchParams: vi.fn((req: Request) => new URL(req.url).searchParams),
   isValidUuid: vi.fn((v: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)),
 }));
@@ -90,6 +91,9 @@ describe('report-export RBAC', () => {
 
     expect(res.status).toBe(200);
     expect(mockRequireEnvScope).toHaveBeenCalledWith(authContext, 'env1', 'write');
+    await expect(res.json()).resolves.toMatchObject({
+      export_url: expect.stringMatching(/^https:\/\/flash\.example\.test\/api\/reports\/download/),
+    });
   });
 
   it('unauthorized user gets 403', async () => {

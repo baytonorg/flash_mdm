@@ -29,6 +29,7 @@ export interface AppDetail {
   app_tracks: { trackId: string; trackAlias: string }[];
   min_android_sdk?: number;
   update_time?: string;
+  distribution_channel?: string;
 }
 
 /** Legacy deployment model (backward compat) */
@@ -57,6 +58,7 @@ export interface CatalogApp {
   default_auto_update_mode: string;
   default_managed_config: Record<string, unknown>;
   icon_url: string | null;
+  distribution_channel: string | null;
   scope_configs_count: number;
   created_at: string;
   updated_at: string;

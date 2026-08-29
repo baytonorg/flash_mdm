@@ -298,7 +298,18 @@ export default async (_request: Request, _context: Context) => {
     }
 
     console.log('Geofence check completed:', stats);
+    return new Response(JSON.stringify({
+      message: stats.errors > 0 ? 'Geofence check completed with errors' : 'Geofence check completed',
+      stats,
+    }), {
+      status: stats.errors > 0 ? 500 : 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
   } catch (err) {
     console.error('Geofence check fatal error:', err);
+    return new Response(JSON.stringify({ error: 'Geofence check failed', stats }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 };

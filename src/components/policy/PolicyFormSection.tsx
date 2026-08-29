@@ -1266,20 +1266,9 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
               />
             )}
           />
-          <EnumField
-            label="WiFi Roaming Mode"
-            description="Global WiFi roaming mode. Aggressive roaming can improve performance in areas with weak signals."
-            value={getPath(config, 'deviceConnectivityManagement.wifiRoamingPolicy.wifiRoamingMode') ?? 'WIFI_ROAMING_MODE_UNSPECIFIED'}
-            onChange={(v) => onChange('deviceConnectivityManagement.wifiRoamingPolicy.wifiRoamingMode', v)}
-            options={[
-              { value: 'WIFI_ROAMING_MODE_UNSPECIFIED', label: 'Unspecified' },
-              { value: 'WIFI_ROAMING_DEFAULT', label: 'Default' },
-              { value: 'WIFI_ROAMING_AGGRESSIVE', label: 'Aggressive' },
-            ]}
-          />
           <RepeaterField
             label="Per-SSID WiFi Roaming Settings"
-            description="Override the global roaming mode for specific SSIDs."
+            description="Set the roaming mode for specific SSIDs."
             value={getPath(config, 'deviceConnectivityManagement.wifiRoamingPolicy.wifiRoamingSettings') ?? []}
             onChange={(v) => onChange('deviceConnectivityManagement.wifiRoamingPolicy.wifiRoamingSettings', v)}
             defaultItem={{ wifiSsid: '', wifiRoamingMode: 'WIFI_ROAMING_MODE_UNSPECIFIED' }}
@@ -2528,31 +2517,9 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
           />
           <BooleanField
             label="Camera Disabled"
-            description="Disable camera on the personal profile. Deprecated — use Camera Access below."
+            description="Disable the camera on the personal profile."
             value={getPath(config, 'personalUsagePolicies.cameraDisabled') ?? false}
             onChange={(v) => onChange('personalUsagePolicies.cameraDisabled', v)}
-          />
-          <EnumField
-            label="Camera Access (Personal Profile)"
-            description="Controls camera access on the personal profile. Replaces the deprecated Camera Disabled toggle."
-            value={getPath(config, 'personalUsagePolicies.cameraAccessForPersonalProfile') ?? 'CAMERA_ACCESS_FOR_PERSONAL_PROFILE_UNSPECIFIED'}
-            onChange={(v) => onChange('personalUsagePolicies.cameraAccessForPersonalProfile', v)}
-            options={[
-              { value: 'CAMERA_ACCESS_FOR_PERSONAL_PROFILE_UNSPECIFIED', label: 'Unspecified' },
-              { value: 'CAMERA_ACCESS_ALLOWED', label: 'Allowed' },
-              { value: 'CAMERA_ACCESS_DISABLED', label: 'Disabled' },
-            ]}
-          />
-          <EnumField
-            label="Microphone Access (Personal Profile)"
-            description="Controls microphone access on the personal profile."
-            value={getPath(config, 'personalUsagePolicies.microphoneAccessForPersonalProfile') ?? 'MICROPHONE_ACCESS_FOR_PERSONAL_PROFILE_UNSPECIFIED'}
-            onChange={(v) => onChange('personalUsagePolicies.microphoneAccessForPersonalProfile', v)}
-            options={[
-              { value: 'MICROPHONE_ACCESS_FOR_PERSONAL_PROFILE_UNSPECIFIED', label: 'Unspecified' },
-              { value: 'MICROPHONE_ACCESS_ALLOWED', label: 'Allowed' },
-              { value: 'MICROPHONE_ACCESS_DISABLED', label: 'Disabled' },
-            ]}
           />
           <BooleanField
             label="Screen Capture Disabled"
@@ -2581,17 +2548,6 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
                 placeholder="com.example.account"
               />
             )}
-          />
-          <EnumField
-            label="Personal Google Accounts"
-            description="Controls whether personal Google accounts can be added to the personal profile."
-            value={getPath(config, 'personalUsagePolicies.personalGoogleAccountsAllowed') ?? 'PERSONAL_GOOGLE_ACCOUNTS_ALLOWED_UNSPECIFIED'}
-            onChange={(v) => onChange('personalUsagePolicies.personalGoogleAccountsAllowed', v)}
-            options={[
-              { value: 'PERSONAL_GOOGLE_ACCOUNTS_ALLOWED_UNSPECIFIED', label: 'Unspecified' },
-              { value: 'PERSONAL_GOOGLE_ACCOUNTS_ALLOWED', label: 'Allowed' },
-              { value: 'PERSONAL_GOOGLE_ACCOUNTS_DISALLOWED', label: 'Disallowed' },
-            ]}
           />
           <RepeaterField
             label="Personal Applications"

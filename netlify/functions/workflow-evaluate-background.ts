@@ -1,5 +1,5 @@
 import type { Context } from '@netlify/functions';
-import { query, queryOne, execute } from './_lib/db.js';
+import { queryOne, execute } from './_lib/db.js';
 import { amapiCall } from './_lib/amapi.js';
 import { buildAmapiCommandPayload } from './_lib/amapi-command.js';
 import { logAudit } from './_lib/audit.js';
@@ -72,6 +72,10 @@ interface WorkflowAuditOptions {
   workspaceId?: string;
   details?: Record<string, unknown>;
 }
+
+type WorkflowActionResult =
+  | ({ success: true } & Record<string, unknown>)
+  | ({ success: false; error: string } & Record<string, unknown>);
 
 // ─── Condition Evaluation ───────────────────────────────────────────────────
 
@@ -220,18 +224,17 @@ async function executeAction(
   workflow: Workflow,
   device: Device,
   envContext: EnvironmentContext
-): Promise<Record<string, unknown>> {
+): Promise<WorkflowActionResult> {
   const { action_type, action_config } = workflow;
 
   switch (action_type) {
     case 'device.command': {
       const commandType = action_config.command_type as string;
-      if (!commandType) return { error: 'No command_type specified in action_config' };
+      if (!commandType) return { success: false, error: 'No command_type specified in action_config' };
 
       const commandBody = buildAmapiCommandPayload(
         commandType,
-        (action_config.command_data as Record<string, unknown> | undefined) ?? {},
-        { allowUnknown: true }
+        (action_config.command_data as Record<string, unknown> | undefined) ?? {}
       );
 
       const result = await amapiCall(
@@ -247,29 +250,24 @@ async function executeAction(
         }
       );
 
-      return { command_type: commandType, amapi_result: result };
+      return { success: true, command_type: commandType, amapi_result: result };
     }
 
     case 'device.move_group': {
       const targetGroupId = action_config.group_id as string;
-      if (!targetGroupId) return { error: 'No group_id specified in action_config' };
+      if (!targetGroupId) return { success: false, error: 'No group_id specified in action_config' };
 
       await execute(
         'UPDATE devices SET group_id = $1, updated_at = now() WHERE id = $2',
         [targetGroupId, device.id]
       );
 
-      return { moved_to_group: targetGroupId };
+      return { success: true, moved_to_group: targetGroupId };
     }
 
     case 'device.assign_policy': {
       const policyId = action_config.policy_id as string;
-      if (!policyId) return { error: 'No policy_id specified in action_config' };
-
-      await execute(
-        'UPDATE devices SET policy_id = $1, updated_at = now() WHERE id = $2',
-        [policyId, device.id]
-      );
+      if (!policyId) return { success: false, error: 'No policy_id specified in action_config' };
 
       try {
         const assigned = await assignPolicyToDeviceWithDerivative({
@@ -283,13 +281,20 @@ async function executeAction(
             enterprise_name: envContext.enterprise_name,
           },
         });
+        await execute(
+          'UPDATE devices SET policy_id = $1, updated_at = now() WHERE id = $2',
+          [policyId, device.id]
+        );
         return {
+          success: true,
           assigned_policy: policyId,
           amapi_policy_name: assigned.policy_name,
           derivative_scope: 'device',
         };
       } catch (err) {
         return {
+          success: false,
+          error: err instanceof Error ? err.message : 'Unknown AMAPI policy synchronization error',
           assigned_policy: policyId,
           amapi_sync_failed: true,
           amapi_error: err instanceof Error ? err.message : 'Unknown error',
@@ -304,19 +309,19 @@ async function executeAction(
 
       if (to) {
         await sendEmail({ to, subject, html });
-        return { email_sent_to: to };
+        return { success: true, email_sent_to: to };
       }
 
-      return { error: 'No recipient email specified' };
+      return { success: false, error: 'No recipient email specified' };
     }
 
     case 'notification.webhook': {
       const webhookUrl = action_config.url as string;
-      if (!webhookUrl) return { error: 'No webhook URL specified' };
+      if (!webhookUrl) return { success: false, error: 'No webhook URL specified' };
 
       const validatedWebhookUrl = await validateResolvedWebhookUrlForOutbound(webhookUrl);
       if (!validatedWebhookUrl.ok) {
-        return { error: validatedWebhookUrl.error };
+        return { success: false, error: validatedWebhookUrl.error };
       }
 
       const webhookBody = {
@@ -346,9 +351,10 @@ async function executeAction(
       });
 
       return {
+        success: webhookResponse.ok,
+        ...(!webhookResponse.ok ? { error: `Webhook returned HTTP ${webhookResponse.status}` } : {}),
         webhook_url: webhookUrl,
         status: webhookResponse.status,
-        success: webhookResponse.ok,
       };
     }
 
@@ -371,11 +377,11 @@ async function executeAction(
         },
       });
 
-      return { audit_logged: true, action: auditAction };
+      return { success: true, audit_logged: true, action: auditAction };
     }
 
     default:
-      return { error: `Unknown action type: ${action_type}` };
+      return { success: false, error: `Unknown action type: ${action_type}` };
   }
 }
 
@@ -409,7 +415,7 @@ async function logWorkflowExecutionAudit({
 
 // ─── Main Handler ───────────────────────────────────────────────────────────
 
-export default async (request: Request, context: Context) => {
+export default async (request: Request, _context: Context) => {
   console.log('Workflow evaluation background function started');
 
   try {
@@ -511,7 +517,7 @@ export default async (request: Request, context: Context) => {
     try {
       const result = await executeAction(workflow, device, envContext);
 
-      const hasError = 'error' in result;
+      const hasError = !result.success;
       await execute(
         `UPDATE workflow_executions SET status = $2, result = $3 WHERE id = $1`,
         [executionId, hasError ? 'failed' : 'success', JSON.stringify(result)]

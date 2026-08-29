@@ -1,6 +1,10 @@
-import { query, execute } from './_lib/db.js';
+import { query, queryOne, execute, transaction } from './_lib/db.js';
 import { amapiCall } from './_lib/amapi.js';
 import { logAudit } from './_lib/audit.js';
+import {
+  resolveAmapiDeviceImei,
+  type AmapiTelephonyInfo,
+} from './_lib/amapi-device-network.js';
 
 export const config = {
   schedule: '*/15 * * * *',
@@ -21,6 +25,12 @@ interface AmapiDevice {
     securityPatchLevel?: string;
   };
   networkInfo?: {
+    imei?: string;
+    meid?: string;
+    wifiMacAddress?: string;
+    networkOperatorName?: string;
+    telephonyInfos?: AmapiTelephonyInfo[];
+    // Compatibility for snapshots captured against the obsolete singular shape.
     telephonyInfo?: Array<{
       imei?: string;
       meid?: string;
@@ -62,8 +72,88 @@ interface Environment {
   gcp_project_id: string;
 }
 
+interface DeviceLineageRow {
+  id: string;
+  amapi_name: string;
+  serial_number: string | null;
+  imei: string | null;
+  deleted_at: string | null;
+  enrollment_time: string | null;
+  last_status_report_at: string | null;
+  created_at: string | null;
+}
+
+const DEVICE_UPSERT_SQL = `INSERT INTO devices (
+   id, environment_id, amapi_name, name, serial_number, imei,
+   manufacturer, model, os_version, security_patch_level,
+   state, ownership, management_mode, policy_compliant,
+   enrollment_time, last_status_report_at, previous_device_names, snapshot
+ )
+ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+ ON CONFLICT (amapi_name) DO UPDATE SET
+   environment_id = EXCLUDED.environment_id,
+   name = COALESCE(devices.name, EXCLUDED.name),
+   serial_number = COALESCE(EXCLUDED.serial_number, devices.serial_number),
+   imei = COALESCE(EXCLUDED.imei, devices.imei),
+   manufacturer = COALESCE(EXCLUDED.manufacturer, devices.manufacturer),
+   model = COALESCE(EXCLUDED.model, devices.model),
+   os_version = COALESCE(EXCLUDED.os_version, devices.os_version),
+   security_patch_level = COALESCE(EXCLUDED.security_patch_level, devices.security_patch_level),
+   state = COALESCE(EXCLUDED.state, devices.state),
+   ownership = COALESCE(EXCLUDED.ownership, devices.ownership),
+   management_mode = COALESCE(EXCLUDED.management_mode, devices.management_mode),
+   policy_compliant = EXCLUDED.policy_compliant,
+   enrollment_time = COALESCE(EXCLUDED.enrollment_time, devices.enrollment_time),
+   last_status_report_at = COALESCE(EXCLUDED.last_status_report_at, devices.last_status_report_at),
+   previous_device_names = COALESCE(EXCLUDED.previous_device_names, devices.previous_device_names),
+   snapshot = EXCLUDED.snapshot,
+   updated_at = now(),
+   deleted_at = NULL`;
+
+function timestampOrZero(value: string | null): number {
+  if (!value) return 0;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function selectCanonicalPredecessor(
+  rows: DeviceLineageRow[],
+  previousNames: string[],
+  serialNumber: string | null,
+  imei: string | null
+): DeviceLineageRow {
+  return [...rows].sort((left, right) => {
+    const score = (row: DeviceLineageRow) => [
+      row.deleted_at ? 0 : 1,
+      imei !== null && row.imei === imei ? 1 : 0,
+      serialNumber !== null && row.serial_number === serialNumber ? 1 : 0,
+      timestampOrZero(row.enrollment_time),
+      timestampOrZero(row.last_status_report_at),
+      timestampOrZero(row.created_at),
+      previousNames.indexOf(row.amapi_name),
+    ];
+    const leftScore = score(left);
+    const rightScore = score(right);
+    for (let index = 0; index < leftScore.length; index += 1) {
+      if (leftScore[index] !== rightScore[index]) {
+        return rightScore[index] - leftScore[index];
+      }
+    }
+    return left.id.localeCompare(right.id);
+  })[0];
+}
+
+function isAmapiNameUniqueViolation(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const pgError = error as { code?: string; constraint?: string; message?: string };
+  return pgError.code === '23505'
+    && (pgError.constraint === 'devices_amapi_name_key'
+      || pgError.message?.includes('devices_amapi_name_key') === true);
+}
+
 export default async () => {
   console.log('Reconciliation scheduled function started');
+  const stats = { environments_checked: 0, errors: 0 };
 
   try {
     // Get all active environments with an enterprise binding
@@ -72,16 +162,29 @@ export default async () => {
     console.log(`Reconciling ${environments.length} environments`);
 
     for (const env of environments) {
+      stats.environments_checked++;
       try {
         await reconcileEnvironment(env);
       } catch (err) {
+        stats.errors++;
         console.error(`Failed to reconcile environment ${env.id}:`, err);
       }
     }
 
     console.log('Reconciliation completed');
+    return new Response(JSON.stringify({
+      message: stats.errors > 0 ? 'Reconciliation completed with errors' : 'Reconciliation completed',
+      stats,
+    }), {
+      status: stats.errors > 0 ? 500 : 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
   } catch (err) {
     console.error('Reconciliation error:', err);
+    return new Response(JSON.stringify({ error: 'Reconciliation failed', stats }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 };
 
@@ -139,73 +242,132 @@ async function reconcileEnvironment(env: Environment): Promise<void> {
 
       for (const device of devices) {
         if (!device.name) continue;
-        seenAmapiNames.add(device.name);
 
-        // Handle previousDeviceNames for deduplication
-        if (device.previousDeviceNames?.length) {
-          for (const prevName of device.previousDeviceNames) {
-            // Update any existing records with the old name to point to the new name
-            await execute(
-              `UPDATE devices SET amapi_name = $1, updated_at = now()
-               WHERE environment_id = $2 AND amapi_name = $3`,
-              [device.name, env.id, prevName]
-            );
-            seenAmapiNames.add(prevName);
-          }
-        }
-
-        // Upsert device
         const hardwareInfo = device.hardwareInfo ?? {};
         const softwareInfo = device.softwareInfo ?? {};
         const networkInfo = device.networkInfo ?? {};
+        const normalizedImei = resolveAmapiDeviceImei(networkInfo);
         const modelStr = (hardwareInfo.model as string) ?? 'Device';
-        const serialStr = (hardwareInfo.serialNumber as string) ?? device.name?.split('/').pop() ?? '';
+        const serialStr = (hardwareInfo.serialNumber as string) ?? device.name.split('/').pop() ?? '';
         const autoName = `${modelStr}_${serialStr}`;
+        const previousNames = [...new Set(
+          (device.previousDeviceNames ?? [])
+            .filter((name): name is string => typeof name === 'string' && name.length > 0)
+            .filter((name) => name !== device.name)
+        )];
+        const upsertParams = [
+          crypto.randomUUID(),
+          env.id,
+          device.name,
+          autoName,
+          hardwareInfo.serialNumber ?? null,
+          normalizedImei,
+          hardwareInfo.manufacturer ?? hardwareInfo.brand ?? null,
+          hardwareInfo.model ?? null,
+          softwareInfo.androidVersion ?? null,
+          softwareInfo.securityPatchLevel ?? null,
+          device.state ?? 'ACTIVE',
+          device.ownership ?? null,
+          device.managementMode ?? null,
+          device.policyCompliant === true,
+          device.enrollmentTime ?? null,
+          device.lastStatusReportTime ?? null,
+          previousNames.length > 0 ? previousNames : null,
+          JSON.stringify(device),
+        ];
 
-        await execute(
-          `INSERT INTO devices (
-             id, environment_id, amapi_name, name, serial_number, imei,
-             manufacturer, model, os_version, security_patch_level,
-             state, ownership, management_mode, policy_compliant,
-             enrollment_time, last_status_report_at, snapshot
-           )
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-           ON CONFLICT (amapi_name) DO UPDATE SET
-             name = COALESCE(devices.name, EXCLUDED.name),
-             serial_number = COALESCE(EXCLUDED.serial_number, devices.serial_number),
-             imei = COALESCE(EXCLUDED.imei, devices.imei),
-             manufacturer = COALESCE(EXCLUDED.manufacturer, devices.manufacturer),
-             model = COALESCE(EXCLUDED.model, devices.model),
-             os_version = COALESCE(EXCLUDED.os_version, devices.os_version),
-             security_patch_level = COALESCE(EXCLUDED.security_patch_level, devices.security_patch_level),
-             state = COALESCE(EXCLUDED.state, devices.state),
-             ownership = COALESCE(EXCLUDED.ownership, devices.ownership),
-             management_mode = COALESCE(EXCLUDED.management_mode, devices.management_mode),
-             policy_compliant = EXCLUDED.policy_compliant,
-             last_status_report_at = COALESCE(EXCLUDED.last_status_report_at, devices.last_status_report_at),
-             snapshot = EXCLUDED.snapshot,
-             updated_at = now(),
-             deleted_at = NULL`,
-          [
-            crypto.randomUUID(),
-            env.id,
-            device.name,
-            autoName,
-            hardwareInfo.serialNumber ?? null,
-            networkInfo.telephonyInfo?.[0]?.imei ?? null,
-            hardwareInfo.manufacturer ?? hardwareInfo.brand ?? null,
-            hardwareInfo.model ?? null,
-            softwareInfo.androidVersion ?? null,
-            softwareInfo.securityPatchLevel ?? null,
-            device.state ?? 'ACTIVE',
-            device.ownership ?? null,
-            device.managementMode ?? null,
-            device.policyCompliant === true,
-            device.enrollmentTime ?? null,
-            device.lastStatusReportTime ?? null,
-            JSON.stringify(device),
-          ]
-        );
+        if (previousNames.length === 0) {
+          const activeSuccessor = await queryOne<{ id: string; amapi_name: string }>(
+            `SELECT id, amapi_name
+             FROM devices
+             WHERE environment_id = $1
+               AND deleted_at IS NULL
+               AND amapi_name <> $2
+               AND previous_device_names @> ARRAY[$2]::text[]
+             ORDER BY last_status_report_at DESC NULLS LAST,
+                      enrollment_time DESC NULLS LAST,
+                      created_at DESC
+             LIMIT 1`,
+            [env.id, device.name]
+          );
+          if (activeSuccessor) {
+            console.warn('reconciliation: skipped historical predecessor with an active successor', {
+              environment_id: env.id,
+              historical_device_amapi_name: device.name,
+              successor_device_id: activeSuccessor.id,
+              successor_amapi_name: activeSuccessor.amapi_name,
+            });
+            continue;
+          }
+
+          await execute(DEVICE_UPSERT_SQL, upsertParams);
+          seenAmapiNames.add(device.name);
+          continue;
+        }
+
+        try {
+          await transaction(async (client) => {
+            await client.query(
+              'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+              [`${env.id}:${device.name}`]
+            );
+            const lineageResult = await client.query<DeviceLineageRow>(
+              `SELECT id, amapi_name, serial_number, imei, deleted_at,
+                      enrollment_time, last_status_report_at, created_at
+               FROM devices
+               WHERE environment_id = $1
+                 AND (amapi_name = $2 OR amapi_name = ANY($3::text[]))
+               ORDER BY id
+               FOR UPDATE`,
+              [env.id, device.name, previousNames]
+            );
+            const currentRow = lineageResult.rows.find((row) => row.amapi_name === device.name);
+            const previousMatches = lineageResult.rows.filter((row) =>
+              previousNames.includes(row.amapi_name)
+            );
+
+            if (!currentRow && previousMatches.length > 0) {
+              const canonicalPredecessor = selectCanonicalPredecessor(
+                previousMatches,
+                previousNames,
+                typeof hardwareInfo.serialNumber === 'string' ? hardwareInfo.serialNumber : null,
+                normalizedImei
+              );
+              await client.query(
+                `UPDATE devices SET amapi_name = $1, updated_at = now()
+                 WHERE id = $2`,
+                [device.name, canonicalPredecessor.id]
+              );
+
+              if (previousMatches.length > 1) {
+                console.warn('reconciliation: multiple predecessors matched; canonicalized one record', {
+                  environment_id: env.id,
+                  device_amapi_name: device.name,
+                  matched_count: previousMatches.length,
+                  canonical_device_id: canonicalPredecessor.id,
+                });
+              }
+            } else if (currentRow && previousMatches.length > 0) {
+              console.warn('reconciliation: retained existing current row and preserved predecessor history', {
+                environment_id: env.id,
+                device_amapi_name: device.name,
+                current_device_id: currentRow.id,
+                predecessor_count: previousMatches.length,
+              });
+            }
+
+            await client.query(DEVICE_UPSERT_SQL, upsertParams);
+          });
+        } catch (error) {
+          if (!isAmapiNameUniqueViolation(error)) throw error;
+          console.warn('reconciliation: concurrent lineage update won; preserving current row', {
+            environment_id: env.id,
+            device_amapi_name: device.name,
+          });
+          await execute(DEVICE_UPSERT_SQL, upsertParams);
+        }
+
+        seenAmapiNames.add(device.name);
       }
 
       pageToken = response.nextPageToken;
@@ -218,7 +380,7 @@ async function reconcileEnvironment(env: Environment): Promise<void> {
   }
 
   // Mark devices not seen in the AMAPI response as potentially deleted
-  if (devicePaginationCompleted && seenAmapiNames.size > 0) {
+  if (devicePaginationCompleted) {
     // Get devices in the DB that we didn't see in AMAPI
     const dbDevices = await query<{ id: string; amapi_name: string }>(
       `SELECT id, amapi_name FROM devices
@@ -261,6 +423,24 @@ async function reconcileEnvironment(env: Environment): Promise<void> {
 
   if (devicePaginationError) {
     throw devicePaginationError;
+  }
+
+  // Assign ungrouped devices to the environment's root group so they are
+  // visible when the UI auto-selects the only group.
+  if (seenAmapiNames.size > 0) {
+    const rootGroup = await queryOne<{ id: string }>(
+      `SELECT id FROM groups
+       WHERE environment_id = $1 AND parent_group_id IS NULL
+       ORDER BY created_at ASC LIMIT 1`,
+      [env.id]
+    );
+    if (rootGroup) {
+      await execute(
+        `UPDATE devices SET group_id = $1, updated_at = now()
+         WHERE environment_id = $2 AND group_id IS NULL AND deleted_at IS NULL`,
+        [rootGroup.id, env.id]
+      );
+    }
   }
 
   console.log(`Environment ${env.id}: reconciled ${seenAmapiNames.size} devices`);

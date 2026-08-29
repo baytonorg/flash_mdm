@@ -56,14 +56,64 @@ describe('useAuthStore', () => {
       expect(state.error).toBeNull();
     });
 
-    it('clears user on failure', async () => {
-      mockedGet.mockRejectedValueOnce(new Error('Unauthorized'));
+    it('clears user and client session state on 401', async () => {
+      useAuthStore.setState({ user: mockUser });
+      localStorage.setItem('flash_context', JSON.stringify({ workspaceId: 'ws-1' }));
+      mockedGet.mockRejectedValueOnce(
+        Object.assign(new Error('Unauthorized'), { status: 401 }),
+      );
       await useAuthStore.getState().fetchSession();
 
       const state = useAuthStore.getState();
       expect(state.user).toBeNull();
       expect(state.isLoading).toBe(false);
       expect(state.error).toBeNull();
+      expect(localStorage.getItem('flash_context')).toBeNull();
+    });
+
+    it('preserves the current user and context on a server failure', async () => {
+      useAuthStore.setState({ user: mockUser });
+      localStorage.setItem('flash_context', JSON.stringify({ workspaceId: 'ws-1' }));
+      mockedGet.mockRejectedValueOnce(
+        Object.assign(new Error('Service unavailable'), { status: 503 }),
+      );
+
+      await useAuthStore.getState().fetchSession();
+
+      expect(useAuthStore.getState()).toMatchObject({
+        user: mockUser,
+        isLoading: false,
+        error: 'Service unavailable',
+      });
+      expect(localStorage.getItem('flash_context')).not.toBeNull();
+    });
+
+    it('preserves the current user on a network failure', async () => {
+      useAuthStore.setState({ user: mockUser });
+      mockedGet.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+      await useAuthStore.getState().fetchSession();
+
+      expect(useAuthStore.getState()).toMatchObject({
+        user: mockUser,
+        isLoading: false,
+        error: 'Failed to fetch',
+      });
+    });
+
+    it('preserves the current user and context when a successful response is malformed', async () => {
+      useAuthStore.setState({ user: mockUser });
+      localStorage.setItem('flash_context', JSON.stringify({ workspaceId: 'ws-1' }));
+      mockedGet.mockResolvedValueOnce({} as never);
+
+      await useAuthStore.getState().fetchSession();
+
+      expect(useAuthStore.getState()).toMatchObject({
+        user: mockUser,
+        isLoading: false,
+        error: 'Unable to verify your session. Please retry.',
+      });
+      expect(localStorage.getItem('flash_context')).not.toBeNull();
     });
 
     it('sets isLoading to false after success', async () => {
@@ -73,7 +123,9 @@ describe('useAuthStore', () => {
     });
 
     it('sets isLoading to false after failure', async () => {
-      mockedGet.mockRejectedValueOnce(new Error('fail'));
+      mockedGet.mockRejectedValueOnce(
+        Object.assign(new Error('Unauthorized'), { status: 401 }),
+      );
       await useAuthStore.getState().fetchSession();
       expect(useAuthStore.getState().isLoading).toBe(false);
     });

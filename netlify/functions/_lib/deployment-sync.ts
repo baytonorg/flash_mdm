@@ -7,6 +7,7 @@ import {
   assignPolicyToDeviceWithDerivative,
   listAffectedDevicesForPolicyContext,
 } from './policy-derivatives.js';
+import { preparePolicyBaseForDerivativeGeneration } from './policy-merge.js';
 
 type PolicyScopeType = 'environment' | 'group' | 'device';
 
@@ -57,8 +58,10 @@ export async function syncAffectedPoliciesToAmapi(
         const baseConfig = typeof policy?.config === 'string'
           ? JSON.parse(policy.config)
           : (policy?.config ?? {});
-        // Strip deployment-managed fields — generator re-applies from DB
-        const { openNetworkConfiguration: _onc, deviceConnectivityManagement: _dcm, applications: _apps, ...cleanBase } = baseConfig as Record<string, unknown>;
+        // Strip deployment-managed fields while retaining authored connectivity controls.
+        const cleanBase = preparePolicyBaseForDerivativeGeneration(
+          baseConfig as Record<string, unknown>
+        );
 
         await syncPolicyDerivativesForPolicy({
           policyId,

@@ -7,6 +7,7 @@ import { logAudit } from './_lib/audit.js';
 import { jsonResponse, errorResponse, getClientIp, parseJsonBody, isValidUuid } from './_lib/helpers.js';
 import { ensurePreferredDerivativeForDevicePolicy } from './_lib/policy-derivatives.js';
 import { deriveDeviceApplicationsFromSnapshot } from './_lib/device-apps.js';
+import { resolveAmapiDeviceImei } from './_lib/amapi-device-network.js';
 
 type ScopeType = 'environment' | 'group' | 'device';
 
@@ -638,15 +639,7 @@ export default async (request: Request, context: Context) => {
     const hardwareInfo = (fresh.hardwareInfo as Record<string, unknown>) ?? {};
     const softwareInfo = (fresh.softwareInfo as Record<string, unknown>) ?? {};
     const networkInfo = (fresh.networkInfo as Record<string, unknown>) ?? {};
-    const primaryTelephonyInfo =
-      (
-        (networkInfo.telephonyInfos as Array<Record<string, unknown>> | undefined) ??
-        (networkInfo.telephonyInfo as Array<Record<string, unknown>> | undefined)
-      )?.[0] ?? null;
-    const normalizedImei =
-      (networkInfo.imei as string | undefined) ??
-      (primaryTelephonyInfo?.imei as string | undefined) ??
-      null;
+    const normalizedImei = resolveAmapiDeviceImei(networkInfo);
 
     await execute(
       `UPDATE devices SET

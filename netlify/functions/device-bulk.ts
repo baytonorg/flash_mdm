@@ -10,6 +10,7 @@ import {
 } from './_lib/device-commands.js';
 import { logAudit } from './_lib/audit.js';
 import { jsonResponse, errorResponse, parseJsonBody, getClientIp } from './_lib/helpers.js';
+import { internalFunctionUrl, shouldTriggerBackgroundFunction } from './_lib/runtime.js';
 
 interface BulkActionBody {
   device_ids: string[];
@@ -98,8 +99,7 @@ export default async (request: Request, context: Context) => {
     // Best-effort: trigger the queue worker so bulk commands execute immediately
     // instead of waiting for a separate scheduled/manual worker run.
     try {
-      const origin = new URL(request.url).origin;
-      await fetch(`${origin}/.netlify/functions/sync-process-background`, {
+      if (shouldTriggerBackgroundFunction()) await fetch(internalFunctionUrl(request, 'sync-process-background'), {
         method: 'POST',
         headers: {
           'x-internal-secret': process.env.INTERNAL_FUNCTION_SECRET ?? '',

@@ -50,6 +50,30 @@ describe('apiClient', () => {
       const result = await apiClient.get<{ items: number[] }>('/api/items');
       expect(result).toEqual({ items: [1, 2, 3] });
     });
+
+    it('forwards an abort signal without dropping standard request options', async () => {
+      const controller = new AbortController();
+      mockFetch.mockResolvedValueOnce(jsonResponse({ items: [] }));
+
+      await apiClient.get('/api/items', { signal: controller.signal });
+
+      expect(mockFetch).toHaveBeenCalledWith('/api/items', expect.objectContaining({
+        signal: controller.signal,
+        credentials: 'include',
+        headers: expect.objectContaining({
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+        }),
+      }));
+    });
+
+    it('preserves the native abort rejection', async () => {
+      const controller = new AbortController();
+      const abortError = new DOMException('The operation was aborted', 'AbortError');
+      mockFetch.mockRejectedValueOnce(abortError);
+
+      await expect(apiClient.get('/api/items', { signal: controller.signal })).rejects.toBe(abortError);
+    });
   });
 
   describe('POST requests', () => {

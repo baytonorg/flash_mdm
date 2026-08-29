@@ -6,6 +6,18 @@ import {
 } from '../amapi-policy-validation.js';
 
 describe('amapi-policy-validation', () => {
+  it('applies the pinned Discovery gate to unknown fields and enum values', () => {
+    const result = validateAmapiPolicyPayload({
+      unknownPolicyField: true,
+      applications: [{ packageName: 'com.example.app', installType: 'NOT_AN_INSTALL_TYPE' }],
+    });
+
+    expect(result.errors).toEqual(expect.arrayContaining([
+      expect.stringContaining('unknownPolicyField is not defined in AMAPI Discovery revision'),
+      expect.stringContaining('applications[0].installType="NOT_AN_INSTALL_TYPE" is not a valid AMAPI value'),
+    ]));
+  });
+
   it('rejects setupAction launch app when app is not REQUIRED_FOR_SETUP', () => {
     const result = validateAmapiPolicyPayload({
       applications: [{ packageName: 'com.example.app', installType: 'FORCE_INSTALLED' }],
@@ -257,6 +269,7 @@ describe('amapi-policy-validation', () => {
     });
 
     expect(result.errors.some((e) => e.includes('urlPattern is not a valid regex'))).toBe(true);
+    expect(result.errors.some((e) => e.includes('not generally available'))).toBe(true);
     expect(result.errors.some((e) => e.includes('choosePrivateKeyRules[0].packageNames contains invalid package name'))).toBe(true);
     expect(result.errors.some((e) => e.includes('contentProviderEndpoint.packageName is not a valid package name'))).toBe(true);
     expect(result.errors.some((e) => e.includes('signingCertsSha256 contains duplicates'))).toBe(true);

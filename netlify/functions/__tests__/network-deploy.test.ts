@@ -46,6 +46,10 @@ vi.mock('../_lib/deployment-sync.js', () => ({
   })),
 }));
 
+vi.mock('../_lib/certificate-deployment.js', () => ({
+  resolveOncServerCaCertificates: vi.fn(async () => []),
+}));
+
 import { queryOne, transaction } from '../_lib/db.js';
 import { requireAuth } from '../_lib/auth.js';
 import { requireEnvironmentPermission } from '../_lib/rbac.js';
@@ -54,6 +58,7 @@ import {
   syncAffectedPoliciesToAmapi,
   selectPoliciesForDeploymentScope,
 } from '../_lib/deployment-sync.js';
+import { resolveOncServerCaCertificates } from '../_lib/certificate-deployment.js';
 import handler from '../network-deploy.ts';
 
 const mockQueryOne = vi.mocked(queryOne);
@@ -63,6 +68,7 @@ const mockRequireEnvironmentPermission = vi.mocked(requireEnvironmentPermission)
 const mockLogAudit = vi.mocked(logAudit);
 const mockSyncAffectedPolicies = vi.mocked(syncAffectedPoliciesToAmapi);
 const mockSelectPolicies = vi.mocked(selectPoliciesForDeploymentScope);
+const mockResolveCertificates = vi.mocked(resolveOncServerCaCertificates);
 
 function makeRequest(body: Record<string, unknown>): Request {
   return new Request('http://localhost/api/networks/deploy', {
@@ -81,6 +87,7 @@ describe('network-deploy derivative-based sync', () => {
     mockLogAudit.mockReset();
     mockSyncAffectedPolicies.mockReset();
     mockSelectPolicies.mockReset();
+    mockResolveCertificates.mockReset();
 
     mockRequireAuth.mockResolvedValue({
       sessionId: 'sess_1',
@@ -88,6 +95,7 @@ describe('network-deploy derivative-based sync', () => {
     } as never);
     mockRequireEnvironmentPermission.mockResolvedValue(undefined as never);
     mockLogAudit.mockResolvedValue(undefined as never);
+    mockResolveCertificates.mockResolvedValue([]);
 
     // Default: sync succeeds with 1 policy synced
     mockSyncAffectedPolicies.mockResolvedValue({
@@ -122,6 +130,40 @@ describe('network-deploy derivative-based sync', () => {
     mockTransaction.mockImplementation(async (fn: (tx: { query: typeof clientQuery }) => unknown) => fn({ query: clientQuery }));
     return clientQuery;
   }
+
+  it('rejects an unknown trusted CA before persisting the Wi-Fi profile', async () => {
+    mockQueryOne.mockResolvedValueOnce({
+      id: 'env_1', workspace_id: 'ws_1', enterprise_name: 'enterprises/e1',
+    });
+    mockResolveCertificates.mockRejectedValueOnce(
+      new Error('Wi-Fi profile references unknown trusted CA: flash-ca-missing')
+    );
+
+    const response = await handler(makeRequest({
+      environment_id: 'env_1',
+      scope_type: 'environment',
+      scope_id: 'env_1',
+      onc_document: {
+        Type: 'UnencryptedConfiguration',
+        NetworkConfigurations: [{
+          GUID: 'wifi-1', Name: 'Corporate', Type: 'WiFi',
+          WiFi: {
+            SSID: 'Corporate', Security: 'WPA-EAP',
+            EAP: {
+              Outer: 'PEAP', Inner: 'MSCHAPv2', DomainSuffixMatch: ['example.com'],
+              ServerCARefs: ['flash-ca-missing'],
+            },
+          },
+        }],
+      },
+    }), {} as never);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Wi-Fi profile references unknown trusted CA: flash-ca-missing',
+    });
+    expect(mockTransaction).not.toHaveBeenCalled();
+  });
 
   it('saves WiFi deployment and syncs derivatives for environment scope', async () => {
     setupTransactionWithPolicies();
@@ -467,5 +509,47 @@ describe('network-deploy derivative-based sync', () => {
       ([sql]: [string]) => typeof sql === 'string' && sql.includes('UPDATE policies SET config')
     );
     expect(updateCalls).toHaveLength(0);
+  });
+
+  it.each([
+    {
+      label: 'client identity EAP-TLS',
+      document: {
+        Type: 'UnencryptedConfiguration',
+        NetworkConfigurations: [{
+          GUID: 'wifi-1', Name: 'Corporate', Type: 'WiFi',
+          WiFi: { SSID: 'Corporate', Security: 'WPA-EAP', EAP: { Outer: 'EAP-TLS', DomainSuffixMatch: ['example.com'] } },
+        }],
+      },
+      error: 'Client identity certificates and EAP-TLS are not supported',
+    },
+    {
+      label: 'inline certificate material',
+      document: {
+        Type: 'UnencryptedConfiguration',
+        Certificates: [{ GUID: 'client-1', Type: 'Client', PKCS12: 'private-key-material' }],
+        NetworkConfigurations: [{
+          GUID: 'wifi-1', Name: 'Corporate', Type: 'WiFi',
+          WiFi: { SSID: 'Corporate', Security: 'WPA-EAP', EAP: { Outer: 'PEAP', Inner: 'MSCHAPv2', DomainSuffixMatch: ['example.com'] } },
+        }],
+      },
+      error: 'Inline ONC certificates are not supported; upload a trusted CA in Networks and select it by reference',
+    },
+  ])('rejects unsupported $label before persistence', async ({ document, error }) => {
+    mockQueryOne.mockResolvedValueOnce({
+      id: 'env_1', workspace_id: 'ws_1', enterprise_name: 'enterprises/e1',
+    } as never);
+
+    const response = await handler(makeRequest({
+      environment_id: 'env_1',
+      scope_type: 'environment',
+      scope_id: 'env_1',
+      onc_document: document,
+    }), {} as never);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error });
+    expect(mockTransaction).not.toHaveBeenCalled();
+    expect(mockSyncAffectedPolicies).not.toHaveBeenCalled();
   });
 });

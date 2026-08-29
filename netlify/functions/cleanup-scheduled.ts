@@ -7,7 +7,7 @@ export const config = {
 
 const DELETE_BATCH_SIZE = 10_000;
 
-export default async (request: Request, context: Context) => {
+export default async (_request: Request, _context: Context) => {
   console.log('Daily cleanup started');
 
   const results: Record<string, number> = {};
@@ -148,8 +148,16 @@ export default async (request: Request, context: Context) => {
     );
 
     console.log('Daily cleanup completed:', results);
+    return new Response(JSON.stringify({ message: 'Daily cleanup completed', stats: results }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
   } catch (err) {
     console.error('Daily cleanup error:', err);
+    return new Response(JSON.stringify({ error: 'Daily cleanup failed' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 };
 

@@ -11,7 +11,7 @@
 | `ZeroTouchOptionsResponse` | `interface` | Response shape: `{ environment, groups, active_tokens }` |
 | `zeroTouchKeys` | `object` | Query key factory: `all`, `options(environmentId)` |
 | `useZeroTouchOptions` | `(environmentId?) => UseQueryResult` | Fetches environment context, groups, and active enrollment tokens |
-| `useZeroTouchIframeToken` | `() => UseMutationResult` | Creates a zero-touch iframe web token for the embedded Google zero-touch portal |
+| `useZeroTouchIframeToken` | `() => UseMutationResult` | Creates a zero-touch iframe web token and configured iframe URL for a selected enrollment token |
 | `useZeroTouchCreateEnrollmentToken` | `() => UseMutationResult` | Creates an enrollment token for zero-touch binding; invalidates zero-touch options and enrollment token queries |
 
 ## Dependencies (imports from project)

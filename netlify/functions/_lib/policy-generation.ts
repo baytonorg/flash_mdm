@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { query } from './db.js';
-import { upsertOncDeploymentInPolicyConfig, upsertApnDeploymentInPolicyConfig, parseOncDocument, parseApnPolicy, getApnSettingKey } from './policy-merge.js';
+import { upsertOncDeploymentInPolicyConfig, upsertApnDeploymentInPolicyConfig, parseOncDocument } from './policy-merge.js';
+import { resolveOncServerCaCertificates } from './certificate-deployment.js';
 
 export type PolicyScopeType = 'environment' | 'group' | 'device';
 
@@ -106,6 +107,11 @@ export async function buildGeneratedPolicyPayload(input: {
     base, input.policyId, input.environmentId, resolution.target, lockedSections
   );
 
+  // Resolve certificate references after all policy layers have selected the
+  // effective ONC document. Earlier enrichment could be overwritten by an
+  // applicable group or device override.
+  await applyReferencedServerCaCertificates(base, input.environmentId);
+
   const deviceScopedVariables = detectDeviceScopedVariables(base);
   normalizeAmapiCompatibilityFields(base);
 
@@ -132,26 +138,48 @@ export async function buildGeneratedPolicyPayload(input: {
 
 function normalizeAmapiCompatibilityFields(config: Record<string, unknown>): void {
   const legacyPrivateDns = config.privateDnsSettings;
-  if (!legacyPrivateDns || typeof legacyPrivateDns !== 'object' || Array.isArray(legacyPrivateDns)) return;
-
   const dcm = (
     config.deviceConnectivityManagement
     && typeof config.deviceConnectivityManagement === 'object'
     && !Array.isArray(config.deviceConnectivityManagement)
   ) ? (config.deviceConnectivityManagement as Record<string, unknown>) : {};
+  if (legacyPrivateDns && typeof legacyPrivateDns === 'object' && !Array.isArray(legacyPrivateDns)) {
+    const currentPrivateDns = (
+      dcm.privateDnsSettings
+      && typeof dcm.privateDnsSettings === 'object'
+      && !Array.isArray(dcm.privateDnsSettings)
+    ) ? (dcm.privateDnsSettings as Record<string, unknown>) : {};
 
-  const currentPrivateDns = (
-    dcm.privateDnsSettings
-    && typeof dcm.privateDnsSettings === 'object'
-    && !Array.isArray(dcm.privateDnsSettings)
-  ) ? (dcm.privateDnsSettings as Record<string, unknown>) : {};
+    dcm.privateDnsSettings = {
+      ...(legacyPrivateDns as Record<string, unknown>),
+      ...currentPrivateDns,
+    };
+    delete config.privateDnsSettings;
+  }
 
-  dcm.privateDnsSettings = {
-    ...(legacyPrivateDns as Record<string, unknown>),
-    ...currentPrivateDns,
-  };
-  config.deviceConnectivityManagement = dcm;
-  delete config.privateDnsSettings;
+  const wifiRoamingPolicy = (
+    dcm.wifiRoamingPolicy
+    && typeof dcm.wifiRoamingPolicy === 'object'
+    && !Array.isArray(dcm.wifiRoamingPolicy)
+  ) ? (dcm.wifiRoamingPolicy as Record<string, unknown>) : null;
+  if (wifiRoamingPolicy) {
+    delete wifiRoamingPolicy.wifiRoamingMode;
+    if (Object.keys(wifiRoamingPolicy).length === 0) delete dcm.wifiRoamingPolicy;
+  }
+  if (Object.keys(dcm).length > 0) config.deviceConnectivityManagement = dcm;
+  else delete config.deviceConnectivityManagement;
+
+  const personalUsagePolicies = (
+    config.personalUsagePolicies
+    && typeof config.personalUsagePolicies === 'object'
+    && !Array.isArray(config.personalUsagePolicies)
+  ) ? (config.personalUsagePolicies as Record<string, unknown>) : null;
+  if (personalUsagePolicies) {
+    delete personalUsagePolicies.cameraAccessForPersonalProfile;
+    delete personalUsagePolicies.microphoneAccessForPersonalProfile;
+    delete personalUsagePolicies.personalGoogleAccountsAllowed;
+    if (Object.keys(personalUsagePolicies).length === 0) delete config.personalUsagePolicies;
+  }
 }
 
 async function resolveGenerationTarget(input: {
@@ -267,6 +295,22 @@ async function applyScopedNetworkDeployments(
 
     upsertOncDeploymentInPolicyConfig(config, profile);
   }
+}
+
+async function applyReferencedServerCaCertificates(
+  config: Record<string, unknown>,
+  environmentId: string
+): Promise<void> {
+  const onc = config.openNetworkConfiguration;
+  if (!onc) return;
+
+  const certificates = await resolveOncServerCaCertificates(environmentId, onc);
+  if (certificates.length === 0) return;
+
+  config.openNetworkConfiguration = {
+    ...parseOncDocument(onc),
+    Certificates: certificates,
+  };
 }
 
 async function loadAppDeploymentsForTarget(

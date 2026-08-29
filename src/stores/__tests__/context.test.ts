@@ -151,9 +151,73 @@ describe('useContextStore', () => {
 
   describe('fetchGroups', () => {
     it('populates groups for an environment', async () => {
+      useContextStore.setState({ activeEnvironment: mockEnvironments[0] });
       mockedGet.mockResolvedValueOnce({ groups: mockGroups });
       await useContextStore.getState().fetchGroups('env-1');
       expect(useContextStore.getState().groups).toEqual(mockGroups);
+    });
+
+    it('refreshes the active group after it is renamed', async () => {
+      useContextStore.setState({
+        activeWorkspace: mockWorkspaces[0],
+        activeEnvironment: mockEnvironments[0],
+        groups: mockGroups,
+        activeGroup: mockGroups[0],
+      });
+      const renamed = { ...mockGroups[0], name: 'Platform Engineering' };
+      mockedGet.mockResolvedValueOnce({ groups: [renamed, mockGroups[1]] });
+
+      await useContextStore.getState().fetchGroups('env-1');
+
+      expect(useContextStore.getState().activeGroup).toEqual(renamed);
+    });
+
+    it('clears a deleted active group and its saved selection', async () => {
+      useContextStore.setState({
+        activeWorkspace: mockWorkspaces[0],
+        activeEnvironment: mockEnvironments[0],
+        groups: mockGroups,
+        activeGroup: mockGroups[0],
+      });
+      localStorage.setItem('flash_context', JSON.stringify({
+        workspaceId: 'ws-1',
+        environmentId: 'env-1',
+        groupId: 'grp-1',
+      }));
+      mockedGet.mockResolvedValueOnce({ groups: [mockGroups[1]] });
+
+      await useContextStore.getState().fetchGroups('env-1');
+
+      expect(useContextStore.getState().activeGroup).toBeNull();
+      expect(JSON.parse(localStorage.getItem('flash_context') ?? '{}')).toEqual({
+        workspaceId: 'ws-1',
+        environmentId: 'env-1',
+      });
+    });
+
+    it('ignores a group response after the active environment changes', async () => {
+      let resolveGroups: (value: unknown) => void;
+      useContextStore.setState({
+        activeEnvironment: mockEnvironments[0],
+        groups: mockGroups,
+        activeGroup: mockGroups[0],
+      });
+      mockedGet.mockReturnValueOnce(new Promise((resolve) => { resolveGroups = resolve; }));
+
+      const refresh = useContextStore.getState().fetchGroups('env-1');
+      useContextStore.setState({
+        activeEnvironment: mockEnvironments[1],
+        groups: [],
+        activeGroup: null,
+      });
+      resolveGroups!({ groups: [{ ...mockGroups[0], name: 'Stale name' }] });
+      await refresh;
+
+      expect(useContextStore.getState()).toMatchObject({
+        activeEnvironment: mockEnvironments[1],
+        groups: [],
+        activeGroup: null,
+      });
     });
   });
 

@@ -22,6 +22,7 @@ import type { ConditionRow } from '@/api/queries/workflows';
 import TriggerSelector from '@/components/workflows/TriggerSelector';
 import ConditionBuilder from '@/components/workflows/ConditionBuilder';
 import ActionSelector from '@/components/workflows/ActionSelector';
+import { validateWorkflowCommandConfig } from '../../shared/amapi-workflow-commands';
 import ExecutionHistory from '@/components/workflows/ExecutionHistory';
 import PageLoadingState from '@/components/common/PageLoadingState';
 
@@ -68,6 +69,8 @@ function Section({ title, step, description, open, onToggle, children }: Section
   );
 }
 
+const NEW_WORKFLOW_ROUTE = '__new_workflow__';
+
 // ─── Component ──────────────────────────────────────────────────────────────
 
 export default function WorkflowBuilder() {
@@ -89,7 +92,8 @@ export default function WorkflowBuilder() {
   const [actionConfig, setActionConfig] = useState<Record<string, unknown>>({});
   const [scopeType, setScopeType] = useState('environment');
   const [scopeId, setScopeId] = useState('');
-  const [hasInitialised, setHasInitialised] = useState(false);
+  const [initialisedWorkflowId, setInitialisedWorkflowId] = useState<string | null>(() => id ? null : NEW_WORKFLOW_ROUTE);
+  const [isDirty, setIsDirty] = useState(false);
 
   // ── Section open state ──
   const [openSections, setOpenSections] = useState<Record<number, boolean>>({
@@ -110,10 +114,40 @@ export default function WorkflowBuilder() {
   const updateMutation = useUpdateWorkflow();
   const testMutation = useTestWorkflow();
 
+  useEffect(() => {
+    if (id || initialisedWorkflowId === NEW_WORKFLOW_ROUTE) return;
+    if (initialisedWorkflowId && isDirty) {
+      const proceed = window.confirm('Discard your unsaved workflow changes and create a new workflow?');
+      if (!proceed) {
+        navigate(`/workflows/${initialisedWorkflowId}`, { replace: true });
+        return;
+      }
+    }
+    setName('');
+    setEnabled(true);
+    setTriggerType('device.enrolled');
+    setTriggerConfig({});
+    setConditions([]);
+    setActionType('device.command');
+    setActionConfig({});
+    setScopeType('environment');
+    setScopeId('');
+    setOpenSections({ 1: true, 2: true, 3: false, 4: true });
+    setInitialisedWorkflowId(NEW_WORKFLOW_ROUTE);
+    setIsDirty(false);
+  }, [id, initialisedWorkflowId, isDirty, navigate]);
+
   // Populate form from fetched workflow
   useEffect(() => {
-    if (workflowData?.workflow && !hasInitialised) {
+    if (workflowData?.workflow && workflowData.workflow.id === id && workflowData.workflow.id !== initialisedWorkflowId) {
       const w = workflowData.workflow;
+      if (initialisedWorkflowId && isDirty) {
+        const proceed = window.confirm('Discard your unsaved workflow changes and open the selected workflow?');
+        if (!proceed) {
+          navigate(initialisedWorkflowId === NEW_WORKFLOW_ROUTE ? '/workflows/new' : `/workflows/${initialisedWorkflowId}`, { replace: true });
+          return;
+        }
+      }
       setName(w.name);
       setEnabled(w.enabled);
       setTriggerType(w.trigger_type);
@@ -123,13 +157,14 @@ export default function WorkflowBuilder() {
       setActionConfig(w.action_config ?? {});
       setScopeType(w.scope_type ?? 'environment');
       setScopeId(w.scope_id ?? '');
-      setHasInitialised(true);
+      setInitialisedWorkflowId(w.id);
+      setIsDirty(false);
     }
-  }, [workflowData, hasInitialised]);
+  }, [id, initialisedWorkflowId, isDirty, navigate, workflowData]);
 
   // ── Handlers ──
   const handleSave = () => {
-    if (!environmentId || !name.trim()) return;
+    if (!environmentId || !name.trim() || actionValidationError) return;
 
     const payload = {
       environment_id: environmentId,
@@ -147,11 +182,15 @@ export default function WorkflowBuilder() {
     if (isNew) {
       createMutation.mutate(payload, {
         onSuccess: (data) => {
+          setInitialisedWorkflowId(data.workflow.id);
+          setIsDirty(false);
           navigate(`/workflows/${data.workflow.id}`, { replace: true });
         },
       });
     } else {
-      updateMutation.mutate({ ...payload, id: id! });
+      updateMutation.mutate({ ...payload, id: id! }, {
+        onSuccess: () => setIsDirty(false),
+      });
     }
   };
 
@@ -162,6 +201,9 @@ export default function WorkflowBuilder() {
 
   const isSaving = createMutation.isPending || updateMutation.isPending;
   const saveError = createMutation.error || updateMutation.error;
+  const actionValidationError = actionType === 'device.command'
+    ? validateWorkflowCommandConfig(actionConfig)
+    : null;
 
   // ── Loading ──
   if (!isNew && isFetching) {
@@ -230,7 +272,7 @@ export default function WorkflowBuilder() {
 
           <button
             onClick={handleSave}
-            disabled={isSaving || !name.trim()}
+            disabled={isSaving || !name.trim() || !!actionValidationError}
             className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-accent/90 disabled:opacity-50 transition-colors sm:w-auto"
           >
             {isSaving ? (
@@ -286,7 +328,10 @@ export default function WorkflowBuilder() {
               <input
                 type="text"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setIsDirty(true);
+                }}
                 placeholder="e.g. Lock non-compliant devices"
                 className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
               />
@@ -296,7 +341,10 @@ export default function WorkflowBuilder() {
             <div className="flex items-center gap-3">
               <button
                 type="button"
-                onClick={() => setEnabled(!enabled)}
+                onClick={() => {
+                  setEnabled(!enabled);
+                  setIsDirty(true);
+                }}
                 className={clsx(
                   'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
                   enabled ? 'bg-accent' : 'bg-gray-300'
@@ -320,7 +368,7 @@ export default function WorkflowBuilder() {
               <div className="mb-2 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => { setScopeType('environment'); setScopeId(''); }}
+                  onClick={() => { setScopeType('environment'); setScopeId(''); setIsDirty(true); }}
                   className={clsx(
                     'rounded-lg border px-4 py-2 text-sm font-medium transition-colors',
                     scopeType === 'environment'
@@ -332,7 +380,7 @@ export default function WorkflowBuilder() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setScopeType('group')}
+                  onClick={() => { setScopeType('group'); setIsDirty(true); }}
                   className={clsx(
                     'rounded-lg border px-4 py-2 text-sm font-medium transition-colors',
                     scopeType === 'group'
@@ -347,7 +395,7 @@ export default function WorkflowBuilder() {
               {scopeType === 'group' && (
                 <select
                   value={scopeId}
-                  onChange={(e) => setScopeId(e.target.value)}
+                  onChange={(e) => { setScopeId(e.target.value); setIsDirty(true); }}
                   className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
                 >
                   <option value="">Select a group...</option>
@@ -375,6 +423,7 @@ export default function WorkflowBuilder() {
             onChange={({ trigger_type, trigger_config }) => {
               setTriggerType(trigger_type);
               setTriggerConfig(trigger_config);
+              setIsDirty(true);
             }}
           />
         </Section>
@@ -387,7 +436,7 @@ export default function WorkflowBuilder() {
           open={openSections[3]}
           onToggle={() => toggleSection(3)}
         >
-          <ConditionBuilder conditions={conditions} onChange={setConditions} />
+          <ConditionBuilder conditions={conditions} onChange={(next) => { setConditions(next); setIsDirty(true); }} />
         </Section>
 
         {/* Section 4: Action */}
@@ -403,6 +452,7 @@ export default function WorkflowBuilder() {
             onChange={({ action_type, action_config }) => {
               setActionType(action_type);
               setActionConfig(action_config);
+              setIsDirty(true);
             }}
           />
         </Section>

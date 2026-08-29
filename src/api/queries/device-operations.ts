@@ -12,11 +12,15 @@ export interface DeviceOperation {
   [key: string]: unknown;
 }
 
-interface OperationsResponse {
+export interface OperationsResponse {
   operations: DeviceOperation[];
   nextPageToken?: string;
   unavailable?: boolean;
   message?: string;
+}
+
+export function getDeviceOperationsRefetchInterval(data?: OperationsResponse): number | false {
+  return data?.operations.some((operation) => !operation.done && !operation.error) ? 3000 : false;
 }
 
 // --- Query Keys ---
@@ -36,6 +40,9 @@ export function useDeviceOperations(deviceId: string) {
         `/api/devices/operations?action=list&device_id=${encodeURIComponent(deviceId)}`
       ),
     enabled: !!deviceId,
+    refetchInterval: (query) => getDeviceOperationsRefetchInterval(
+      query.state.data as OperationsResponse | undefined,
+    ),
   });
 }
 
@@ -44,7 +51,7 @@ export function useCancelOperation() {
   return useMutation({
     mutationFn: (operationName: string) =>
       apiClient.post<{ cancelled: boolean }>('/api/devices/operations', { operation_name: operationName }),
-    onSuccess: () => {
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: deviceOperationKeys.all });
     },
   });

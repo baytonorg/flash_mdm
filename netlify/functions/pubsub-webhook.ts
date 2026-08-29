@@ -4,6 +4,8 @@ import { storeBlob } from './_lib/blobs.js';
 import { amapiCall } from './_lib/amapi.js';
 import { jsonResponse, errorResponse } from './_lib/helpers.js';
 import { timingSafeEqual, randomUUID } from 'crypto';
+import { internalFunctionUrl, shouldTriggerBackgroundFunction } from './_lib/runtime.js';
+import { resolveAmapiDeviceImei } from './_lib/amapi-device-network.js';
 
 /**
  * PubSub push subscription webhook handler.
@@ -312,11 +314,12 @@ function buildDeviceAmapiName(
 }
 
 async function triggerQueueWorker(request: Request): Promise<void> {
-  const origin = new URL(request.url).origin;
+  if (!shouldTriggerBackgroundFunction()) return;
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 1500);
   try {
-    await fetch(`${origin}/.netlify/functions/sync-process-background`, {
+    await fetch(internalFunctionUrl(request, 'sync-process-background'), {
       method: 'POST',
       headers: {
         'x-internal-secret': process.env.INTERNAL_FUNCTION_SECRET ?? '',
@@ -338,15 +341,7 @@ async function fastPathUpsertDevice(
   const hardwareInfo = (device.hardwareInfo as Record<string, unknown>) ?? {};
   const softwareInfo = (device.softwareInfo as Record<string, unknown>) ?? {};
   const networkInfo = (device.networkInfo as Record<string, unknown>) ?? {};
-  const primaryTelephonyInfo =
-    (
-      (networkInfo.telephonyInfos as Array<Record<string, unknown>> | undefined) ??
-      (networkInfo.telephonyInfo as Array<Record<string, unknown>> | undefined)
-    )?.[0] ?? null;
-  const normalizedImei =
-    (networkInfo.imei as string | undefined) ??
-    (primaryTelephonyInfo?.imei as string | undefined) ??
-    null;
+  const normalizedImei = resolveAmapiDeviceImei(networkInfo);
   const modelStr = (hardwareInfo.model as string) ?? 'Device';
   const serialStr = (hardwareInfo.serialNumber as string) ?? deviceAmapiName.split('/').pop() ?? '';
   const autoName = `${modelStr}_${serialStr}`;
@@ -452,15 +447,7 @@ async function hydrateDeviceInline(environmentId: string, deviceAmapiName: strin
   const hardwareInfo = (device.hardwareInfo as Record<string, unknown>) ?? {};
   const softwareInfo = (device.softwareInfo as Record<string, unknown>) ?? {};
   const networkInfo = (device.networkInfo as Record<string, unknown>) ?? {};
-  const primaryTelephonyInfo =
-    (
-      (networkInfo.telephonyInfos as Array<Record<string, unknown>> | undefined) ??
-      (networkInfo.telephonyInfo as Array<Record<string, unknown>> | undefined)
-    )?.[0] ?? null;
-  const normalizedImei =
-    (networkInfo.imei as string | undefined) ??
-    (primaryTelephonyInfo?.imei as string | undefined) ??
-    null;
+  const normalizedImei = resolveAmapiDeviceImei(networkInfo);
 
   const modelStr = (hardwareInfo.model as string) ?? 'Device';
   const serialStr = (hardwareInfo.serialNumber as string) ?? deviceAmapiName.split('/').pop() ?? '';

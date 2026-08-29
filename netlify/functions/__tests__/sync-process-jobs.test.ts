@@ -90,6 +90,22 @@ beforeEach(() => {
 });
 
 describe('sync-process-background job queue processing', () => {
+  it('atomically claims due jobs, reclaims stale leases, and honours row attempt limits', async () => {
+    const clientQuery = vi.fn().mockResolvedValue({ rows: [] });
+    mockTransaction.mockImplementation(async (fn) => fn({ query: clientQuery } as never));
+
+    const response = await handler(makeRequest(), {} as never);
+
+    expect(response?.status).toBe(200);
+    const claimSql = String(clientQuery.mock.calls[0]?.[0]);
+    expect(claimSql).toContain("status = 'pending' AND scheduled_for <= now()");
+    expect(claimSql).toContain("status = 'locked' AND locked_at < now() - interval '10 minutes'");
+    expect(claimSql).toContain('COALESCE(max_attempts');
+    expect(claimSql).toContain('FOR UPDATE SKIP LOCKED');
+    expect(claimSql).toContain("THEN 'dead'");
+    expect(claimSql).toContain("UPDATE pubsub_events pe");
+  });
+
   it('marks unknown job types as dead and does not mark them completed', async () => {
     const unknownJob = {
       id: 'job1',
@@ -100,7 +116,7 @@ describe('sync-process-background job queue processing', () => {
       locked_at: new Date().toISOString(),
     };
 
-    mockTransaction.mockImplementation(async (fn) => {
+    mockTransaction.mockImplementation(async (_fn) => {
       // The handler passes a callback that runs queries via client.
       // The transaction mock returns the jobs array directly.
       return [unknownJob];
@@ -224,7 +240,7 @@ describe('sync-process-background job queue processing', () => {
 
     expect(mockExecute).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE device_commands SET'),
-      ['SUCCEEDED', 'env1', 'enterprises/e1/devices/d1/operations/1772138119597']
+      ['SUCCEEDED', null, 'env1', 'enterprises/e1/devices/d1/operations/1772138119597']
     );
 
     const processedPubsubEvent = mockExecute.mock.calls.find(
@@ -250,6 +266,7 @@ describe('sync-process-background job queue processing', () => {
           metadata: {
             '@type': 'type.googleapis.com/google.android.devicemanagement.v1.Command',
             type: 'START_LOST_MODE',
+            startLostModeStatus: { status: 'SUCCESS' },
           },
         },
       }),
@@ -271,7 +288,7 @@ describe('sync-process-background job queue processing', () => {
     );
   });
 
-  it('does not treat done=true as success when AMAPI command payload has an error', async () => {
+  it('does not treat done=true as success when command-specific status reports failure', async () => {
     const eventJob = {
       id: 'job_command_lost_mode_failed',
       job_type: 'process_event',
@@ -282,13 +299,10 @@ describe('sync-process-background job queue processing', () => {
         payload: {
           name: 'enterprises/e1/devices/d1/operations/1772548091418',
           done: true,
-          error: {
-            code: 3,
-            message: 'Command rejected',
-          },
           metadata: {
             '@type': 'type.googleapis.com/google.android.devicemanagement.v1.Command',
             type: 'START_LOST_MODE',
+            startLostModeStatus: { status: 'RESET_PASSWORD_RECENTLY' },
           },
         },
       }),
@@ -306,7 +320,12 @@ describe('sync-process-background job queue processing', () => {
 
     expect(mockExecute).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE device_commands SET'),
-      ['FAILED', 'env1', 'enterprises/e1/devices/d1/operations/1772548091418']
+      [
+        'FAILED',
+        'startLostModeStatus: RESET_PASSWORD_RECENTLY',
+        'env1',
+        'enterprises/e1/devices/d1/operations/1772548091418',
+      ]
     );
 
     const appliedStateUpdate = mockExecute.mock.calls.find(
@@ -317,7 +336,7 @@ describe('sync-process-background job queue processing', () => {
     expect(appliedStateUpdate).toBeUndefined();
   });
 
-  it('maps StartLostModeStatus response type to START_LOST_MODE updates', async () => {
+  it('treats documented already-in-lost-mode status as successful and updates local state', async () => {
     const eventJob = {
       id: 'job_command_lost_mode_response_type',
       job_type: 'process_event',
@@ -328,8 +347,10 @@ describe('sync-process-background job queue processing', () => {
         payload: {
           name: 'enterprises/e1/devices/d1/operations/1772548091417',
           done: true,
-          response: {
-            '@type': 'type.googleapis.com/google.android.devicemanagement.v1.StartLostModeStatus',
+          metadata: {
+            '@type': 'type.googleapis.com/google.android.devicemanagement.v1.Command',
+            type: 'START_LOST_MODE',
+            startLostModeStatus: { status: 'ALREADY_IN_LOST_MODE' },
           },
         },
       }),
@@ -658,6 +679,61 @@ describe('sync-process-background job queue processing', () => {
     );
   });
 
+  it('preserves KeyedAppState.data as an opaque string, including empty strings', async () => {
+    const job = {
+      id: 'job_status_feedback',
+      job_type: 'process_event',
+      payload: JSON.stringify({
+        event_message_id: 'msg_status_feedback',
+        notification_type: 'STATUS_REPORT',
+        device_amapi_name: 'enterprises/e1/devices/d1',
+        payload: {},
+      }),
+      environment_id: 'env1',
+      attempts: 0,
+      locked_at: new Date().toISOString(),
+    };
+
+    mockTransaction
+      .mockImplementationOnce(async () => [job] as never)
+      .mockImplementationOnce(async () => [] as never);
+    mockQueryOne
+      .mockResolvedValueOnce({
+        workspace_id: 'ws_1',
+        enterprise_name: 'enterprises/e1',
+        gcp_project_id: 'proj_1',
+      } as never)
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce({ id: 'dev_status_1' } as never);
+    mockAmapiCall.mockResolvedValueOnce({
+      state: 'ACTIVE',
+      policyCompliant: true,
+      applicationReports: [{
+        packageName: 'com.example.feedback',
+        keyedAppStates: [
+          { key: 'json-looking', severity: 'ERROR', data: '{"battery":9}' },
+          { key: 'empty', severity: 'INFO', data: '' },
+        ],
+      }],
+    } as never);
+
+    await handler(makeRequest(), {} as never);
+
+    const feedbackCall = mockExecute.mock.calls.find(
+      ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO app_feedback_items')
+    );
+    expect(feedbackCall).toBeDefined();
+    const rows = JSON.parse(String((feedbackCall?.[1] as unknown[])?.[0])) as Array<{
+      feedback_key: string;
+      data_json: string | null;
+    }>;
+    expect(rows.map(({ feedback_key, data_json }) => [feedback_key, data_json])).toEqual([
+      ['json-looking', '{"battery":9}'],
+      ['empty', ''],
+    ]);
+  });
+
   it('syncs device_applications during ENROLLMENT processing when AMAPI returns application reports', async () => {
     const job = {
       id: 'job_enroll_apps',
@@ -722,7 +798,7 @@ describe('sync-process-background job queue processing', () => {
     );
   });
 
-  it('deduplicates re-enrollment using previousDeviceNames by collapsing transient current placeholder and renaming one canonical prior record', async () => {
+  it('preserves an existing current row during re-enrollment and retains predecessor history', async () => {
     const newAmapiName = 'enterprises/e1/devices/new123';
     const job = {
       id: 'job_enroll_dedupe',
@@ -738,20 +814,20 @@ describe('sync-process-background job queue processing', () => {
       locked_at: new Date().toISOString(),
     };
 
+    const lineageQuery = vi.fn()
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          { id: 'dev_current', amapi_name: newAmapiName, enrollment_time: null },
+          { id: 'dev_old_1', amapi_name: 'enterprises/e1/devices/oldA', enrollment_time: null },
+          { id: 'dev_old_2', amapi_name: 'enterprises/e1/devices/oldB', enrollment_time: null },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] });
     mockTransaction
       .mockImplementationOnce(async () => [job] as never)
+      .mockImplementationOnce(async (fn) => fn({ query: lineageQuery } as never))
       .mockImplementationOnce(async () => [] as never);
-
-    mockQuery.mockImplementation(async (sql: unknown) => {
-      const text = String(sql);
-      if (text.includes('FROM devices') && text.includes('amapi_name = ANY')) {
-        return [
-          { id: 'dev_old_1', amapi_name: 'enterprises/e1/devices/oldA' },
-          { id: 'dev_old_2', amapi_name: 'enterprises/e1/devices/oldB' },
-        ] as never;
-      }
-      return [] as never;
-    });
 
     mockQueryOne.mockImplementation(async (sql: unknown) => {
       const text = String(sql);
@@ -762,19 +838,8 @@ describe('sync-process-background job queue processing', () => {
           gcp_project_id: 'proj_1',
         } as never;
       }
-      if (text.includes('SELECT id, state, group_id, snapshot') && text.includes('FROM devices')) {
-        return {
-          id: 'dev_placeholder',
-          state: 'PENDING_SYNC',
-          group_id: null,
-          snapshot: { source: 'pubsub-webhook' },
-        } as never;
-      }
-      if (text.includes('SELECT enrollment_time FROM devices')) {
-        return null as never;
-      }
       if (text.trim().startsWith('SELECT id FROM devices WHERE environment_id = $1 AND amapi_name = $2')) {
-        return { id: 'dev_old_1' } as never;
+        return { id: 'dev_current' } as never;
       }
       // Token/group lookup + final workflow dispatch lookup defaults
       return null as never;
@@ -794,17 +859,9 @@ describe('sync-process-background job queue processing', () => {
 
     await handler(makeRequest(), {} as never);
 
-    expect(mockExecute).toHaveBeenCalledWith('DELETE FROM devices WHERE id = $1', ['dev_placeholder']);
-
-    const renameCalls = mockExecute.mock.calls.filter(
-      (call) =>
-        typeof call[0] === 'string' &&
-        String(call[0]).includes('UPDATE devices SET amapi_name = $1') &&
-        Array.isArray(call[1]) &&
-        (call[1] as unknown[])[0] === newAmapiName
-    );
-    expect(renameCalls).toHaveLength(1);
-    expect(renameCalls[0]?.[1]).toEqual([newAmapiName, 'dev_old_1']);
+    expect(lineageQuery.mock.calls.some(([sql]) => String(sql).includes('DELETE FROM devices'))).toBe(false);
+    expect(lineageQuery.mock.calls.some(([sql]) => String(sql).includes('UPDATE devices SET amapi_name = $1'))).toBe(false);
+    expect(lineageQuery.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO devices'))).toBe(true);
   });
 
   it('prefers the correct previousDeviceNames canonical row over a more recently updated stale duplicate', async () => {
@@ -823,14 +880,10 @@ describe('sync-process-background job queue processing', () => {
       locked_at: new Date().toISOString(),
     };
 
-    mockTransaction
-      .mockImplementationOnce(async () => [job] as never)
-      .mockImplementationOnce(async () => [] as never);
-
-    mockQuery.mockImplementation(async (sql: unknown) => {
-      const text = String(sql);
-      if (text.includes('FROM devices') && text.includes('amapi_name = ANY')) {
-        return [
+    const lineageQuery = vi.fn()
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
           {
             id: 'dev_stale',
             amapi_name: 'enterprises/e1/devices/oldStale',
@@ -851,10 +904,13 @@ describe('sync-process-background job queue processing', () => {
             last_status_report_at: '2026-02-25T13:00:00Z',
             created_at: '2026-02-22T00:00:00Z',
           },
-        ] as never;
-      }
-      return [] as never;
-    });
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+    mockTransaction
+      .mockImplementationOnce(async () => [job] as never)
+      .mockImplementationOnce(async (fn) => fn({ query: lineageQuery } as never))
+      .mockImplementationOnce(async () => [] as never);
 
     mockQueryOne.mockImplementation(async (sql: unknown) => {
       const text = String(sql);
@@ -865,15 +921,6 @@ describe('sync-process-background job queue processing', () => {
           gcp_project_id: 'proj_1',
         } as never;
       }
-      if (text.includes('SELECT id, state, group_id, snapshot') && text.includes('FROM devices')) {
-        return {
-          id: 'dev_placeholder',
-          state: 'PENDING_SYNC',
-          group_id: null,
-          snapshot: { source: 'pubsub-webhook' },
-        } as never;
-      }
-      if (text.includes('SELECT enrollment_time FROM devices')) return null as never;
       if (text.trim().startsWith('SELECT id FROM devices WHERE environment_id = $1 AND amapi_name = $2')) {
         return { id: 'dev_correct' } as never;
       }
@@ -895,7 +942,7 @@ describe('sync-process-background job queue processing', () => {
 
     await handler(makeRequest(), {} as never);
 
-    const renameCall = mockExecute.mock.calls.find(
+    const renameCall = lineageQuery.mock.calls.find(
       (call) =>
         typeof call[0] === 'string'
         && String(call[0]).includes('UPDATE devices SET amapi_name = $1')

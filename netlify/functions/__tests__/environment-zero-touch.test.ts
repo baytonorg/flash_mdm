@@ -92,7 +92,7 @@ describe('environment-zero-touch', () => {
         name: 'ZT token',
         group_id: 'g1',
         group_name: 'Default',
-        one_time_use: true,
+        one_time_use: false,
         allow_personal_usage: 'PERSONAL_USAGE_UNSPECIFIED',
         expires_at: '2026-04-01T00:00:00.000Z',
         amapi_value: 'abc',
@@ -112,22 +112,33 @@ describe('environment-zero-touch', () => {
     );
     expect(body.groups).toEqual([{ id: 'g1', name: 'Default' }]);
     expect(body.active_tokens).toHaveLength(1);
+    const tokenListSql = String(mockQuery.mock.calls[1]?.[0] ?? '');
+    expect(tokenListSql).toContain('et.one_time_use = false');
+    expect(tokenListSql).toContain('et.amapi_value IS NOT NULL');
+    expect(tokenListSql).toContain('et.expires_at IS NOT NULL');
   });
 
-  it('creates iframe token with zero-touch enabledFeatures and iframe URL', async () => {
-    mockQueryOne.mockResolvedValueOnce({
-      id: 'env_1',
-      name: 'Env One',
-      workspace_id: 'ws_1',
-      enterprise_name: 'enterprises/e1',
-      gcp_project_id: 'proj-1',
-    } as never);
+  it('creates an iframe URL with the selected token in documented ADP DPC extras', async () => {
+    mockQueryOne
+      .mockResolvedValueOnce({
+        id: 'env_1',
+        name: 'Env One',
+        workspace_id: 'ws_1',
+        enterprise_name: 'enterprises/e1',
+        gcp_project_id: 'proj-1',
+      } as never)
+      .mockResolvedValueOnce({
+        id: 'tok_1',
+        amapi_value: 'enrollment-token-123',
+        group_id: 'group_1',
+      } as never);
     mockAmapiCall.mockResolvedValueOnce({ value: 'web_tok_123' } as never);
 
     const res = await handler(
       makePostRequest({
         environment_id: 'env_1',
         action: 'create_iframe_token',
+        token_id: 'tok_1',
       }),
       {} as never
     );
@@ -151,11 +162,26 @@ describe('environment-zero-touch', () => {
       })
     );
     expect(body.iframe_token).toBe('web_tok_123');
-    expect(body.iframe_url).toContain('dpcId=com.google.android.apps.work.clouddpc');
+    const iframeUrl = new URL(body.iframe_url);
+    expect(iframeUrl.searchParams.get('token')).toBe('web_tok_123');
+    expect(iframeUrl.searchParams.get('dpcId')).toBe('com.google.android.apps.work.clouddpc');
+    expect(JSON.parse(iframeUrl.searchParams.get('dpcExtras') ?? '{}')).toEqual({
+      'android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME':
+        'com.google.android.apps.work.clouddpc/.receivers.CloudDeviceAdminReceiver',
+      'android.app.extra.PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM':
+        'I5YvS0O5hXY46mb01BlRjq4oJJGs2kuUcHvVkAPEXlg',
+      'android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE': {
+        'com.google.android.apps.work.clouddpc.EXTRA_ENROLLMENT_TOKEN': 'enrollment-token-123',
+      },
+    });
     expect(mockLogAudit).toHaveBeenCalledOnce();
+    const tokenLookupSql = String(mockQueryOne.mock.calls[1]?.[0] ?? '');
+    expect(tokenLookupSql).toContain('one_time_use = false');
+    expect(tokenLookupSql).toContain('amapi_value IS NOT NULL');
+    expect(tokenLookupSql).toContain('expires_at IS NOT NULL');
   });
 
-  it('creates zero-touch enrollment tokens as reusable and non-expiring', async () => {
+  it('creates reusable zero-touch enrollment tokens with explicit duration and persisted AMAPI expiry', async () => {
     mockQueryOne.mockResolvedValueOnce({
       id: 'env_1',
       name: 'Env One',
@@ -167,6 +193,7 @@ describe('environment-zero-touch', () => {
       name: 'enterprises/e1/enrollmentTokens/zt1',
       value: 'enroll-token-1',
       qrCode: '{"android.app.extra.PROVISIONING_ENROLLMENT_TOKEN":"enroll-token-1"}',
+      expirationTimestamp: '9999-12-31T23:59:59.999999999Z',
     } as never);
 
     const res = await handler(
@@ -185,12 +212,51 @@ describe('environment-zero-touch', () => {
 
     const amapiBody = ((mockAmapiCall.mock.calls[0]?.[2] as { body?: Record<string, unknown> })?.body ?? {});
     expect(amapiBody.oneTimeOnly).toBe(false);
-    expect(amapiBody).not.toHaveProperty('duration');
+    expect(amapiBody.duration).toBe('315576000000s');
 
     const insertArgs = (mockExecute.mock.calls[0]?.[1] ?? []) as unknown[];
     expect(insertArgs[7]).toBe(false);
-    expect(insertArgs[9]).toBeNull();
-    expect(body.enrollment_token?.expires_at).toBeNull();
+    expect(insertArgs[9]).toBe('9999-12-31T23:59:59.999999999Z');
+    expect(body.enrollment_token?.expires_at).toBe('9999-12-31T23:59:59.999999999Z');
+  });
+
+  it('builds documented ADP DPC extras for an existing token', async () => {
+    mockQueryOne
+      .mockResolvedValueOnce({
+        id: 'env_1',
+        name: 'Env One',
+        workspace_id: 'ws_1',
+        enterprise_name: 'enterprises/e1',
+        gcp_project_id: 'proj-1',
+      } as never)
+      .mockResolvedValueOnce({
+        id: 'tok_1',
+        amapi_value: 'token-abc',
+        group_id: 'group_1',
+      } as never);
+
+    const res = await handler(
+      makePostRequest({
+        environment_id: 'env_1',
+        action: 'build_zt_dpc_extras',
+        token_id: 'tok_1',
+      }),
+      {} as never
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.dpc_extras).toEqual({
+      'android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME':
+        'com.google.android.apps.work.clouddpc/.receivers.CloudDeviceAdminReceiver',
+      'android.app.extra.PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM':
+        'I5YvS0O5hXY46mb01BlRjq4oJJGs2kuUcHvVkAPEXlg',
+      'android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE': {
+        'com.google.android.apps.work.clouddpc.EXTRA_ENROLLMENT_TOKEN': 'token-abc',
+      },
+    });
+    expect(body.token_id).toBe('tok_1');
+    expect(body.resolved_group_id).toBe('group_1');
   });
 
   it('rejects sensitive custom DPC extras', async () => {

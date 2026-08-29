@@ -1,5 +1,5 @@
 import type { Context } from '@netlify/functions';
-import { queryOne, execute, transaction } from './_lib/db.js';
+import { queryOne, transaction } from './_lib/db.js';
 import { jsonResponse, errorResponse } from './_lib/helpers.js';
 import { verifyWebhookSignature } from './_lib/stripe.js';
 import { logAudit } from './_lib/audit.js';
@@ -11,6 +11,106 @@ import {
   queueAndSendBillingEmail,
 } from './_lib/billing-notifications.js';
 import type Stripe from 'stripe';
+import type { PoolClient } from 'pg';
+
+type StripeEventClient = Pick<PoolClient, 'query'>;
+type AfterCommit = () => Promise<void>;
+
+type LegacyInvoice = Stripe.Invoice & {
+  subscription?: string | Stripe.Subscription | null;
+};
+
+type LegacyInvoiceLine = Stripe.InvoiceLineItem & {
+  proration?: boolean;
+  price?: string | Stripe.Price | null;
+};
+
+interface InvoiceRenewalPeriod {
+  seatCount: number;
+  startsAt: string;
+  endsAt: string;
+  invoiceCreated: number;
+  durationMonths: number;
+  stripePriceId: string | null;
+}
+
+function subscriptionId(value: string | Stripe.Subscription | null | undefined): string | null {
+  if (typeof value === 'string') return value;
+  return value?.id ?? null;
+}
+
+function getInvoiceSubscriptionId(invoice: Stripe.Invoice): string | null {
+  const legacySubscription = subscriptionId((invoice as LegacyInvoice).subscription);
+  if (legacySubscription) return legacySubscription;
+  return subscriptionId(invoice.parent?.subscription_details?.subscription);
+}
+
+function getInvoiceRenewalPeriod(
+  invoice: Stripe.Invoice,
+  expectedSubscriptionId: string,
+  expectedStripePriceId: string | null
+): InvoiceRenewalPeriod | null {
+  const lines = invoice.lines?.data ?? [];
+  const validLines = lines.filter((line) => {
+    const lineSubscriptionId = subscriptionId(line.subscription);
+    if (lineSubscriptionId && lineSubscriptionId !== expectedSubscriptionId) return false;
+
+    const parent = line.parent;
+    const isProration = (line as LegacyInvoiceLine).proration
+      ?? parent?.subscription_item_details?.proration
+      ?? parent?.invoice_item_details?.proration
+      ?? false;
+    return !isProration
+      && Number.isFinite(line.quantity)
+      && Number(line.quantity) > 0
+      && Number.isFinite(line.period?.start)
+      && Number.isFinite(line.period?.end)
+      && line.period.end > line.period.start;
+  });
+
+  const recurringLines = validLines.filter(
+    (line) => line.parent?.type === 'subscription_item_details'
+  );
+  const subscriptionCandidates = recurringLines.length > 0 ? recurringLines : validLines;
+  const candidates = expectedStripePriceId
+    ? subscriptionCandidates.filter((line) => getInvoiceLinePriceId(line) === expectedStripePriceId)
+    : subscriptionCandidates;
+  if (expectedStripePriceId && candidates.length === 0) return null;
+
+  const candidatePriceIds = new Set(candidates.map(getInvoiceLinePriceId).filter(Boolean));
+  if (!expectedStripePriceId && candidatePriceIds.size > 1) return null;
+  const line = [...candidates].sort(
+    (a, b) => b.period.end - a.period.end || b.period.start - a.period.start
+  )[0];
+  if (!line) return null;
+
+  const seatCount = Math.max(1, Math.trunc(Number(line.quantity)));
+  const startsAt = new Date(line.period.start * 1000).toISOString();
+  const endsAt = new Date(line.period.end * 1000).toISOString();
+  const durationMonths = Math.max(
+    1,
+    Math.round((line.period.end - line.period.start) / (30.4375 * 24 * 60 * 60))
+  );
+
+  return {
+    seatCount,
+    startsAt,
+    endsAt,
+    invoiceCreated: Number.isFinite(invoice.created) ? invoice.created : 0,
+    durationMonths,
+    stripePriceId: getInvoiceLinePriceId(line),
+  };
+}
+
+function getInvoiceLinePriceId(line: Stripe.InvoiceLineItem): string | null {
+  const legacyPrice = (line as LegacyInvoiceLine).price;
+  if (typeof legacyPrice === 'string') return legacyPrice;
+  if (legacyPrice?.id) return legacyPrice.id;
+
+  const price = line.pricing?.price_details?.price;
+  if (typeof price === 'string') return price;
+  return price?.id ?? null;
+}
 
 async function getWorkspaceIdForEvent(event: Stripe.Event): Promise<string | null> {
   if (event.type === 'checkout.session.completed') {
@@ -25,28 +125,24 @@ async function getWorkspaceIdForEvent(event: Stripe.Event): Promise<string | nul
 
   if (event.type === 'invoice.payment_failed') {
     const invoice = event.data.object as Stripe.Invoice;
-    const subscriptionId = typeof invoice.subscription === 'string'
-      ? invoice.subscription
-      : invoice.subscription?.id;
-    if (!subscriptionId) return null;
+    const invoiceSubscriptionId = getInvoiceSubscriptionId(invoice);
+    if (!invoiceSubscriptionId) return null;
 
     const license = await queryOne<{ workspace_id: string }>(
       `SELECT workspace_id FROM licenses WHERE stripe_subscription_id = $1`,
-      [subscriptionId]
+      [invoiceSubscriptionId]
     );
     return license?.workspace_id ?? null;
   }
 
   if (event.type === 'invoice.paid') {
     const invoice = event.data.object as Stripe.Invoice;
-    const subscriptionId = typeof invoice.subscription === 'string'
-      ? invoice.subscription
-      : invoice.subscription?.id;
-    if (!subscriptionId) return null;
+    const invoiceSubscriptionId = getInvoiceSubscriptionId(invoice);
+    if (!invoiceSubscriptionId) return null;
 
     const license = await queryOne<{ workspace_id: string }>(
       `SELECT workspace_id FROM licenses WHERE stripe_subscription_id = $1`,
-      [subscriptionId]
+      [invoiceSubscriptionId]
     );
     return license?.workspace_id ?? null;
   }
@@ -81,17 +177,6 @@ export default async function handler(request: Request, _context: Context) {
       return errorResponse('Invalid signature', 400);
     }
 
-    const existingEvent = await queryOne<{ id: string }>(
-      `SELECT id
-       FROM workspace_billing_events
-       WHERE source = 'platform_stripe'
-         AND event_id = $1`,
-      [event.id]
-    );
-    if (existingEvent) {
-      return jsonResponse({ received: true, duplicate: true });
-    }
-
     const workspaceId = await getWorkspaceIdForEvent(event);
     const platformLicensingEnabled = await isPlatformLicensingEnabled();
     if (!platformLicensingEnabled) {
@@ -104,49 +189,54 @@ export default async function handler(request: Request, _context: Context) {
       }
     }
 
-    if (workspaceId) {
-      const dedupeResult = await execute(
-        `INSERT INTO workspace_billing_events
-           (id, workspace_id, source, event_id, event_type, payload, created_at)
-         VALUES ($1, $2, 'platform_stripe', $3, $4, $5::jsonb, now())
-         ON CONFLICT (source, event_id) DO NOTHING`,
-        [crypto.randomUUID(), workspaceId, event.id, event.type, JSON.stringify(event)]
-      );
+    const processing = await transaction(async (client) => {
+      if (workspaceId) {
+        const claim = await client.query<{ id: string }>(
+          `INSERT INTO workspace_billing_events
+             (id, workspace_id, source, event_id, event_type, payload, created_at)
+           VALUES ($1, $2, 'platform_stripe', $3, $4, $5::jsonb, now())
+           ON CONFLICT (source, event_id) DO UPDATE
+           SET workspace_id = EXCLUDED.workspace_id,
+               event_type = EXCLUDED.event_type,
+               payload = EXCLUDED.payload
+           WHERE workspace_billing_events.processed_at IS NULL
+           RETURNING id`,
+          [crypto.randomUUID(), workspaceId, event.id, event.type, JSON.stringify(event)]
+        );
 
-      if (typeof dedupeResult.rowCount === 'number' && dedupeResult.rowCount === 0) {
-        return jsonResponse({ received: true, duplicate: true });
+        // PostgreSQL waits for a concurrent claimant before evaluating the conflict.
+        // No returned row therefore means the other transaction completed the event.
+        if ((claim.rowCount ?? 0) === 0) {
+          return { duplicate: true, afterCommit: null as AfterCommit | null };
+        }
       }
+
+      const afterCommit = await processStripeEvent(event, workspaceId, client);
+
+      if (workspaceId) {
+        await client.query(
+          `UPDATE workspace_billing_events
+           SET processed_at = now()
+           WHERE source = 'platform_stripe' AND event_id = $1`,
+          [event.id]
+        );
+      }
+
+      return { duplicate: false, afterCommit };
+    });
+
+    if (processing.duplicate) {
+      return jsonResponse({ received: true, duplicate: true });
     }
 
-    switch (event.type) {
-      case 'checkout.session.completed': {
-        const session = event.data.object as Stripe.Checkout.Session;
-        await handleCheckoutCompleted(session);
-        break;
+    if (processing.afterCommit) {
+      try {
+        await processing.afterCommit();
+      } catch (err) {
+        // Core billing state has committed. A provider retry must not replay it merely
+        // because optional audit/notification follow-up encountered an error.
+        console.error('Stripe webhook post-processing error:', err);
       }
-      case 'customer.subscription.updated': {
-        const subscription = event.data.object as Stripe.Subscription;
-        await handleSubscriptionUpdated(subscription);
-        break;
-      }
-      case 'customer.subscription.deleted': {
-        const subscription = event.data.object as Stripe.Subscription;
-        await handleSubscriptionDeleted(subscription);
-        break;
-      }
-      case 'invoice.payment_failed': {
-        const invoice = event.data.object as Stripe.Invoice;
-        await handlePaymentFailed(invoice);
-        break;
-      }
-      case 'invoice.paid': {
-        const invoice = event.data.object as Stripe.Invoice;
-        await handleInvoicePaid(invoice);
-        break;
-      }
-      default:
-        // Unhandled event type — acknowledge receipt
-        break;
     }
 
     return jsonResponse({ received: true });
@@ -157,9 +247,33 @@ export default async function handler(request: Request, _context: Context) {
   }
 }
 
-async function handleCheckoutCompleted(session: Stripe.Checkout.Session): Promise<void> {
+async function processStripeEvent(
+  event: Stripe.Event,
+  workspaceId: string | null,
+  client: StripeEventClient
+): Promise<AfterCommit | null> {
+  switch (event.type) {
+    case 'checkout.session.completed':
+      return handleCheckoutCompleted(event.data.object as Stripe.Checkout.Session, client);
+    case 'customer.subscription.updated':
+      return handleSubscriptionUpdated(event.data.object as Stripe.Subscription, client);
+    case 'customer.subscription.deleted':
+      return handleSubscriptionDeleted(event.data.object as Stripe.Subscription, client);
+    case 'invoice.payment_failed':
+      return handlePaymentFailed(event.data.object as Stripe.Invoice, workspaceId, client);
+    case 'invoice.paid':
+      return handleInvoicePaid(event.data.object as Stripe.Invoice, client);
+    default:
+      return null;
+  }
+}
+
+async function handleCheckoutCompleted(
+  session: Stripe.Checkout.Session,
+  client: StripeEventClient
+): Promise<AfterCommit | null> {
   const workspaceId = session.metadata?.workspace_id;
-  if (!workspaceId || !session.subscription) return;
+  if (!workspaceId || !session.subscription) return null;
 
   const subscriptionId = typeof session.subscription === 'string'
     ? session.subscription
@@ -180,86 +294,83 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session): Promis
     : 1;
 
   if (plan) {
-    // Serialize writes per workspace to avoid duplicate rows when Stripe retries.
-    await transaction(async (client) => {
+    await client.query(
+      `SELECT 1 FROM workspaces WHERE id = $1 FOR UPDATE`,
+      [workspaceId]
+    );
+
+    const updated = await client.query(
+      `UPDATE licenses
+       SET plan_id = $1, stripe_subscription_id = $2, status = 'active', updated_at = now()
+       WHERE workspace_id = $3`,
+      [plan.id, subscriptionId, workspaceId]
+    );
+
+    if ((updated.rowCount ?? 0) === 0) {
       await client.query(
-        `SELECT 1 FROM workspaces WHERE id = $1 FOR UPDATE`,
-        [workspaceId]
+        `INSERT INTO licenses (workspace_id, plan_id, stripe_subscription_id, status)
+         VALUES ($1, $2, $3, 'active')`,
+        [workspaceId, plan.id, subscriptionId]
       );
+    }
 
-      const updated = await client.query(
-        `UPDATE licenses
-         SET plan_id = $1, stripe_subscription_id = $2, status = 'active', updated_at = now()
-         WHERE workspace_id = $3`,
-        [plan.id, subscriptionId, workspaceId]
-      );
+    await client.query(
+      `INSERT INTO license_grants
+         (id, workspace_id, source, seat_count, starts_at, ends_at, status, external_ref, metadata)
+       SELECT $1, $2, 'stripe', $3, now(), now() + ($4 || ' months')::interval, 'active', $5, $6::jsonb
+       WHERE NOT EXISTS (
+         SELECT 1 FROM license_grants WHERE workspace_id = $2 AND source = 'stripe' AND external_ref = $5
+       )`,
+      [
+        crypto.randomUUID(),
+        workspaceId,
+        seatCount,
+        String(durationMonths),
+        `subscription:${subscriptionId}`,
+        JSON.stringify({
+          checkout_session_id: session.id,
+          subscription_id: subscriptionId,
+          plan_id: plan.id,
+          plan_name: plan.name,
+        }),
+      ]
+    );
 
-      if ((updated.rowCount ?? 0) === 0) {
-        await client.query(
-          `INSERT INTO licenses (workspace_id, plan_id, stripe_subscription_id, status)
-           VALUES ($1, $2, $3, 'active')`,
-          [workspaceId, plan.id, subscriptionId]
-        );
-      }
-
+    if (giftOffsetSeats > 0) {
+      const giftInvoiceId = crypto.randomUUID();
       await client.query(
-        `INSERT INTO license_grants
-           (id, workspace_id, source, seat_count, starts_at, ends_at, status, external_ref, metadata)
-         SELECT $1, $2, 'stripe', $3, now(), now() + ($4 || ' months')::interval, 'active', $5, $6::jsonb
-         WHERE NOT EXISTS (
-           SELECT 1 FROM license_grants WHERE workspace_id = $2 AND source = 'stripe' AND external_ref = $5
-         )`,
+        `INSERT INTO billing_invoices
+           (id, workspace_id, invoice_type, status, subtotal_cents, currency, paid_at, source, metadata, created_at, updated_at)
+         VALUES ($1, $2, 'workspace_to_superadmin', 'paid', 0, $3, now(), 'stripe_gift_offset', $4::jsonb, now(), now())`,
         [
-          crypto.randomUUID(),
+          giftInvoiceId,
           workspaceId,
-          seatCount,
-          String(durationMonths),
-          `subscription:${subscriptionId}`,
+          (session.currency ?? 'usd').toLowerCase(),
           JSON.stringify({
             checkout_session_id: session.id,
-            subscription_id: subscriptionId,
-            plan_id: plan.id,
-            plan_name: plan.name,
+            gift_offset_seats: giftOffsetSeats,
           }),
         ]
       );
+      await client.query(
+        `INSERT INTO billing_invoice_items
+           (id, invoice_id, description, quantity, unit_amount_cents, period_start, period_end, metadata, created_at)
+         VALUES ($1, $2, $3, $4, 0, now(), now() + ($5 || ' months')::interval, $6::jsonb, now())`,
+        [
+          crypto.randomUUID(),
+          giftInvoiceId,
+          `Gift offset applied to Stripe checkout ${session.id}`,
+          giftOffsetSeats,
+          String(durationMonths),
+          JSON.stringify({
+            gift_offset_seats: giftOffsetSeats,
+            checkout_session_id: session.id,
+          }),
+        ]
+      );
+    }
 
-      if (giftOffsetSeats > 0) {
-        const giftInvoiceId = crypto.randomUUID();
-        await client.query(
-          `INSERT INTO billing_invoices
-             (id, workspace_id, invoice_type, status, subtotal_cents, currency, paid_at, source, metadata, created_at, updated_at)
-           VALUES ($1, $2, 'workspace_to_superadmin', 'paid', 0, $3, now(), 'stripe_gift_offset', $4::jsonb, now(), now())`,
-          [
-            giftInvoiceId,
-            workspaceId,
-            (session.currency ?? 'usd').toLowerCase(),
-            JSON.stringify({
-              checkout_session_id: session.id,
-              gift_offset_seats: giftOffsetSeats,
-            }),
-          ]
-        );
-        await client.query(
-          `INSERT INTO billing_invoice_items
-             (id, invoice_id, description, quantity, unit_amount_cents, period_start, period_end, metadata, created_at)
-           VALUES ($1, $2, $3, $4, 0, now(), now() + ($5 || ' months')::interval, $6::jsonb, now())`,
-          [
-            crypto.randomUUID(),
-            giftInvoiceId,
-            `Gift offset applied to Stripe checkout ${session.id}`,
-            giftOffsetSeats,
-            String(durationMonths),
-            JSON.stringify({
-              gift_offset_seats: giftOffsetSeats,
-              checkout_session_id: session.id,
-            }),
-          ]
-        );
-      }
-    });
-
-    await logAudit({
+    return () => logAudit({
       workspace_id: workspaceId,
       actor_type: 'system',
       visibility_scope: 'privileged',
@@ -274,11 +385,16 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session): Promis
       },
     });
   }
+
+  return null;
 }
 
-async function handleSubscriptionUpdated(subscription: Stripe.Subscription): Promise<void> {
+async function handleSubscriptionUpdated(
+  subscription: Stripe.Subscription,
+  client: StripeEventClient
+): Promise<AfterCommit | null> {
   const workspaceId = subscription.metadata?.workspace_id;
-  if (!workspaceId) return;
+  if (!workspaceId) return null;
 
   const status = mapStripeStatus(subscription.status);
   const periodEnd = subscription.current_period_end
@@ -309,12 +425,12 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription): Pro
   }
 
   params.push(workspaceId);
-  await execute(
+  await client.query(
     `UPDATE licenses SET ${updateFields.join(', ')} WHERE workspace_id = $${params.length}`,
     params
   );
 
-  await logAudit({
+  return () => logAudit({
     workspace_id: workspaceId,
     actor_type: 'system',
     visibility_scope: 'privileged',
@@ -324,39 +440,40 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription): Pro
   });
 }
 
-async function handleSubscriptionDeleted(subscription: Stripe.Subscription): Promise<void> {
+async function handleSubscriptionDeleted(
+  subscription: Stripe.Subscription,
+  client: StripeEventClient
+): Promise<AfterCommit | null> {
   const workspaceId = subscription.metadata?.workspace_id;
-  if (!workspaceId) return;
+  if (!workspaceId) return null;
 
-  await transaction(async (client) => {
-    await client.query(
-      `UPDATE licenses
-       SET status = 'cancelled', updated_at = now()
-       WHERE workspace_id = $1 AND stripe_subscription_id = $2`,
-      [workspaceId, subscription.id]
-    );
+  await client.query(
+    `UPDATE licenses
+     SET status = 'cancelled', updated_at = now()
+     WHERE workspace_id = $1 AND stripe_subscription_id = $2`,
+    [workspaceId, subscription.id]
+  );
 
-    await client.query(
-      `UPDATE license_grants
-       SET status = 'cancelled',
-           ends_at = CASE
-             WHEN ends_at IS NULL THEN now()
-             ELSE LEAST(ends_at, now())
-           END,
-           updated_at = now()
-       WHERE workspace_id = $1
-         AND status = 'active'
-         AND source = 'stripe'
-         AND (
-           external_ref = $2
-           OR external_ref = $3
-           OR metadata ->> 'subscription_id' = $2
-         )`,
-      [workspaceId, subscription.id, `subscription:${subscription.id}`]
-    );
-  });
+  await client.query(
+    `UPDATE license_grants
+     SET status = 'cancelled',
+         ends_at = CASE
+           WHEN ends_at IS NULL THEN now()
+           ELSE LEAST(ends_at, now())
+         END,
+         updated_at = now()
+     WHERE workspace_id = $1
+       AND status = 'active'
+       AND source = 'stripe'
+       AND (
+         external_ref = $2
+         OR external_ref = $3
+         OR metadata ->> 'subscription_id' = $2
+       )`,
+    [workspaceId, subscription.id, `subscription:${subscription.id}`]
+  );
 
-  await logAudit({
+  return () => logAudit({
     workspace_id: workspaceId,
     actor_type: 'system',
     visibility_scope: 'privileged',
@@ -366,83 +483,181 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription): Pro
   });
 }
 
-async function handlePaymentFailed(invoice: Stripe.Invoice): Promise<void> {
-  const subscriptionId = typeof invoice.subscription === 'string'
-    ? invoice.subscription
-    : invoice.subscription?.id;
+async function handlePaymentFailed(
+  invoice: Stripe.Invoice,
+  workspaceId: string | null,
+  client: StripeEventClient
+): Promise<AfterCommit | null> {
+  const invoiceSubscriptionId = getInvoiceSubscriptionId(invoice);
 
-  if (!subscriptionId) return;
+  if (!invoiceSubscriptionId || !workspaceId) return null;
 
-  const license = await queryOne<{ workspace_id: string }>(
-    `SELECT workspace_id FROM licenses WHERE stripe_subscription_id = $1`,
-    [subscriptionId]
-  );
-  if (!license) return;
-
-  await execute(
+  await client.query(
     `UPDATE licenses SET status = 'past_due', updated_at = now() WHERE stripe_subscription_id = $1`,
-    [subscriptionId]
+    [invoiceSubscriptionId]
   );
 
-  await logAudit({
-    workspace_id: license.workspace_id,
-    actor_type: 'system',
-    visibility_scope: 'privileged',
-    action: 'license.payment_failed',
-    resource_type: 'license',
-    details: { subscription_id: subscriptionId, invoice_id: invoice.id },
-  });
+  return async () => {
+    await logAudit({
+      workspace_id: workspaceId,
+      actor_type: 'system',
+      visibility_scope: 'privileged',
+      action: 'license.payment_failed',
+      resource_type: 'license',
+      details: { subscription_id: invoiceSubscriptionId, invoice_id: invoice.id },
+    });
 
-  const names = await getWorkspaceScopeNames(license.workspace_id);
-  const { subject, html } = buildPaymentFailedEmail(names, invoice.id ?? null, subscriptionId);
-  await queueAndSendBillingEmail({
-    workspaceId: license.workspace_id,
-    notificationType: 'platform_payment_failed',
-    dedupeKey: `platform:payment_failed:${invoice.id ?? subscriptionId}`,
-    subject,
-    html,
-    payload: {
-      invoice_id: invoice.id ?? null,
-      subscription_id: subscriptionId,
-    },
-  });
+    const names = await getWorkspaceScopeNames(workspaceId);
+    const { subject, html } = buildPaymentFailedEmail(names, invoice.id ?? null, invoiceSubscriptionId);
+    await queueAndSendBillingEmail({
+      workspaceId,
+      notificationType: 'platform_payment_failed',
+      dedupeKey: `platform:payment_failed:${invoice.id ?? invoiceSubscriptionId}`,
+      subject,
+      html,
+      payload: {
+        invoice_id: invoice.id ?? null,
+        subscription_id: invoiceSubscriptionId,
+      },
+    });
+  };
 }
 
-async function handleInvoicePaid(invoice: Stripe.Invoice): Promise<void> {
-  const subscriptionId = typeof invoice.subscription === 'string'
-    ? invoice.subscription
-    : invoice.subscription?.id;
-  if (!subscriptionId) return;
+async function handleInvoicePaid(
+  invoice: Stripe.Invoice,
+  client: StripeEventClient
+): Promise<AfterCommit | null> {
+  const invoiceSubscriptionId = getInvoiceSubscriptionId(invoice);
+  if (!invoiceSubscriptionId) return null;
 
-  const license = await queryOne<{ workspace_id: string }>(
-    `SELECT workspace_id FROM licenses WHERE stripe_subscription_id = $1`,
-    [subscriptionId]
+  const licenseResult = await client.query<{
+    workspace_id: string;
+    status: string;
+    stripe_price_id: string | null;
+  }>(
+    `SELECT l.workspace_id, l.status, lp.stripe_price_id
+     FROM licenses l
+     JOIN license_plans lp ON lp.id = l.plan_id
+     WHERE l.stripe_subscription_id = $1
+     FOR UPDATE`,
+    [invoiceSubscriptionId]
   );
-  if (!license) return;
+  const license = licenseResult.rows[0];
+  if (!license) {
+    throw new Error(`Stripe license not ready for paid invoice ${invoice.id}`);
+  }
+  if (license.status === 'cancelled') return null;
 
-  const item = invoice.lines?.data?.[0];
-  const seatCount = Math.max(1, Number.parseInt(String(item?.quantity ?? 1), 10) || 1);
-  const durationMonths = 1;
-  const names = await getWorkspaceScopeNames(license.workspace_id);
-  const { subject, html } = buildRenewalEmail(
-    names,
-    seatCount,
-    durationMonths,
-    invoice.id ?? null
+  const renewal = getInvoiceRenewalPeriod(
+    invoice,
+    invoiceSubscriptionId,
+    license.stripe_price_id
   );
-  await queueAndSendBillingEmail({
-    workspaceId: license.workspace_id,
-    notificationType: 'platform_renewal',
-    dedupeKey: `platform:renewal:${invoice.id ?? subscriptionId}`,
-    subject,
-    html,
-    payload: {
-      invoice_id: invoice.id ?? null,
-      subscription_id: subscriptionId,
-      seat_count: seatCount,
-      duration_months: durationMonths,
-    },
+  if (!renewal) {
+    throw new Error(`No unambiguous subscription line for paid invoice ${invoice.id}`);
+  }
+
+  const grantResult = await client.query<{
+    id: string;
+    ends_at: string | null;
+    status: string;
+    metadata: Record<string, unknown> | null;
+  }>(
+    `SELECT id, ends_at, status, metadata
+     FROM license_grants
+     WHERE workspace_id = $1
+       AND source = 'stripe'
+       AND (
+         external_ref = $2
+         OR external_ref = $3
+         OR metadata ->> 'subscription_id' = $2
+       )
+     ORDER BY ends_at DESC NULLS FIRST, created_at DESC
+     LIMIT 1
+     FOR UPDATE`,
+    [license.workspace_id, invoiceSubscriptionId, `subscription:${invoiceSubscriptionId}`]
+  );
+  const grant = grantResult.rows[0];
+
+  if (grant) {
+    const existingEnd = grant.ends_at ? Date.parse(grant.ends_at) : Number.POSITIVE_INFINITY;
+    const renewalEnd = Date.parse(renewal.endsAt);
+    const previousInvoiceCreated = Number(grant.metadata?.last_invoice_created ?? 0);
+    const isOlderPeriod = renewalEnd < existingEnd;
+    const isOlderInvoiceForSamePeriod = renewalEnd === existingEnd
+      && renewal.invoiceCreated < previousInvoiceCreated;
+    if (grant.status === 'cancelled' || isOlderPeriod || isOlderInvoiceForSamePeriod) {
+      return null;
+    }
+  }
+
+  await client.query(
+    `UPDATE licenses
+     SET status = 'active', current_period_end = $2, updated_at = now()
+     WHERE stripe_subscription_id = $1`,
+    [invoiceSubscriptionId, renewal.endsAt]
+  );
+
+  const metadata = JSON.stringify({
+    invoice_id: invoice.id ?? null,
+    subscription_id: invoiceSubscriptionId,
+    last_invoice_created: renewal.invoiceCreated,
   });
+
+  if (grant) {
+    await client.query(
+      `UPDATE license_grants
+       SET seat_count = $2,
+           starts_at = $3,
+           ends_at = $4,
+           status = 'active',
+           metadata = COALESCE(metadata, '{}'::jsonb) || $5::jsonb,
+           updated_at = now()
+       WHERE id = $1`,
+      [grant.id, renewal.seatCount, renewal.startsAt, renewal.endsAt, metadata]
+    );
+  } else {
+    await client.query(
+      `INSERT INTO license_grants
+         (id, workspace_id, source, seat_count, starts_at, ends_at, status, external_ref, metadata)
+       VALUES ($1, $2, 'stripe', $3, $4, $5, 'active', $6, $7::jsonb)`,
+      [
+        crypto.randomUUID(),
+        license.workspace_id,
+        renewal.seatCount,
+        renewal.startsAt,
+        renewal.endsAt,
+        `subscription:${invoiceSubscriptionId}`,
+        metadata,
+      ]
+    );
+  }
+
+  return async () => {
+    const names = await getWorkspaceScopeNames(license.workspace_id);
+    const { subject, html } = buildRenewalEmail(
+      names,
+      renewal.seatCount,
+      renewal.durationMonths,
+      invoice.id ?? null
+    );
+    await queueAndSendBillingEmail({
+      workspaceId: license.workspace_id,
+      notificationType: 'platform_renewal',
+      dedupeKey: `platform:renewal:${invoice.id ?? invoiceSubscriptionId}`,
+      subject,
+      html,
+      payload: {
+        invoice_id: invoice.id ?? null,
+        subscription_id: invoiceSubscriptionId,
+        seat_count: renewal.seatCount,
+        duration_months: renewal.durationMonths,
+        period_start: renewal.startsAt,
+        period_end: renewal.endsAt,
+        stripe_price_id: renewal.stripePriceId,
+      },
+    });
+  };
 }
 
 async function findPlanBySubscription(subscriptionId: string): Promise<{ id: string; name: string } | null> {

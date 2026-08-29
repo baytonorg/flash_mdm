@@ -18,6 +18,7 @@ export interface AuditListParams {
   environment_id: string;
   page?: number;
   per_page?: number;
+  action?: string;
 }
 
 interface AuditListResponse {
@@ -34,11 +35,12 @@ export const auditKeys = {
 
 // --- Helpers ---
 
-function buildAuditQuery(params: AuditListParams): string {
+export function buildAuditQuery(params: AuditListParams): string {
   const searchParams = new URLSearchParams();
   searchParams.set('environment_id', params.environment_id);
   if (params.page != null) searchParams.set('page', String(params.page));
   if (params.per_page != null) searchParams.set('per_page', String(params.per_page));
+  if (params.action) searchParams.set('action', params.action);
   return searchParams.toString();
 }
 

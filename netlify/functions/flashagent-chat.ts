@@ -11,6 +11,7 @@ import {
   isValidUuid,
   assertSameOriginRequest,
   getClientIp,
+  getPublicOrigin,
   retryAfterHeader,
 } from "./_lib/helpers.js";
 import { queryOne } from "./_lib/db.js";
@@ -194,7 +195,7 @@ export default async function handler(request: Request, _context: Context) {
       permissionMatrix,
       userRole: assistantRole,
       accessibleGroupIds: accessScope.accessible_group_ids,
-      apiBaseUrl: new URL(request.url).origin,
+      apiBaseUrl: getPublicOrigin(request),
       flashiApiKey: "",
     };
 

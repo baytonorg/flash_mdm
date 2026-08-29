@@ -1,5 +1,7 @@
 import type { Context } from '@netlify/functions';
-import { query, queryOne, execute } from './_lib/db.js';
+import type pg from 'pg';
+import { query, transaction } from './_lib/db.js';
+import { internalFunctionUrl, shouldTriggerBackgroundFunction } from './_lib/runtime.js';
 
 export const config = {
   schedule: '*/5 * * * *',
@@ -29,10 +31,20 @@ interface ScopeDevice {
 
 // ─── Helper ─────────────────────────────────────────────────────────────────
 
-async function getDevicesInScope(workflow: ScheduledWorkflow): Promise<ScopeDevice[]> {
+async function getDevicesInScope(client: pg.PoolClient, workflow: ScheduledWorkflow): Promise<ScopeDevice[]> {
+  if (workflow.scope_type === 'device') {
+    if (!workflow.scope_id) return [];
+    const result = await client.query<ScopeDevice>(
+      `SELECT id FROM devices
+       WHERE id = $1 AND environment_id = $2 AND deleted_at IS NULL`,
+      [workflow.scope_id, workflow.environment_id]
+    );
+    return result.rows;
+  }
+
   if (workflow.scope_type === 'group' && workflow.scope_id) {
     // Get all devices in group and its descendants via closure table
-    return query<ScopeDevice>(
+    const result = await client.query<ScopeDevice>(
       `SELECT d.id FROM devices d
        JOIN group_closures gc ON gc.descendant_id = d.group_id
        WHERE gc.ancestor_id = $1
@@ -40,13 +52,16 @@ async function getDevicesInScope(workflow: ScheduledWorkflow): Promise<ScopeDevi
          AND d.deleted_at IS NULL`,
       [workflow.scope_id, workflow.environment_id]
     );
+    return result.rows;
   }
 
-  // Default: all devices in environment
-  return query<ScopeDevice>(
+  if (workflow.scope_type !== 'environment') return [];
+
+  const result = await client.query<ScopeDevice>(
     'SELECT id FROM devices WHERE environment_id = $1 AND deleted_at IS NULL',
     [workflow.environment_id]
   );
+  return result.rows;
 }
 
 function shouldTrigger(workflow: ScheduledWorkflow): boolean {
@@ -62,7 +77,7 @@ function shouldTrigger(workflow: ScheduledWorkflow): boolean {
 
 // ─── Main Handler ───────────────────────────────────────────────────────────
 
-export default async (request: Request, context: Context) => {
+export default async (request: Request, _context: Context) => {
   console.log('Workflow cron scheduled function started');
   // Note: Netlify scheduled functions cannot be invoked externally — no auth needed
 
@@ -79,51 +94,61 @@ export default async (request: Request, context: Context) => {
     console.log(`Found ${workflows.length} scheduled workflows`);
 
     let enqueued = 0;
+    let errors = 0;
 
     for (const workflow of workflows) {
       try {
-        if (!shouldTrigger(workflow)) {
-          continue;
-        }
-
-        // Get all devices in scope
-        const devices = await getDevicesInScope(workflow);
-
-        if (devices.length === 0) {
-          console.log(`Workflow ${workflow.id} (${workflow.name}): no devices in scope`);
-          continue;
-        }
-
-        console.log(`Workflow ${workflow.id} (${workflow.name}): evaluating against ${devices.length} devices`);
-
-        // Enqueue a background evaluation job for each device
-        for (const device of devices) {
-          await execute(
-            `INSERT INTO job_queue (id, job_type, environment_id, payload, status, scheduled_for)
-             VALUES ($1, 'workflow_evaluate', $2, $3, 'pending', now())`,
-            [
-              crypto.randomUUID(),
-              workflow.environment_id,
-              JSON.stringify({
-                workflow_id: workflow.id,
-                device_id: device.id,
-                trigger_data: {
-                  trigger_type: 'scheduled',
-                  scheduled_at: new Date().toISOString(),
-                  interval_minutes: workflow.trigger_config.interval_minutes,
-                },
-              }),
-            ]
+        const workflowEnqueued = await transaction(async (client) => {
+          // Serialize each workflow's eligibility check, inserts, and timestamp.
+          // Concurrent Netlify invocations and a long-running VPS process therefore
+          // observe one committed interval boundary.
+          const locked = await client.query<ScheduledWorkflow>(
+            `SELECT id, environment_id, name, trigger_config, conditions, action_type, action_config,
+                    scope_type, scope_id, last_triggered_at
+             FROM workflows
+             WHERE id = $1 AND trigger_type = 'scheduled' AND enabled = true
+             FOR UPDATE`,
+            [workflow.id]
           );
-          enqueued++;
-        }
+          const current = locked.rows[0];
+          if (!current || !shouldTrigger(current)) return 0;
 
-        // Update last_triggered_at to prevent re-triggering on the next cron run
-        await execute(
-          'UPDATE workflows SET last_triggered_at = now() WHERE id = $1',
-          [workflow.id]
-        );
+          const devices = await getDevicesInScope(client, current);
+          if (devices.length === 0) {
+            console.log(`Workflow ${current.id} (${current.name}): no devices in scope`);
+            return 0;
+          }
+
+          console.log(`Workflow ${current.id} (${current.name}): evaluating against ${devices.length} devices`);
+          for (const device of devices) {
+            await client.query(
+              `INSERT INTO job_queue (id, job_type, environment_id, payload, status, scheduled_for)
+               VALUES ($1, 'workflow_evaluate', $2, $3, 'pending', now())`,
+              [
+                crypto.randomUUID(),
+                current.environment_id,
+                JSON.stringify({
+                  workflow_id: current.id,
+                  device_id: device.id,
+                  trigger_data: {
+                    trigger_type: 'scheduled',
+                    scheduled_at: new Date().toISOString(),
+                    interval_minutes: current.trigger_config.interval_minutes,
+                  },
+                }),
+              ]
+            );
+          }
+
+          await client.query(
+            'UPDATE workflows SET last_triggered_at = now() WHERE id = $1',
+            [current.id]
+          );
+          return devices.length;
+        });
+        enqueued += workflowEnqueued;
       } catch (err) {
+        errors++;
         console.error(`Error processing workflow ${workflow.id}:`, err);
       }
     }
@@ -134,8 +159,7 @@ export default async (request: Request, context: Context) => {
     // immediately rather than waiting for the next PubSub event.
     if (enqueued > 0) {
       try {
-        const origin = new URL(request.url).origin;
-        await fetch(`${origin}/.netlify/functions/sync-process-background`, {
+        if (shouldTriggerBackgroundFunction()) await fetch(internalFunctionUrl(request, 'sync-process-background'), {
           method: 'POST',
           headers: {
             'x-internal-secret': process.env.INTERNAL_FUNCTION_SECRET ?? '',
@@ -145,7 +169,18 @@ export default async (request: Request, context: Context) => {
         console.warn('Failed to trigger queue worker after cron enqueue:', err);
       }
     }
+    return new Response(JSON.stringify({
+      message: errors > 0 ? 'Workflow cron completed with errors' : 'Workflow cron completed',
+      stats: { enqueued, errors },
+    }), {
+      status: errors > 0 ? 500 : 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
   } catch (err) {
     console.error('Workflow cron error:', err);
+    return new Response(JSON.stringify({ error: 'Workflow cron failed' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 };

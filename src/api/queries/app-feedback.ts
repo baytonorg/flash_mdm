@@ -11,7 +11,7 @@ export interface AppFeedbackItem {
   feedback_key: string;
   severity: string | null;
   message: string | null;
-  data_json: Record<string, unknown> | null;
+  data_json: string | null;
   first_reported_at: string;
   last_reported_at: string;
   last_update_time: string | null;

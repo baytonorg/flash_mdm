@@ -30,6 +30,13 @@ export default function DeviceOperations({ deviceId }: DeviceOperationsProps) {
   const { data, isLoading, isError } = useDeviceOperations(deviceId);
   const cancelMutation = useCancelOperation();
   const operations = data?.operations ?? [];
+  const cancellingOperation = cancelMutation.isPending ? cancelMutation.variables : null;
+
+  const handleCancel = (operationName: string) => {
+    if (!window.confirm('Cancel this device operation? It may already be completing.')) return;
+    cancelMutation.reset();
+    cancelMutation.mutate(operationName);
+  };
 
   if (isLoading) {
     return (
@@ -100,12 +107,12 @@ export default function DeviceOperations({ deviceId }: DeviceOperationsProps) {
                 {status === 'running' && op.name && (
                   <button
                     type="button"
-                    onClick={() => cancelMutation.mutate(op.name!)}
+                    onClick={() => handleCancel(op.name!)}
                     disabled={cancelMutation.isPending}
                     className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50"
                   >
                     <XCircle className="h-3.5 w-3.5" />
-                    Cancel
+                    {cancellingOperation === op.name ? 'Cancelling...' : 'Cancel'}
                   </button>
                 )}
               </div>
@@ -121,6 +128,13 @@ export default function DeviceOperations({ deviceId }: DeviceOperationsProps) {
                       : `Operation failed (code ${op.error.code}).`}
                   </p>
                 )
+              )}
+              {cancelMutation.isError && cancelMutation.variables === op.name && (
+                <p role="alert" className="mt-1 text-xs text-red-600">
+                  {cancelMutation.error instanceof Error
+                    ? cancelMutation.error.message
+                    : 'Failed to cancel operation.'}
+                </p>
               )}
                 {op.metadata && Object.keys(op.metadata).length > 0 && (
                 <div className="mt-1.5 text-xs text-muted">

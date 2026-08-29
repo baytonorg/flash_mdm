@@ -6,6 +6,48 @@
  * (generated payload). Keeping a single implementation prevents drift.
  */
 
+/**
+ * Remove fields owned by deployment tables before regenerating a derivative.
+ * APN deployments own only `deviceConnectivityManagement.apnPolicy`; the other
+ * connectivity controls remain authored policy and must survive regeneration.
+ */
+export function preparePolicyBaseForDerivativeGeneration(
+  config: Record<string, unknown>
+): Record<string, unknown> {
+  const {
+    openNetworkConfiguration: _openNetworkConfiguration,
+    applications: _applications,
+    deviceConnectivityManagement,
+    ...base
+  } = config;
+
+  if (
+    deviceConnectivityManagement !== undefined
+    && (
+      !deviceConnectivityManagement
+      || typeof deviceConnectivityManagement !== 'object'
+      || Array.isArray(deviceConnectivityManagement)
+    )
+  ) {
+    throw new TypeError('deviceConnectivityManagement must be a JSON object');
+  }
+
+  if (
+    deviceConnectivityManagement
+  ) {
+    const {
+      apnPolicy: _apnPolicy,
+      ...connectivityPolicy
+    } = deviceConnectivityManagement as Record<string, unknown>;
+
+    if (Object.keys(connectivityPolicy).length > 0) {
+      base.deviceConnectivityManagement = connectivityPolicy;
+    }
+  }
+
+  return base;
+}
+
 // ── ONC (Wi-Fi) ─────────────────────────────────────────────────────────────
 
 export function upsertOncDeploymentInPolicyConfig(

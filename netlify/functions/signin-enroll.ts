@@ -1,7 +1,7 @@
 import type { Context } from '@netlify/functions';
 import { randomInt } from 'crypto';
 import { queryOne, execute, query } from './_lib/db.js';
-import { amapiCall } from './_lib/amapi.js';
+import { amapiCall, getAmapiErrorHttpStatus } from './_lib/amapi.js';
 import { hashToken } from './_lib/crypto.js';
 import { consumeToken } from './_lib/rate-limiter.js';
 import { sendEmail, signinVerificationEmail } from './_lib/resend.js';
@@ -28,28 +28,40 @@ interface AmapiEnrollmentToken {
 }
 
 interface AmapiProvisioningInfoResult {
-  enterprise?: { name?: string; id?: string };
+  name?: string;
+  enterprise?: string;
   authenticatedUserEmail?: string;
 }
 
-// --- Helpers ---
-
-/**
- * Resolve the environment from provisioning info.
- * Prefer AMAPI provisioningInfo.get, then fall back to local heuristics.
- */
-async function resolveEnvironmentFromProvisioningInfo(
-  provisioningInfo: string | undefined
-): Promise<{
+interface SigninEnvironmentContext {
   environmentId: string;
   enterpriseName: string;
   workspaceId: string;
   projectId: string;
-} | null> {
-  if (!provisioningInfo) return null;
+  provisioningInfoName: string;
+  provisioningInfo: AmapiProvisioningInfoResult;
+}
 
-  // Strategy 0 (preferred): call AMAPI provisioningInfo.get using candidate
-  // workspaces that currently have sign-in enrollment enabled.
+class ProvisioningInfoUnavailableError extends Error {}
+
+// --- Helpers ---
+
+/**
+ * Resolve the environment only from Google's authoritative provisioning info.
+ */
+async function resolveEnvironmentFromProvisioningInfo(
+  provisioningInfo: string
+): Promise<SigninEnvironmentContext | null> {
+  const trimmedProvisioningInfo = provisioningInfo.trim();
+  const provisioningInfoId = trimmedProvisioningInfo.startsWith('provisioningInfo/')
+    ? trimmedProvisioningInfo.slice('provisioningInfo/'.length)
+    : trimmedProvisioningInfo;
+
+  if (!provisioningInfoId || provisioningInfoId.includes('/')) return null;
+  const provisioningInfoName = `provisioningInfo/${encodeURIComponent(provisioningInfoId)}`;
+
+  // Provisioning info is scoped to the service account that owns the enterprise,
+  // so try only workspaces with an enabled sign-in flow.
   const candidateWorkspaces = await query<{
     workspace_id: string;
     gcp_project_id: string;
@@ -64,10 +76,12 @@ async function resolveEnvironmentFromProvisioningInfo(
     []
   );
 
+  let upstreamUnavailable = false;
+
   for (const candidate of candidateWorkspaces) {
     try {
       const info = await amapiCall<AmapiProvisioningInfoResult>(
-        `provisioningInfo/${encodeURIComponent(provisioningInfo)}:get`,
+        provisioningInfoName,
         candidate.workspace_id,
         {
           projectId: candidate.gcp_project_id,
@@ -75,15 +89,20 @@ async function resolveEnvironmentFromProvisioningInfo(
         }
       );
 
-      const enterpriseName = info.enterprise?.name
-        ?? (info.enterprise?.id ? `enterprises/${info.enterprise.id}` : undefined);
-      if (!enterpriseName) continue;
+      const enterpriseName = info.enterprise;
+      if (!enterpriseName || !/^enterprises\/[^/]+$/.test(enterpriseName)) {
+        throw new ProvisioningInfoUnavailableError(
+          'AMAPI provisioningInfo response did not contain a valid enterprise resource name'
+        );
+      }
 
       const env = await queryOne<{
         id: string; enterprise_name: string; workspace_id: string;
       }>(
-        'SELECT id, enterprise_name, workspace_id FROM environments WHERE enterprise_name = $1',
-        [enterpriseName]
+        `SELECT id, enterprise_name, workspace_id
+         FROM environments
+         WHERE enterprise_name = $1 AND workspace_id = $2`,
+        [enterpriseName, candidate.workspace_id]
       );
       if (!env) continue;
 
@@ -92,87 +111,21 @@ async function resolveEnvironmentFromProvisioningInfo(
         enterpriseName: env.enterprise_name,
         workspaceId: env.workspace_id,
         projectId: candidate.gcp_project_id,
+        provisioningInfoName,
+        provisioningInfo: info,
       };
-    } catch {
-      // Continue scanning candidate workspaces.
-    }
-  }
+    } catch (err) {
+      if (err instanceof ProvisioningInfoUnavailableError) throw err;
 
-  // provisioningInfo is a base64-encoded JSON string from Google.
-  // It may contain enterprise info. Try to parse it.
-  let enterpriseId: string | null = null;
-
-  if (provisioningInfo) {
-    try {
-      const decoded = Buffer.from(provisioningInfo, 'base64').toString('utf8');
-      const info = JSON.parse(decoded);
-      // AMAPI provisioning info may contain enterprise name or identifier
-      enterpriseId = info.enterprise?.id ?? info.enterpriseId ?? null;
-    } catch {
-      // Not parseable — that's OK, provisioningInfo format isn't strictly documented
-    }
-  }
-
-  // Strategy 1: If we extracted an enterprise ID, look up by enterprise_name
-  if (enterpriseId) {
-    const env = await queryOne<{
-      id: string; enterprise_name: string; workspace_id: string;
-    }>(
-      `SELECT e.id, e.enterprise_name, e.workspace_id
-       FROM environments e
-       WHERE e.enterprise_name = $1 OR e.enterprise_name LIKE '%/' || $1`,
-      [`enterprises/${enterpriseId}`]
-    );
-    if (env) {
-      const ws = await queryOne<{ gcp_project_id: string }>(
-        'SELECT gcp_project_id FROM workspaces WHERE id = $1',
-        [env.workspace_id]
-      );
-      if (ws?.gcp_project_id) {
-        return {
-          environmentId: env.id,
-          enterpriseName: env.enterprise_name,
-          workspaceId: env.workspace_id,
-          projectId: ws.gcp_project_id,
-        };
+      const status = getAmapiErrorHttpStatus(err);
+      if (status !== 403 && status !== 404) {
+        upstreamUnavailable = true;
       }
     }
   }
 
-  // Strategy 2: Look up by the environment_id (used as tokenTag in signinDetails)
-  // When there's only one enabled signin config, use that
-  const configs = await query<{
-    environment_id: string;
-  }>(
-    `SELECT sc.environment_id FROM signin_configurations sc
-     JOIN environments e ON e.id = sc.environment_id
-     WHERE sc.enabled = true AND e.enterprise_name IS NOT NULL
-     LIMIT 2`,
-    []
-  );
-
-  if (configs.length === 1) {
-    const envId = configs[0].environment_id;
-    const env = await queryOne<{
-      id: string; enterprise_name: string; workspace_id: string;
-    }>(
-      'SELECT id, enterprise_name, workspace_id FROM environments WHERE id = $1',
-      [envId]
-    );
-    if (env) {
-      const ws = await queryOne<{ gcp_project_id: string }>(
-        'SELECT gcp_project_id FROM workspaces WHERE id = $1',
-        [env.workspace_id]
-      );
-      if (ws?.gcp_project_id) {
-        return {
-          environmentId: env.id,
-          enterpriseName: env.enterprise_name,
-          workspaceId: env.workspace_id,
-          projectId: ws.gcp_project_id,
-        };
-      }
-    }
+  if (upstreamUnavailable) {
+    throw new ProvisioningInfoUnavailableError('AMAPI provisioningInfo lookup was unavailable');
   }
 
   return null;
@@ -255,11 +208,18 @@ export default async (request: Request, _context: Context) => {
       email: string;
       code?: string;
       provisioning_info?: string;
-      environment_id?: string;
     }>(request);
 
     if (!body.action || !body.email) {
       return errorResponse('action and email are required');
+    }
+
+    if (body.action !== 'send-code' && body.action !== 'verify') {
+      return errorResponse('Invalid action. Use "send-code" or "verify".', 400);
+    }
+
+    if (body.action === 'verify' && !body.code) {
+      return errorResponse('Verification code is required');
     }
 
     const requestedEmail = body.email.toLowerCase().trim();
@@ -269,65 +229,38 @@ export default async (request: Request, _context: Context) => {
 
     const clientIp = getClientIp(request);
 
-    // Resolve environment — try environment_id first (direct), then provisioning_info
-    let envContext: {
-      environmentId: string;
-      enterpriseName: string;
-      workspaceId: string;
-      projectId: string;
-    } | null = null;
-
-    if (body.environment_id) {
-      const env = await queryOne<{
-        id: string; enterprise_name: string; workspace_id: string;
-      }>(
-        'SELECT id, enterprise_name, workspace_id FROM environments WHERE id = $1',
-        [body.environment_id]
-      );
-      if (env?.enterprise_name) {
-        const ws = await queryOne<{ gcp_project_id: string }>(
-          'SELECT gcp_project_id FROM workspaces WHERE id = $1',
-          [env.workspace_id]
-        );
-        if (ws?.gcp_project_id) {
-          envContext = {
-            environmentId: env.id,
-            enterpriseName: env.enterprise_name,
-            workspaceId: env.workspace_id,
-            projectId: ws.gcp_project_id,
-          };
-        }
-      }
+    if (!body.provisioning_info?.trim()) {
+      return errorResponse('Missing device provisioning information. Restart enrolment from your device.', 400);
     }
 
-    if (!envContext) {
+    const lookupLimit = body.action === 'send-code'
+      ? await consumeToken(`signin:code:ip:${clientIp}`, 1, 20, 20 / 3600)
+      : await consumeToken(`signin:verify:ip:${clientIp}`, 1, 30, 30 / 3600);
+    if (!lookupLimit.allowed) {
+      return errorResponse(
+        body.action === 'send-code'
+          ? 'Too many requests. Please try again later.'
+          : 'Too many verification attempts. Please try again later.',
+        429
+      );
+    }
+
+    let envContext: SigninEnvironmentContext | null;
+    try {
       envContext = await resolveEnvironmentFromProvisioningInfo(body.provisioning_info);
+    } catch (err) {
+      console.warn(
+        'signin-enroll: provisioningInfo.get unavailable',
+        err instanceof Error ? err.message : String(err)
+      );
+      return errorResponse('Unable to verify device provisioning information. Please try again.', 502);
     }
 
     if (!envContext) {
       return errorResponse('Unable to determine enrolment environment. Please contact your administrator.', 400);
     }
 
-    let provisioningLookup: AmapiProvisioningInfoResult | null = null;
-    if (body.provisioning_info) {
-      try {
-        provisioningLookup = await amapiCall<AmapiProvisioningInfoResult>(
-          `provisioningInfo/${encodeURIComponent(body.provisioning_info)}:get`,
-          envContext.workspaceId,
-          {
-            projectId: envContext.projectId,
-            resourceType: 'general',
-          }
-        );
-      } catch (err) {
-        console.warn(
-          'signin-enroll: provisioningInfo.get failed, continuing with entered email',
-          err instanceof Error ? err.message : String(err)
-        );
-      }
-    }
-
-    const authenticatedUserEmail = provisioningLookup?.authenticatedUserEmail?.toLowerCase().trim();
+    const authenticatedUserEmail = envContext.provisioningInfo.authenticatedUserEmail?.toLowerCase().trim();
     if (authenticatedUserEmail && authenticatedUserEmail !== requestedEmail) {
       return errorResponse('The signed-in Google account does not match the email address entered.', 403);
     }
@@ -365,17 +298,6 @@ export default async (request: Request, _context: Context) => {
         return errorResponse('Too many verification code requests. Please try again later.', 429);
       }
 
-      // Rate limit: 20 requests per IP per hour
-      const ipLimit = await consumeToken(
-        `signin:code:ip:${clientIp}`,
-        1,
-        20,
-        20 / 3600
-      );
-      if (!ipLimit.allowed) {
-        return errorResponse('Too many requests. Please try again later.', 429);
-      }
-
       // Generate 6-digit code
       const code = randomInt(100000, 999999).toString();
       const codeHash = hashToken(code);
@@ -389,7 +311,7 @@ export default async (request: Request, _context: Context) => {
           envContext.environmentId,
           email,
           codeHash,
-          body.provisioning_info ?? null,
+          envContext.provisioningInfoName,
         ]
       );
 
@@ -413,22 +335,7 @@ export default async (request: Request, _context: Context) => {
 
     // --- Action: verify ---
     if (body.action === 'verify') {
-      if (!body.code) {
-        return errorResponse('Verification code is required');
-      }
-
-      // Rate limit verification attempts per IP
-      const ipLimit = await consumeToken(
-        `signin:verify:ip:${clientIp}`,
-        1,
-        30,
-        30 / 3600
-      );
-      if (!ipLimit.allowed) {
-        return errorResponse('Too many verification attempts. Please try again later.', 429);
-      }
-
-      // Find the latest non-expired, non-verified code for this email + environment
+      // Find the latest pending code for this email and exact device provisioning flow.
       const verification = await queryOne<{
         id: string;
         code_hash: string;
@@ -437,11 +344,11 @@ export default async (request: Request, _context: Context) => {
       }>(
         `SELECT id, code_hash, attempts, provisioning_info
          FROM signin_verifications
-         WHERE environment_id = $1 AND email = $2
+         WHERE environment_id = $1 AND email = $2 AND provisioning_info = $3
            AND verified_at IS NULL AND expires_at > now()
          ORDER BY created_at DESC
          LIMIT 1`,
-        [envContext.environmentId, email]
+        [envContext.environmentId, email, envContext.provisioningInfoName]
       );
 
       if (!verification) {

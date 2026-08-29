@@ -180,7 +180,16 @@ export const useContextStore = create<ContextState>((set, get) => ({
   fetchGroups: async (environmentId: string) => {
     try {
       const data = await apiClient.get<{ groups: Group[] }>(`/api/groups/list?environment_id=${environmentId}`);
-      set({ groups: data.groups });
+      if (get().activeEnvironment?.id !== environmentId) return;
+      const groups = data.groups;
+      const activeGroupId = get().activeGroup?.id;
+      const activeGroup = activeGroupId
+        ? groups.find((group) => group.id === activeGroupId) ?? null
+        : null;
+      set({ groups, activeGroup });
+      if (activeGroupId && !activeGroup) {
+        saveContext(get().activeWorkspace?.id, get().activeEnvironment?.id, undefined);
+      }
     } catch {
       // ignore
     }

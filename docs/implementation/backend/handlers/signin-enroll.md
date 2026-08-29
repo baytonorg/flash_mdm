@@ -12,7 +12,7 @@
 
 | Name | Lines | Description |
 |------|-------|-------------|
-| `resolveEnvironmentFromProvisioningInfo` | 41-179 | Multi-strategy environment resolution: (1) calls AMAPI `provisioningInfo.get` across candidate workspaces with sign-in enabled, (2) parses base64 provisioning info for enterprise ID, (3) falls back to the single enabled sign-in config |
+| `resolveEnvironmentFromProvisioningInfo` | Internal | Calls the documented AMAPI `provisioningInfo.get` resource across candidate workspaces and resolves the returned string enterprise resource name to the owning environment |
 | `resolveAmapiPolicyName` | 185-243 | Resolves the AMAPI policy name for enrollment using the same group-hierarchy and derivative logic as `enrollment-create.ts` |
 
 ## Dependencies (imports from project)
@@ -32,9 +32,11 @@
 
 **This is a public endpoint -- no user authentication required.** It implements its own verification flow.
 
-**Environment resolution**: Uses `environment_id` from the request body first, then falls back to `resolveEnvironmentFromProvisioningInfo` which tries three strategies to match the device's provisioning context to a local environment.
+**Environment resolution**: Requires the device's `provisioningInfo` identifier and resolves it through Google's authoritative `GET /v1/provisioningInfo/{id}` response. Missing, unverifiable, or malformed provisioning data fails closed; there is no direct environment, decoded-payload, or single-environment fallback.
 
-**Email validation**: Cross-references the entered email with AMAPI's `provisioningInfo.get` authenticated user email (if available). Rejects mismatches. Validates the email domain against `signin_configurations.allowed_domains`.
+**Email validation**: Cross-references the entered email with AMAPI's `authenticatedUserEmail` when Google authentication already occurred and rejects mismatches. When that optional field is absent, Flash's email-code flow authenticates the entered address. The resolved address is validated against `signin_configurations.allowed_domains`.
+
+**Verification binding**: Stores the canonical `provisioningInfo/{id}` resource with the email code and requires the same resource when redeeming it, preventing a code from being moved between device provisioning flows.
 
 **Action: `send-code`**:
 1. Rate limits: 5 codes per email per hour, 20 per IP per hour (token bucket via `consumeToken`).

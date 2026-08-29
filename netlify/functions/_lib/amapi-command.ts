@@ -2,7 +2,6 @@ import {
   DEVICE_INFO_TYPES,
   ESIM_ACTIVATION_STATES,
   RESET_PASSWORD_FLAGS,
-  WIPE_DATA_FLAGS,
   isDeviceInfoType,
   isEsimActivationState,
   isResetPasswordFlag,
@@ -97,9 +96,9 @@ export function buildAmapiCommandPayload(
         ...(lostStreetAddress ? { lostStreetAddress } : {}),
         ...(lostEmailAddress ? { lostEmailAddress } : {}),
       };
-      if (Object.keys(startLostModeParams).length === 0) {
+      if (!lostMessage && !lostPhoneNumber && !lostStreetAddress && !lostEmailAddress) {
         throw new AmapiCommandValidationError(
-          'START_LOST_MODE requires at least one of: lostMessage, lostPhoneNumber, lostEmailAddress, lostOrganization, lostStreetAddress'
+          'START_LOST_MODE requires at least one of: lostMessage, lostPhoneNumber, lostEmailAddress, lostStreetAddress; lostOrganization alone is not sufficient'
         );
       }
       commandBody.startLostModeParams = startLostModeParams;
@@ -111,7 +110,13 @@ export function buildAmapiCommandPayload(
       const packageName = toNonEmptyString(input.packageName);
       const packageNames = Array.isArray(raw.packageNames) ? raw.packageNames : undefined;
       if (packageNames?.length) {
-        commandBody.clearAppsDataParams = { packageNames };
+        const normalizedPackageNames = packageNames.map(toNonEmptyString);
+        if (normalizedPackageNames.some((name) => !name)) {
+          throw new AmapiCommandValidationError(
+            'CLEAR_APP_DATA params.clearAppsDataParams.packageNames must contain non-empty strings'
+          );
+        }
+        commandBody.clearAppsDataParams = { packageNames: normalizedPackageNames };
         return commandBody;
       }
       if (!packageName) {

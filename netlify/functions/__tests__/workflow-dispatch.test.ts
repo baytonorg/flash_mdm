@@ -198,6 +198,53 @@ describe('dispatchWorkflowEvent', () => {
     expect(count).toBe(0);
   });
 
+  it('enqueues a device-scoped workflow only for its configured device', async () => {
+    mockQuery.mockResolvedValueOnce([
+      { id: 'wf-device', trigger_config: null, scope_type: 'device', scope_id: 'dev-1' },
+    ]);
+
+    const count = await dispatchWorkflowEvent({
+      environmentId: 'env-1',
+      deviceId: 'dev-1',
+      triggerType: 'device.enrolled',
+      triggerData: {},
+    });
+
+    expect(count).toBe(1);
+    expect(mockExecute).toHaveBeenCalledOnce();
+  });
+
+  it('excludes other devices from a device-scoped workflow', async () => {
+    mockQuery.mockResolvedValueOnce([
+      { id: 'wf-device', trigger_config: null, scope_type: 'device', scope_id: 'dev-1' },
+    ]);
+
+    const count = await dispatchWorkflowEvent({
+      environmentId: 'env-1',
+      deviceId: 'dev-2',
+      triggerType: 'device.enrolled',
+      triggerData: {},
+    });
+
+    expect(count).toBe(0);
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for an unknown workflow scope', async () => {
+    mockQuery.mockResolvedValueOnce([
+      { id: 'wf-invalid', trigger_config: null, scope_type: 'unknown', scope_id: null },
+    ]);
+
+    const count = await dispatchWorkflowEvent({
+      environmentId: 'env-1',
+      deviceId: 'dev-1',
+      triggerType: 'device.enrolled',
+      triggerData: {},
+    });
+
+    expect(count).toBe(0);
+  });
+
   it('enqueues multiple workflows for same trigger', async () => {
     mockQuery.mockResolvedValueOnce([
       { id: 'wf-1', trigger_config: null, scope_type: 'environment', scope_id: null },

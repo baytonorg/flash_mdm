@@ -16,6 +16,7 @@ interface AmapiAppDetail {
   minAndroidSdkVersion?: number;
   updateTime?: string;
   availableCountries?: string[];
+  distributionChannel?: string;
 }
 
 interface ManagedProperty {
@@ -84,6 +85,7 @@ export default async (request: Request, context: Context) => {
         app_tracks: app.appTracks ?? [],
         min_android_sdk: app.minAndroidSdkVersion,
         update_time: app.updateTime,
+        distribution_channel: app.distributionChannel,
       },
     });
   } catch (err) {

@@ -57,6 +57,7 @@ function GroupModal({ open, onClose, groups, editingGroup, environmentId }: Grou
 
   const createGroup = useCreateGroup();
   const updateGroup = useUpdateGroup();
+  const refreshGroupContext = useContextStore((state) => state.fetchGroups);
 
   const isEditing = !!editingGroup;
   const isPending = createGroup.isPending || updateGroup.isPending;
@@ -127,6 +128,7 @@ function GroupModal({ open, onClose, groups, editingGroup, environmentId }: Grou
           parent_id: parentId || undefined,
         });
       }
+      await refreshGroupContext(environmentId);
       onClose();
     } catch {
       // error handled by mutation
@@ -235,7 +237,7 @@ function GroupModal({ open, onClose, groups, editingGroup, environmentId }: Grou
 // ---- Main Groups page ----
 
 export default function Groups() {
-  const { activeEnvironment } = useContextStore();
+  const { activeEnvironment, fetchGroups } = useContextStore();
   const environmentId = activeEnvironment?.id ?? '';
 
   const { data: groups = [], isLoading } = useGroups(environmentId);
@@ -369,6 +371,7 @@ export default function Groups() {
     if (!deleteTarget) return;
     try {
       await deleteGroup.mutateAsync(deleteTarget.id);
+      await fetchGroups(environmentId);
       setDeleteTarget(null);
     } catch {
       // error handled by mutation
@@ -445,6 +448,7 @@ export default function Groups() {
                     window.alert(`Bulk delete completed with ${data.failed} failure(s).`);
                   }
                   bulkSelection.clearSelection();
+                  void fetchGroups(environmentId);
                 },
                 onError: (error) => {
                   setBulkWarning(getBulkWarningMessage(error));
@@ -478,7 +482,10 @@ export default function Groups() {
       {/* Delete Confirmation */}
       <ConfirmModal
         open={!!deleteTarget}
-        onClose={() => setDeleteTarget(null)}
+        onClose={() => {
+          deleteGroup.reset();
+          setDeleteTarget(null);
+        }}
         onConfirm={handleDelete}
         title="Delete Group"
         message={
@@ -489,6 +496,9 @@ export default function Groups() {
         confirmLabel="Delete"
         variant="danger"
         loading={deleteGroup.isPending}
+        error={deleteGroup.isError
+          ? (deleteGroup.error instanceof Error ? deleteGroup.error.message : 'Failed to delete group.')
+          : undefined}
       />
 
       {/* Group Detail Drawer */}
@@ -564,6 +574,7 @@ export default function Groups() {
                         }
                         setBulkMoveOpen(false);
                         bulkSelection.clearSelection();
+                        void fetchGroups(environmentId);
                       },
                       onError: (error) => {
                         setBulkWarning(getBulkWarningMessage(error));

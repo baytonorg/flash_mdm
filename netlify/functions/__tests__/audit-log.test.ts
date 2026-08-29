@@ -121,6 +121,21 @@ describe('audit-log privileged visibility filtering', () => {
     expect(countParams).toEqual(['env_1', 'privileged', 'system']);
   });
 
+  it('applies action filtering to both count and page queries', async () => {
+    mockRequireEnvPerm.mockResolvedValue('admin' as never);
+
+    const res = await handler(
+      makeRequest('?environment_id=env_1&action=device.deleted&page=2&per_page=10'),
+      {} as never
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockQueryOne.mock.calls[0]?.[0]).toContain('a.action = $2');
+    expect(mockQueryOne.mock.calls[0]?.[1]).toEqual(['env_1', 'device.deleted']);
+    expect(mockQuery.mock.calls[0]?.[0]).toContain('a.action = $2');
+    expect(mockQuery.mock.calls[0]?.[1]).toEqual(['env_1', 'device.deleted', 10, 10]);
+  });
+
   it('supports api_key actor_type filter and forwards it to SQL', async () => {
     mockRequireEnvPerm.mockResolvedValue('admin' as never);
 

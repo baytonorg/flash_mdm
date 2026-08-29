@@ -46,6 +46,19 @@ function fullSessionReset(set: (state: Partial<AuthState>) => void): void {
   resetClientSessionState();
 }
 
+function getApiErrorStatus(error: unknown): number | null {
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'status' in error &&
+    typeof error.status === 'number'
+  ) {
+    return error.status;
+  }
+
+  return null;
+}
+
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   isLoading: true,
@@ -55,12 +68,22 @@ export const useAuthStore = create<AuthState>((set) => ({
     try {
       const data = await apiClient.get<{ user: User }>('/api/auth/session');
       if (!data?.user) {
-        fullSessionReset(set);
+        set({
+          isLoading: false,
+          error: 'Unable to verify your session. Please retry.',
+        });
         return;
       }
       set({ user: data.user, isLoading: false, error: null });
-    } catch {
-      fullSessionReset(set);
+    } catch (err) {
+      if (getApiErrorStatus(err) === 401) {
+        fullSessionReset(set);
+        return;
+      }
+      set({
+        isLoading: false,
+        error: err instanceof Error ? err.message : 'Unable to verify your session. Please retry.',
+      });
     }
   },
 

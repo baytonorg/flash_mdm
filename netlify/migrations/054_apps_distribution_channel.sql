@@ -1,0 +1,1 @@
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS distribution_channel VARCHAR(100);

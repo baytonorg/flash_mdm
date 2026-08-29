@@ -10,6 +10,7 @@ import BulkActionBar, { type BulkAction } from '@/components/common/BulkActionBa
 import SelectAllMatchingNotice from '@/components/common/SelectAllMatchingNotice';
 import { useBulkSelection } from '@/hooks/useBulkSelection';
 import { useBulkPolicyAction } from '@/api/queries/policies';
+import QueryErrorState from '@/components/common/QueryErrorState';
 
 interface Policy {
   id: string;
@@ -64,7 +65,7 @@ export default function Policies() {
     setDeleteTarget(null);
   }, [environmentId]);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['policies', environmentId],
     queryFn: () =>
       apiClient.get<{ policies: Policy[] }>(`/api/policies/list?environment_id=${environmentId}`),
@@ -255,6 +256,20 @@ export default function Policies() {
     );
   }
 
+  if (isError && !data) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl font-bold text-gray-900">Policies</h1>
+        <QueryErrorState
+          title="Unable to load policies"
+          error={error}
+          onRetry={() => void refetch()}
+          retrying={isFetching}
+        />
+      </div>
+    );
+  }
+
   return (
     <div>
       {/* Header */}
@@ -268,6 +283,18 @@ export default function Policies() {
           Create Policy
         </button>
       </div>
+
+      {isError && (
+        <div className="mb-4">
+          <QueryErrorState
+            compact
+            title="Policy data may be out of date"
+            error={error}
+            onRetry={() => void refetch()}
+            retrying={isFetching}
+          />
+        </div>
+      )}
 
       {/* Search and filters */}
       <div className="space-y-3 mb-4">

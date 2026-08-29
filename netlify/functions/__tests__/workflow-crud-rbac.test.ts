@@ -159,6 +159,7 @@ describe('POST /api/workflows/create', () => {
     name: 'New Workflow',
     trigger_type: 'device.enrolled',
     action_type: 'device.command',
+    action_config: { command_type: 'LOCK' },
     conditions: [],
   };
 
@@ -215,6 +216,47 @@ describe('POST /api/workflows/create', () => {
     });
     expect(mockExecute).not.toHaveBeenCalled();
   });
+
+  it.each([
+    [{ command_type: 'FUTURE_COMMAND' }, 'Unsupported workflow command type: FUTURE_COMMAND'],
+    [{ command_type: 'CLEAR_APP_DATA', command_data: {} }, 'CLEAR_APP_DATA requires a package name'],
+    [
+      { command_type: 'START_LOST_MODE', command_data: { lostOrganization: 'Example Organization' } },
+      'organization alone is not sufficient',
+    ],
+  ])('rejects invalid workflow command configuration before persistence', async (actionConfig, expectedError) => {
+    const body = { ...createBody, action_config: actionConfig };
+    mockParseJsonBody.mockResolvedValueOnce(body as never);
+
+    const res = await handler(makeCreateRequest(body), {} as never);
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: expect.stringContaining(expectedError) });
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
+  it('accepts documented required parameters for command workflows', async () => {
+    const body = {
+      ...createBody,
+      action_config: {
+        command_type: 'START_LOST_MODE',
+        command_data: {
+          lostMessage: 'Please return this device',
+          lostOrganization: 'Example Organization',
+        },
+      },
+    };
+    mockParseJsonBody.mockResolvedValueOnce(body as never);
+    mockQueryOne.mockResolvedValueOnce(fakeWorkflow as never);
+
+    const res = await handler(makeCreateRequest(body), {} as never);
+
+    expect(res.status).toBe(201);
+    expect(mockExecute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO workflows'),
+      expect.arrayContaining([JSON.stringify(body.action_config)])
+    );
+  });
 });
 
 // ─── UPDATE ──────────────────────────────────────────────────────────────────
@@ -226,6 +268,7 @@ describe('PUT /api/workflows/update', () => {
     name: 'Updated Workflow',
     trigger_type: 'device.enrolled',
     action_type: 'device.command',
+    action_config: { command_type: 'LOCK' },
     conditions: [],
   };
 

@@ -41,6 +41,7 @@ function makeRequest(body: Record<string, unknown>): Request {
 }
 
 beforeEach(() => {
+  delete process.env.FLASH_RUNTIME;
   mockQuery.mockReset();
   mockExecute.mockReset();
   mockRequireAuth.mockReset();
@@ -56,6 +57,23 @@ beforeEach(() => {
 });
 
 describe('device-bulk', () => {
+  it('returns after durable enqueue on VPS without waiting for an HTTP worker trigger', async () => {
+    process.env.FLASH_RUNTIME = 'vps';
+    mockQuery.mockResolvedValue([{ id: 'dev_1', environment_id: 'env_1' }] as never);
+
+    const res = await handler(
+      makeRequest({ device_ids: ['dev_1'], action: 'DISABLE' }),
+      {} as never
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockExecute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO job_queue'),
+      expect.any(Array)
+    );
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it('accepts uppercase action payloads from the Devices page and queues device_command jobs', async () => {
     mockQuery.mockResolvedValue([
       { id: 'dev_1', environment_id: 'env_1' },
