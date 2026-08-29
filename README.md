@@ -194,6 +194,7 @@ All API endpoints live under `/api/` and are documented with Swagger. Once the a
 
 | Path prefix | What it does |
 |-------------|-------------|
+| `/api/health` | Public readiness and deployed-version check |
 | `/api/auth/*` | Login, registration, sessions, two-factor auth |
 | `/api/workspaces/*` | Workspace management and user invitations |
 | `/api/environments/*` | Environment setup and AMAPI connection |

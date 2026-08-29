@@ -92,6 +92,7 @@ For deeper information on architecture, deployment, security, operations, and de
 | File | Purpose |
 |------|---------|
 | [auth-config.md](backend/handlers/auth-config.md) | Returns public authentication configuration settings (e.g. invite-only mode) |
+| [health.md](backend/handlers/health.md) | Public database readiness and deployed-version check |
 | [auth-login.md](backend/handlers/auth-login.md) | Authenticates user with email/password, optional TOTP/backup-code MFA, issues session cookie |
 | [auth-logout.md](backend/handlers/auth-logout.md) | Destroys the current session and clears the session cookie |
 | [auth-magic-link-start.md](backend/handlers/auth-magic-link-start.md) | Initiates a magic-link login flow by generating a token and emailing the link |

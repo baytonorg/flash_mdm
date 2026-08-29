@@ -16,6 +16,12 @@ function getPool(): InstanceType<typeof Pool> {
       connectionTimeoutMillis: 5000,
       ssl: process.env.NODE_ENV === 'development' ? false : { rejectUnauthorized: true },
     });
+    // pg emits errors from idle clients on the Pool itself. Without a listener,
+    // a planned database restart becomes an uncaught EventEmitter error and
+    // terminates the web/worker process instead of letting the next query reconnect.
+    pool.on('error', (error: Error) => {
+      console.error('PostgreSQL idle client error:', error.message);
+    });
   }
   return pool;
 }

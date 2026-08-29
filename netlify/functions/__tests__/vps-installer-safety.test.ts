@@ -66,7 +66,18 @@ describe('VPS installer operational safety', () => {
     expect(source).toContain('normalize_schema_ownership');
     expect(source).toContain('Public schema ownership verified');
     expect(source).toContain('TimeoutStopSec=20');
+    expect(source).toContain('RELEASE_COMMIT="$(sudo -u "$INSTALL_USER" git -C "$RELEASE_DIR" rev-parse HEAD)"');
     expect(source).not.toMatch(/grep -qi .*applied/);
+  });
+
+  it('runs the automatic deployment installer from the signed target commit', () => {
+    const autoDeploy = readFileSync(join(repoRoot, 'scripts/vps-auto-deploy.sh'), 'utf8');
+
+    expect(autoDeploy).toContain('git clone --no-checkout "$FLASH_AUTO_DEPLOY_REPO_URL" "$release_source"');
+    expect(autoDeploy).toContain('git -C "$release_source" checkout --detach "$remote_sha"');
+    expect(autoDeploy).toContain('[[ "$staged_sha" == "$remote_sha" ]]');
+    expect(autoDeploy).toContain('installer="$release_source/install.sh"');
+    expect(autoDeploy).not.toContain('installer="$current_link/install.sh"');
   });
 });
 

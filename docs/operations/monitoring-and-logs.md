@@ -2,11 +2,16 @@
 
 Flash MDM exposes operational signals through:
 
+- the unauthenticated `/api/health` readiness endpoint
 - Netlify function logs (platform-level)
 - In-app server logs (Superadmin UI)
 - Audit logs (security and change tracking)
 
 ## 1) Where logs live
+
+### Health endpoint
+
+`GET /api/health` checks database readiness and returns the active deployment commit and runtime. A healthy deployment returns HTTP 200 with `status: "ok"`; a database failure returns HTTP 503 with `status: "degraded"`. Responses are not cached and do not include database error details.
 
 ### Netlify logs
 - Function logs are available in the Netlify dashboard under the site's Functions tab.

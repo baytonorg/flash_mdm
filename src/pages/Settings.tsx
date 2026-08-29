@@ -767,7 +767,7 @@ function EnvironmentTab() {
 
       const result = await bindStep1.mutateAsync({ environment_id: activeEnvironment.id });
       if (result.signup_url) {
-        window.location.href = result.signup_url;
+        window.location.assign(result.signup_url);
       }
     } catch (err) {
       setFeedback({ error: err instanceof Error ? err.message : 'Failed to initiate enterprise binding' });

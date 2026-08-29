@@ -22,8 +22,6 @@ done
 
 install_dir="$FLASH_AUTO_DEPLOY_INSTALL_DIR"
 current_link="$install_dir/current"
-installer="$current_link/install.sh"
-[[ -x "$installer" ]] || { echo "No active installer at $installer" >&2; exit 1; }
 
 mkdir -p "$install_dir/data/deploy"
 exec 9>"$install_dir/data/deploy/auto-deploy.lock"
@@ -61,6 +59,23 @@ if [[ "$active_sha" == "$remote_sha" ]]; then
   echo "Flash MDM is already at $active_sha"
   exit 0
 fi
+
+# The installer generates runtime routes and service units, so it must come from
+# the signed target commit rather than the previously active release. Otherwise
+# installer changes take effect one deployment late even though the code symlink
+# already reports the new commit.
+release_source_root=$(run_as_deploy_user mktemp -d "$install_dir/data/deploy/release-source.XXXXXX")
+release_source="$release_source_root/source"
+cleanup_release_source() {
+  run_as_deploy_user rm -rf -- "$release_source_root"
+}
+trap cleanup_release_source EXIT
+run_as_deploy_user git clone --no-checkout "$FLASH_AUTO_DEPLOY_REPO_URL" "$release_source"
+run_as_deploy_user git -C "$release_source" checkout --detach "$remote_sha"
+staged_sha=$(run_as_deploy_user git -C "$release_source" rev-parse HEAD)
+[[ "$staged_sha" == "$remote_sha" ]] || { echo "Staged deployment source does not match the signed commit" >&2; exit 1; }
+installer="$release_source/install.sh"
+[[ -x "$installer" ]] || { echo "Target release has no executable installer" >&2; exit 1; }
 
 echo "Deploying Flash MDM $active_sha -> $remote_sha"
 env \

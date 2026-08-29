@@ -9,7 +9,7 @@ import { requireInternalCaller } from './_lib/internal-auth.js';
 import { dispatchWorkflowEvent } from './_lib/workflow-dispatch.js';
 import { buildEnterpriseUpgradeStatus } from './_lib/enterprise-upgrade.js';
 import { executeValidatedOutboundWebhook } from './_lib/outbound-webhook.js';
-import { internalFunctionUrl } from './_lib/runtime.js';
+import { internalFunctionUrl, isVpsRuntime } from './_lib/runtime.js';
 import { resolveAmapiDeviceImei } from './_lib/amapi-device-network.js';
 import { classifyAmapiCommandOperation } from './_lib/amapi-command-result.js';
 
@@ -1573,7 +1573,10 @@ async function processQueuedDeviceDelete(payload: {
 }
 
 export default async (request: Request, _context: Context) => {
-  console.log('Background sync processor started');
+  // Netlify invokes this as a discrete background function, while the VPS
+  // worker polls it every two seconds. Keep the invocation log useful without
+  // writing tens of thousands of no-op lines per day on VPS deployments.
+  if (!isVpsRuntime()) console.log('Background sync processor started');
 
   try {
     requireInternalCaller(request);

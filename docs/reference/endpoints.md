@@ -34,6 +34,7 @@ See also:
 - Audit log: `/api/audit-log`
 - Licensing/billing: `/api/licenses/*`, `/api/workspace-billing/*`, `/api/licensing/*`, `/api/stripe/*`
 - Superadmin/operator: `/api/superadmin/*`, `/api/superadmin/billing/*`, `/api/migrate`
+- Health/readiness: `/api/health`
 
 ---
 
@@ -78,6 +79,10 @@ See also:
 ## `auth-config`
 
 - `/api/auth/config` → `/.netlify/functions/auth-config` (status 200)
+
+## `health`
+
+- `/api/health` → `/.netlify/functions/health` (status 200)
 
 ## `auth-login`
 
@@ -374,4 +379,3 @@ See also:
 
 - `/api/workspaces/users` → `/.netlify/functions/workspace-users` (status 200)
 - `/api/workspaces/users/*` → `/.netlify/functions/workspace-users` (status 200)
-
