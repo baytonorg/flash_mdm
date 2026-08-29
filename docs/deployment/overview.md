@@ -45,6 +45,9 @@ See: [Environments](./environments.md)
 
 See: [Migrations & rollbacks](./migrations-and-rollbacks.md)
 
+## Self-hosted database
+
+- [LXD Postgres for Netlify](./lxd-postgres-netlify.md) covers moving the database from Neon/Netlify DB to a local LXD container while keeping the application on Netlify.
 
 ## Step-by-step
 

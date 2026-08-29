@@ -119,7 +119,7 @@ This is what connects Flash MDM to your Android devices.
 If you want to charge for device licences:
 
 1. In your [Stripe Dashboard](https://dashboard.stripe.com), create products and prices for your licensing tiers.
-2. Go to **Developers > Webhooks** and add an endpoint pointing to `https://your-site.netlify.app/api/stripe/webhook`.
+2. Go to **Developers > Webhooks** and add an endpoint pointing to `https://flash-mdm.bayton.org/api/stripe/webhook`.
 3. Select the events: `checkout.session.completed` and all `customer.subscription.*` events.
 4. Copy the **webhook signing secret** and set it as `STRIPE_WEBHOOK_SECRET`.
 
@@ -128,7 +128,7 @@ If you want to charge for device licences:
 PubSub lets Flash MDM receive real-time updates when devices change state (e.g. a device enrolls, a policy is applied, compliance changes).
 
 1. In Google Cloud Console, go to **Pub/Sub** and create a new topic.
-2. Create a **push subscription** pointing to `https://your-site.netlify.app/api/pubsub/webhook`.
+2. Create a **push subscription** pointing to `https://flash-mdm.bayton.org/api/pubsub/webhook`.
 3. Under the subscription's authentication settings, add an `Authorization` header with the value `Bearer <your PUBSUB_SHARED_SECRET>` (using the same secret you set in your environment variables).
 4. In Flash MDM, when creating an environment, paste the full topic name (e.g. `projects/my-project/topics/my-topic`) into the PubSub topic field.
 
@@ -261,6 +261,8 @@ curl -fsSL https://raw.githubusercontent.com/baytonorg/flash_mdm/main/install.sh
 ```
 
 All `FLASH_*` variables are optional - the script will prompt for any that aren't provided. See the full list of supported variables in [`install.sh`](install.sh).
+
+For optional deploy-key-backed webhook VPS releases, see [VPS webhook deployment](./docs/deployment/vps-auto-deploy.md). It is disabled unless `FLASH_AUTO_DEPLOY=true` and `FLASH_AUTO_DEPLOY_WEBHOOK_SECRET` are set.
 
 ### Manual deployment
 
@@ -439,7 +441,7 @@ The variables themselves are identical regardless of platform - see the [Environ
 |----------|-------------------------|
 | `DATABASE_URL` | On Netlify this is provided automatically by Netlify DB. On a VPS, point it at your own Postgres instance (append `?sslmode=disable` for local Postgres without SSL) |
 | `URL` | The public URL of your deployment (e.g. `https://mdm.example.com`). Used to generate magic-link emails and other absolute URLs. On Netlify this is set automatically |
-| `RESEND_FROM_EMAIL` | The "from" address for outbound emails (e.g. `App Name <noreply@yourdomain.com>`). The domain must be [verified in your Resend account](https://resend.com/docs/dashboard/domains/introduction). If not set, the app falls back to the default in `netlify/functions/_lib/brand.ts`, which uses the Netlify domain and will fail on non-Netlify deployments |
+| `RESEND_FROM_EMAIL` | The "from" address for outbound emails (e.g. `App Name <noreply@yourdomain.com>`). The domain must be [verified in your Resend account](https://resend.com/docs/dashboard/domains/introduction). If not set, the app falls back to the Flash MDM sender configured in `netlify/functions/_lib/brand.ts` |
 | `NODE_ENV` | Set to `production` when running behind HTTPS. If you're testing over plain HTTP (no TLS), set to `development` - otherwise session cookies will include the `Secure` flag and browsers will silently reject them over HTTP |
 
 ### Database

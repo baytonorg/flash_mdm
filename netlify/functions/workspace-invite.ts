@@ -10,7 +10,7 @@ import {
 import { generateToken, hashToken } from './_lib/crypto.js';
 import { logAudit } from './_lib/audit.js';
 import { sendEmail, inviteEmail } from './_lib/resend.js';
-import { jsonResponse, errorResponse, parseJsonBody, getSearchParams, getClientIp } from './_lib/helpers.js';
+import { getClientIp, getPublicOrigin, getSearchParams, jsonResponse, errorResponse, parseJsonBody } from './_lib/helpers.js';
 
 const INVITE_EXPIRY_DAYS = 7;
 export type InviteType = 'workspace_access' | 'platform_access';
@@ -140,7 +140,7 @@ export default async (request: Request, context: Context) => {
         : null;
 
       const inviterName = [auth.user.first_name, auth.user.last_name].filter(Boolean).join(' ') || auth.user.email;
-      const baseUrl = process.env.URL ?? process.env.DEPLOY_PRIME_URL ?? 'https://flash-mdm.netlify.app';
+      const baseUrl = getPublicOrigin(request);
       const inviteUrl = `${baseUrl}/invite/${token}`;
 
       // Send invite email

@@ -46,3 +46,7 @@ Recommended minimum for operators:
 - define RPO/RTO targets
 
 See: [Backup and restore](../operations/backup-and-restore.md)
+
+## 5) Self-hosted Postgres
+
+For a database running in an LXD container while the application remains on Netlify, see [LXD Postgres for Netlify](./lxd-postgres-netlify.md).
