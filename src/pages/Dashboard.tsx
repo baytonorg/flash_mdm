@@ -11,6 +11,7 @@ import ComplianceWidget from '@/components/dashboard/ComplianceWidget';
 import DeviceStateWidget from '@/components/dashboard/DeviceStateWidget';
 import RecentEventsWidget from '@/components/dashboard/RecentEventsWidget';
 import LivePageIndicator from '@/components/common/LivePageIndicator';
+import QueryErrorState from '@/components/common/QueryErrorState';
 
 interface DashboardData {
   device_count: number;
@@ -55,7 +56,7 @@ export default function Dashboard() {
   const activeEnvironment = useContextStore((s) => s.activeEnvironment);
   const environmentId = activeEnvironment?.id;
 
-  const { data, isLoading, dataUpdatedAt } = useQuery<DashboardData>({
+  const { data, isLoading, isError, error, refetch, isFetching, dataUpdatedAt } = useQuery<DashboardData>({
     queryKey: ['dashboard', environmentId],
     queryFn: () =>
       apiClient.get<DashboardData>(`/api/dashboard/data?environment_id=${environmentId}`),
@@ -76,6 +77,20 @@ export default function Dashboard() {
             Select a workspace and environment from the sidebar to view dashboard data.
           </p>
         </div>
+      </div>
+    );
+  }
+
+  if (isError && !data) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+        <QueryErrorState
+          title="Unable to load dashboard"
+          error={error}
+          onRetry={() => void refetch()}
+          retrying={isFetching}
+        />
       </div>
     );
   }
@@ -114,6 +129,18 @@ export default function Dashboard() {
         <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
         <LivePageIndicator intervalMs={LIVE_REFRESH_MS} lastUpdatedAt={dataUpdatedAt} />
       </div>
+
+      {isError && (
+        <div className="mb-6">
+          <QueryErrorState
+            compact
+            title="Dashboard data may be out of date"
+            error={error}
+            onRetry={() => void refetch()}
+            retrying={isFetching}
+          />
+        </div>
+      )}
 
       {/* Stat cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6 mb-6">

@@ -1,86 +1,13 @@
 import type { Context } from '@netlify/functions';
-import { createHash } from 'crypto';
-import { query, queryOne, execute } from './_lib/db.js';
+import { query, queryOne, transaction } from './_lib/db.js';
 import { requireAuth } from './_lib/auth.js';
 import { requireEnvironmentResourcePermission } from './_lib/rbac.js';
 import { logAudit } from './_lib/audit.js';
 import { storeBlob, deleteBlob } from './_lib/blobs.js';
 import { jsonResponse, errorResponse, parseJsonBody, getSearchParams, getClientIp } from './_lib/helpers.js';
-import { getPolicyAmapiContext, syncPolicyDerivativesForPolicy } from './_lib/policy-derivatives.js';
+import { buildOncCertificateGuid, collectOncServerCaRefs, parseServerCaCertificate } from './_lib/certificate-policy.js';
 
-/**
- * Parse a PEM certificate and extract key details.
- * Uses basic ASN.1 parsing for fingerprint and validity extraction.
- */
-function parseCertificate(pemData: string): {
-  fingerprint_sha256: string;
-  not_after: string | null;
-  subject: string | null;
-  issuer_name: string | null;
-} {
-  // Remove PEM headers and decode
-  const b64 = pemData
-    .replace(/-----BEGIN CERTIFICATE-----/g, '')
-    .replace(/-----END CERTIFICATE-----/g, '')
-    .replace(/\s/g, '');
-
-  const derBuffer = Buffer.from(b64, 'base64');
-
-  // SHA-256 fingerprint of the DER-encoded certificate
-  const fingerprint = createHash('sha256').update(derBuffer).digest('hex');
-  const formattedFingerprint = fingerprint
-    .toUpperCase()
-    .match(/.{2}/g)
-    ?.join(':') ?? fingerprint.toUpperCase();
-
-  // Basic extraction: we parse what we can, but full X.509 parsing
-  // would require a dedicated library. Return fingerprint as the key identifier.
-  return {
-    fingerprint_sha256: formattedFingerprint,
-    not_after: null, // Would need ASN.1 parser for accurate extraction
-    subject: null,
-    issuer_name: null,
-  };
-}
-
-/**
- * Validate that the input looks like a PEM certificate.
- */
-function isValidPem(data: string): boolean {
-  return data.includes('-----BEGIN CERTIFICATE-----') && data.includes('-----END CERTIFICATE-----');
-}
-
-async function syncEnvironmentPoliciesAfterCertificateChange(environmentId: string): Promise<void> {
-  const amapiContext = await getPolicyAmapiContext(environmentId);
-  if (!amapiContext) return;
-
-  const policies = await query<{ id: string; config: Record<string, unknown> | string | null }>(
-    'SELECT id, config FROM policies WHERE environment_id = $1',
-    [environmentId]
-  );
-
-  for (const policy of policies) {
-    try {
-      const baseConfig = typeof policy.config === 'string'
-        ? JSON.parse(policy.config)
-        : (policy.config ?? {});
-      await syncPolicyDerivativesForPolicy({
-        policyId: policy.id,
-        environmentId,
-        baseConfig,
-        amapiContext,
-      });
-    } catch (err) {
-      console.warn('certificate-crud: derivative sync skipped/failed after certificate change', {
-        environment_id: environmentId,
-        policy_id: policy.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-}
-
-export default async (request: Request, context: Context) => {
+export default async (request: Request, _context: Context) => {
   try {
     const auth = await requireAuth(request);
     const url = new URL(request.url);
@@ -98,130 +25,99 @@ export default async (request: Request, context: Context) => {
 
       await requireEnvironmentResourcePermission(auth, environmentId, 'certificate', 'read');
 
-      let certificates: unknown[];
-      try {
-        certificates = await query(
-          `SELECT id, environment_id, name, cert_type, fingerprint_sha256, not_after,
-                subject, issuer_name, uploaded_by, created_at
-           FROM certificates
-           WHERE environment_id = $1 AND deleted_at IS NULL
-           ORDER BY created_at DESC`,
-          [environmentId]
-        );
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        const missingCompatColumns =
-          message.includes('column "subject" does not exist')
-          || message.includes('column "issuer_name" does not exist')
-          || message.includes('column "uploaded_by" does not exist');
-        if (!missingCompatColumns) throw err;
+      const certificates = await query<Record<string, unknown> & { id: string }>(
+        `SELECT id, environment_id, name, cert_type, fingerprint_sha256, not_after,
+                subject, issuer_name, uploaded_by, scope_type, scope_id, created_at
+         FROM certificates
+         WHERE environment_id = $1
+           AND deleted_at IS NULL
+           AND validated_at IS NOT NULL
+         ORDER BY created_at DESC`,
+        [environmentId]
+      );
 
-        console.warn('certificate-crud: legacy certificates schema detected; using compatibility list query');
-        try {
-          certificates = await query(
-            `SELECT id, environment_id, name, cert_type, fingerprint_sha256, not_after,
-                  NULL::text AS subject,
-                  NULL::text AS issuer_name,
-                  NULL::uuid AS uploaded_by,
-                  created_at
-             FROM certificates
-             WHERE environment_id = $1 AND deleted_at IS NULL
-             ORDER BY created_at DESC`,
-            [environmentId]
-          );
-        } catch (compatErr) {
-          const compatMessage = compatErr instanceof Error ? compatErr.message : String(compatErr);
-          if (!compatMessage.includes('column "deleted_at" does not exist')) throw compatErr;
-
-          console.warn('certificate-crud: certificates.deleted_at missing; using legacy soft-delete compatibility query');
-          certificates = await query(
-            `SELECT id, environment_id, name, cert_type, fingerprint_sha256, not_after,
-                  NULL::text AS subject,
-                  NULL::text AS issuer_name,
-                  NULL::uuid AS uploaded_by,
-                  created_at
-             FROM certificates
-             WHERE environment_id = $1
-             ORDER BY created_at DESC`,
-            [environmentId]
-          );
-        }
-      }
-
-      return jsonResponse({ certificates });
+      return jsonResponse({
+        certificates: certificates.map((certificate) => ({
+          ...certificate,
+          onc_guid: buildOncCertificateGuid(certificate.id),
+        })),
+      });
     }
 
     // POST /api/certificates/upload
     if (request.method === 'POST' && action === 'upload') {
       const body = await parseJsonBody<{
-      environment_id: string;
-      name: string;
-      cert_type?: string;
-      cert_data: string; // base64 or PEM
-      not_after?: string; // optional manual override
-    }>(request);
+        environment_id: string;
+        name: string;
+        cert_data: string; // base64 or PEM
+      }>(request);
 
       if (!body.environment_id || !body.name || !body.cert_data) {
         return errorResponse('environment_id, name, and cert_data are required');
       }
+      const certificateName = body.name.trim();
+      if (!certificateName) return errorResponse('name must not be blank');
 
       await requireEnvironmentResourcePermission(auth, body.environment_id, 'certificate', 'write');
 
-    // Determine if the cert_data is base64-encoded or raw PEM
-      let pemData: string;
-      if (isValidPem(body.cert_data)) {
-        pemData = body.cert_data;
-      } else {
-      // Try to decode as base64
-        try {
-          pemData = Buffer.from(body.cert_data, 'base64').toString('utf-8');
-          if (!isValidPem(pemData)) {
-            return errorResponse('Invalid certificate data. Expected PEM format.');
-          }
-        } catch {
-          return errorResponse('Invalid certificate data. Expected PEM or base64-encoded PEM.');
-        }
+      let certInfo;
+      try {
+        certInfo = parseServerCaCertificate(body.cert_data);
+      } catch (err) {
+        return errorResponse(err instanceof Error ? err.message : 'Invalid certificate data', 400);
       }
-    // Parse certificate
-      const certInfo = parseCertificate(pemData);
 
-    // Check for duplicate fingerprint in this environment
+      // Check for duplicate fingerprint in this environment
       const duplicate = await queryOne(
-        `SELECT id FROM certificates
-         WHERE environment_id = $1 AND fingerprint_sha256 = $2 AND deleted_at IS NULL`,
+         `SELECT id FROM certificates
+         WHERE environment_id = $1
+           AND fingerprint_sha256 = $2
+           AND deleted_at IS NULL
+           AND validated_at IS NOT NULL`,
         [body.environment_id, certInfo.fingerprint_sha256]
       );
       if (duplicate) {
-        return errorResponse('A certificate with this fingerprint already exists in this environment');
+        return errorResponse('A certificate with this fingerprint already exists in this environment', 409);
       }
 
       const certId = crypto.randomUUID();
       const blobKey = `${body.environment_id}/${certId}.pem`;
 
-    // Store the PEM file in Netlify Blobs
-      await storeBlob('certificates', blobKey, pemData, {
+      // Store the PEM file in the runtime's configured blob store.
+      await storeBlob('certificates', blobKey, certInfo.pem, {
         environment_id: body.environment_id,
         cert_id: certId,
         fingerprint: certInfo.fingerprint_sha256,
       });
 
-    // Insert into certificates table
-      await execute(
-        `INSERT INTO certificates (id, environment_id, name, cert_type, fingerprint_sha256, not_after, subject, issuer_name, uploaded_by, blob_key)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-        [
-          certId,
-          body.environment_id,
-          body.name,
-          body.cert_type ?? 'ca',
-          certInfo.fingerprint_sha256,
-          body.not_after ?? certInfo.not_after,
-          certInfo.subject,
-          certInfo.issuer_name,
-          auth.user.id,
-          blobKey,
-        ]
-      );
+      try {
+        await transaction(async (client) => {
+          await client.query(
+            `INSERT INTO certificates (
+               id, environment_id, name, cert_type, fingerprint_sha256, not_after,
+               subject, issuer_name, uploaded_by, validated_at, blob_key, scope_type, scope_id
+             )
+             VALUES ($1, $2, $3, 'server_ca', $4, $5, $6, $7, $8, now(), $9, 'environment', $2)`,
+            [
+              certId,
+              body.environment_id,
+              certificateName,
+              certInfo.fingerprint_sha256,
+              certInfo.not_after,
+              certInfo.subject,
+              certInfo.issuer_name,
+              auth.user.id,
+              blobKey,
+            ]
+          );
+        });
+      } catch (err) {
+        await deleteBlob('certificates', blobKey).catch(() => undefined);
+        if (err && typeof err === 'object' && 'code' in err && err.code === '23505') {
+          return errorResponse('A certificate with this fingerprint already exists in this environment', 409);
+        }
+        throw err;
+      }
 
       await logAudit({
         environment_id: body.environment_id,
@@ -230,23 +126,25 @@ export default async (request: Request, context: Context) => {
         resource_type: 'certificate',
         resource_id: certId,
         details: {
-          name: body.name,
-          cert_type: body.cert_type ?? 'ca',
+          name: certificateName,
+          cert_type: 'server_ca',
           fingerprint: certInfo.fingerprint_sha256,
         },
         ip_address: getClientIp(request),
       });
 
-      await syncEnvironmentPoliciesAfterCertificateChange(body.environment_id);
-
       return jsonResponse({
         certificate: {
           id: certId,
-          name: body.name,
-          cert_type: body.cert_type ?? 'ca',
+          name: certificateName,
+          cert_type: 'server_ca',
+          onc_guid: buildOncCertificateGuid(certId),
           fingerprint_sha256: certInfo.fingerprint_sha256,
-          not_after: body.not_after ?? certInfo.not_after,
+          not_after: certInfo.not_after,
+          subject: certInfo.subject,
+          issuer_name: certInfo.issuer_name,
         },
+        message: 'Trusted CA stored. Select it in an enterprise Wi-Fi profile to deploy it.',
       }, 201);
     }
 
@@ -263,13 +161,31 @@ export default async (request: Request, context: Context) => {
 
       await requireEnvironmentResourcePermission(auth, cert.environment_id, 'certificate', 'delete');
 
-    // Soft-delete in DB
-      await execute(
-        'UPDATE certificates SET deleted_at = now() WHERE id = $1',
-        [certId]
+      const oncGuid = buildOncCertificateGuid(cert.id);
+      const deployments = await query<{ id: string; name: string; onc_profile: Record<string, unknown> | string }>(
+        `SELECT id, name, onc_profile
+         FROM network_deployments
+         WHERE environment_id = $1 AND network_type = 'wifi'`,
+        [cert.environment_id]
       );
+      const references = deployments.filter((deployment) => {
+        const profile = typeof deployment.onc_profile === 'string'
+          ? JSON.parse(deployment.onc_profile)
+          : deployment.onc_profile;
+        return collectOncServerCaRefs(profile).includes(oncGuid);
+      });
+      if (references.length > 0) {
+        return jsonResponse({
+          error: 'Certificate is referenced by one or more Wi-Fi profiles',
+          references: references.map(({ id, name }) => ({ id, name })),
+        }, 409);
+      }
 
-    // Delete from Blobs
+      await transaction(async (client) => {
+        await client.query('UPDATE certificates SET deleted_at = now() WHERE id = $1', [certId]);
+      });
+
+      // Delete from the runtime's configured blob store.
       try {
         await deleteBlob('certificates', cert.blob_key);
       } catch (err) {
@@ -285,8 +201,6 @@ export default async (request: Request, context: Context) => {
         details: { name: cert.name },
         ip_address: getClientIp(request),
       });
-
-      await syncEnvironmentPoliciesAfterCertificateChange(cert.environment_id);
 
       return jsonResponse({ message: 'Certificate deleted' });
     }

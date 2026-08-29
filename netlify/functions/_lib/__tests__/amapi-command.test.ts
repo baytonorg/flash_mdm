@@ -61,6 +61,12 @@ describe('buildAmapiCommandPayload', () => {
       .toThrow('START_LOST_MODE requires at least one of');
   });
 
+  it('does not accept organization alone for START_LOST_MODE', () => {
+    expect(() => buildAmapiCommandPayload('START_LOST_MODE', {
+      lostOrganization: 'Example Organization',
+    })).toThrow('lostOrganization alone is not sufficient');
+  });
+
   it('builds REQUEST_DEVICE_INFO with default EID', () => {
     const payload = buildAmapiCommandPayload('REQUEST_DEVICE_INFO', {});
     expect(payload).toEqual({
@@ -157,6 +163,12 @@ describe('buildAmapiCommandPayload', () => {
       type: 'CLEAR_APP_DATA',
       clearAppsDataParams: { packageNames: ['com.example.app'] },
     });
+  });
+
+  it('rejects empty package names for CLEAR_APP_DATA', () => {
+    expect(() => buildAmapiCommandPayload('CLEAR_APP_DATA', {
+      clearAppsDataParams: { packageNames: ['com.example.valid', '  '] },
+    })).toThrow('packageNames must contain non-empty strings');
   });
 
   it('has explicit coverage for all AMAPI issueCommand types', () => {

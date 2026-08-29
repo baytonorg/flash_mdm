@@ -101,8 +101,12 @@ async function isDeviceInWorkflowScope(
   workflow: MatchingWorkflow,
   input: WorkflowEventInput
 ): Promise<boolean> {
-  // Environment-scoped workflows apply to all devices in the environment
-  if (workflow.scope_type === 'environment' || !workflow.scope_id) return true;
+  // Environment-scoped workflows apply to all devices in the environment.
+  if (workflow.scope_type === 'environment') return true;
+
+  if (workflow.scope_type === 'device') {
+    return !!workflow.scope_id && workflow.scope_id === input.deviceId;
+  }
 
   // Group-scoped workflows: check if device is in the group (or descendant)
   if (workflow.scope_type === 'group') {
@@ -118,7 +122,7 @@ async function isDeviceInWorkflowScope(
     return match.length > 0;
   }
 
-  return true;
+  return false;
 }
 
 // ─── Trigger Config Matching ────────────────────────────────────────────────

@@ -3,15 +3,23 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../db.js', () => ({
   query: vi.fn(),
 }));
+vi.mock('../blobs.js', () => ({
+  getBlob: vi.fn(),
+}));
 
 import { query } from '../db.js';
+import { getBlob } from '../blobs.js';
+import { validateAmapiPolicyAgainstDiscovery } from '../amapi-discovery-validation.js';
 import { buildGeneratedPolicyPayload, computePolicyGenerationHash, detectDeviceScopedVariables } from '../policy-generation.js';
+import { TEST_CA_PEM } from '../../__tests__/fixtures/test-certificates.js';
 
 const mockQuery = vi.mocked(query);
+const mockGetBlob = vi.mocked(getBlob);
 
 describe('policy-generation', () => {
   beforeEach(() => {
     mockQuery.mockReset();
+    mockGetBlob.mockReset();
   });
 
   it('detects namespaced variables in braced placeholder style only', () => {
@@ -241,5 +249,231 @@ describe('policy-generation', () => {
         },
       },
     });
+  });
+
+  it('removes policy fields that were never part of the AMAPI schema', async () => {
+    mockQuery
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never);
+
+    const result = await buildGeneratedPolicyPayload({
+      policyId: 'pol_1',
+      environmentId: 'env_1',
+      baseConfig: {
+        deviceConnectivityManagement: {
+          wifiRoamingPolicy: {
+            wifiRoamingMode: 'WIFI_ROAMING_AGGRESSIVE',
+            wifiRoamingSettings: [{
+              wifiSsid: 'Corporate',
+              wifiRoamingMode: 'WIFI_ROAMING_DEFAULT',
+            }],
+          },
+        },
+        personalUsagePolicies: {
+          cameraAccessForPersonalProfile: 'CAMERA_ACCESS_DISABLED',
+          microphoneAccessForPersonalProfile: 'MICROPHONE_ACCESS_DISABLED',
+          personalGoogleAccountsAllowed: 'PERSONAL_GOOGLE_ACCOUNTS_DISALLOWED',
+          cameraDisabled: true,
+        },
+      },
+    });
+
+    expect(result.payload).toMatchObject({
+      deviceConnectivityManagement: {
+        wifiRoamingPolicy: {
+          wifiRoamingSettings: [{
+            wifiSsid: 'Corporate',
+            wifiRoamingMode: 'WIFI_ROAMING_DEFAULT',
+          }],
+        },
+      },
+      personalUsagePolicies: { cameraDisabled: true },
+    });
+    expect(result.payload).not.toHaveProperty('deviceConnectivityManagement.wifiRoamingPolicy.wifiRoamingMode');
+    expect(result.payload).not.toHaveProperty('personalUsagePolicies.cameraAccessForPersonalProfile');
+    expect(result.payload).not.toHaveProperty('personalUsagePolicies.microphoneAccessForPersonalProfile');
+    expect(result.payload).not.toHaveProperty('personalUsagePolicies.personalGoogleAccountsAllowed');
+    expect(validateAmapiPolicyAgainstDiscovery(result.payload)).toEqual([]);
+  });
+
+  it('embeds only referenced trusted CAs in the generated ONC policy', async () => {
+    mockQuery
+      .mockResolvedValueOnce([{ scope_type: 'environment', scope_id: 'env_1' }] as never)
+      .mockResolvedValueOnce([] as never) // environment app configs
+      .mockResolvedValueOnce([] as never) // legacy environment app deployments
+      .mockResolvedValueOnce([{
+        id: 'network_1',
+        onc_profile: {
+          Type: 'UnencryptedConfiguration',
+          NetworkConfigurations: [{
+            GUID: 'corp-wifi',
+            Name: 'Corporate Wi-Fi',
+            Type: 'WiFi',
+            WiFi: {
+              SSID: 'Corporate',
+              Security: 'WPA-EAP',
+              EAP: {
+                Outer: 'PEAP',
+                Inner: 'MSCHAPv2',
+                DomainSuffixMatch: ['example.com'],
+                ServerCARefs: ['flash-ca-cert_1'],
+              },
+            },
+          }],
+        },
+      }] as never)
+      .mockResolvedValueOnce([] as never) // environment lock rows
+      .mockResolvedValueOnce([{ id: 'cert_1', blob_key: 'env_1/cert_1.pem' }] as never);
+    mockGetBlob.mockResolvedValueOnce(TEST_CA_PEM);
+
+    const result = await buildGeneratedPolicyPayload({
+      policyId: 'pol_1',
+      environmentId: 'env_1',
+      baseConfig: {},
+    });
+
+    expect(result.payload.openNetworkConfiguration).toMatchObject({
+      NetworkConfigurations: [{
+        WiFi: { EAP: { ServerCARefs: ['flash-ca-cert_1'] } },
+      }],
+      Certificates: [{
+        GUID: 'flash-ca-cert_1',
+        Type: 'Server',
+        X509: expect.stringMatching(/^[A-Za-z0-9+/=]+$/),
+      }],
+    });
+    expect(mockGetBlob).toHaveBeenCalledWith('certificates', 'env_1/cert_1.pem');
+  });
+
+  it('enriches the effective ONC document after a group override is applied', async () => {
+    const overriddenOnc = {
+      Type: 'UnencryptedConfiguration',
+      NetworkConfigurations: [{
+        GUID: 'override-wifi',
+        Name: 'Override Wi-Fi',
+        Type: 'WiFi',
+        WiFi: {
+          SSID: 'Override',
+          Security: 'WPA-EAP',
+          EAP: {
+            Outer: 'PEAP',
+            DomainSuffixMatch: ['example.com'],
+            ServerCARefs: ['flash-ca-cert_1'],
+          },
+        },
+      }],
+    };
+    mockQuery.mockImplementation((sql) => {
+      const statement = String(sql);
+      if (statement.includes('FROM policy_assignments')) return Promise.resolve([] as never);
+      if (statement.includes('SELECT id FROM groups')) return Promise.resolve([{ id: 'grp_1' }] as never);
+      if (statement.includes('FROM app_scope_configs') || statement.includes('FROM app_deployments')) return Promise.resolve([] as never);
+      if (statement.includes('FROM network_deployments')) return Promise.resolve([] as never);
+      if (statement.includes('FROM group_closures gc\n     JOIN network_deployments')) return Promise.resolve([] as never);
+      if (statement.includes('FROM group_closures gc\n     JOIN groups')) {
+        return Promise.resolve([{
+          ancestor_id: 'grp_1',
+          group_name: 'Override group',
+          depth: 0,
+          override_config: { openNetworkConfiguration: overriddenOnc },
+          pa_locked: false,
+          pa_locked_sections: null,
+        }] as never);
+      }
+      if (statement.includes('FROM certificates')) {
+        return Promise.resolve([{ id: 'cert_1', blob_key: 'env_1/cert_1.pem' }] as never);
+      }
+      return Promise.resolve([] as never);
+    });
+    mockGetBlob.mockResolvedValueOnce(TEST_CA_PEM);
+
+    const result = await buildGeneratedPolicyPayload({
+      policyId: 'pol_1',
+      environmentId: 'env_1',
+      baseConfig: {},
+      target: { mode: 'scope', scope_type: 'group', scope_id: 'grp_1' },
+    });
+
+    expect(result.payload.openNetworkConfiguration).toMatchObject({
+      NetworkConfigurations: [{ GUID: 'override-wifi' }],
+      Certificates: [{ GUID: 'flash-ca-cert_1', Type: 'Server' }],
+    });
+  });
+
+  it('rejects a Wi-Fi profile that references an unknown trusted CA', async () => {
+    mockQuery
+      .mockResolvedValueOnce([] as never) // policy assignments
+      .mockResolvedValueOnce([] as never) // environment app configs
+      .mockResolvedValueOnce([] as never) // legacy environment app deployments
+      .mockResolvedValueOnce([{
+        id: 'network_1',
+        onc_profile: {
+          Type: 'UnencryptedConfiguration',
+          NetworkConfigurations: [{
+            GUID: 'corp-wifi',
+            Name: 'Corporate Wi-Fi',
+            Type: 'WiFi',
+            WiFi: {
+              SSID: 'Corporate',
+              Security: 'WPA-EAP',
+              EAP: {
+                Outer: 'PEAP',
+                Inner: 'MSCHAPv2',
+                DomainSuffixMatch: ['example.com'],
+                ServerCARefs: ['flash-ca-deleted_cert'],
+              },
+            },
+          }],
+        },
+      }] as never)
+      .mockResolvedValueOnce([] as never) // environment lock rows
+      .mockResolvedValueOnce([] as never); // active trusted CAs
+
+    await expect(buildGeneratedPolicyPayload({
+      policyId: 'pol_1',
+      environmentId: 'env_1',
+      baseConfig: {},
+    })).rejects.toThrow('Wi-Fi profile references unknown trusted CA: flash-ca-deleted_cert');
+    expect(mockGetBlob).not.toHaveBeenCalled();
+  });
+
+  it('rejects a referenced trusted CA whose blob is missing', async () => {
+    mockQuery
+      .mockResolvedValueOnce([] as never) // policy assignments
+      .mockResolvedValueOnce([] as never) // environment app configs
+      .mockResolvedValueOnce([] as never) // legacy environment app deployments
+      .mockResolvedValueOnce([{
+        id: 'network_1',
+        onc_profile: {
+          Type: 'UnencryptedConfiguration',
+          NetworkConfigurations: [{
+            GUID: 'corp-wifi',
+            Name: 'Corporate Wi-Fi',
+            Type: 'WiFi',
+            WiFi: {
+              SSID: 'Corporate',
+              Security: 'WPA-EAP',
+              EAP: {
+                Outer: 'PEAP',
+                Inner: 'MSCHAPv2',
+                DomainSuffixMatch: ['example.com'],
+                ServerCARefs: ['flash-ca-cert_1'],
+              },
+            },
+          }],
+        },
+      }] as never)
+      .mockResolvedValueOnce([] as never) // environment lock rows
+      .mockResolvedValueOnce([{ id: 'cert_1', blob_key: 'env_1/cert_1.pem' }] as never);
+    mockGetBlob.mockResolvedValueOnce(null);
+
+    await expect(buildGeneratedPolicyPayload({
+      policyId: 'pol_1',
+      environmentId: 'env_1',
+      baseConfig: {},
+    })).rejects.toThrow('Trusted CA blob is missing: flash-ca-cert_1');
   });
 });

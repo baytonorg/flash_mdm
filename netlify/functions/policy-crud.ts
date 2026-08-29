@@ -35,6 +35,39 @@ type PolicyBulkBody = {
   };
 };
 
+async function countDevicesUsingPolicy(policyId: string, environmentId: string): Promise<number> {
+  const row = await queryOne<{ count: string }>(
+    `SELECT COUNT(*)::text AS count
+     FROM devices d
+     LEFT JOIN LATERAL (
+       SELECT pa.policy_id
+       FROM policy_assignments pa
+       WHERE pa.scope_type = 'device' AND pa.scope_id = d.id
+       LIMIT 1
+     ) dpa ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT pa.policy_id
+       FROM group_closures gc
+       JOIN policy_assignments pa
+         ON pa.scope_type = 'group' AND pa.scope_id = gc.ancestor_id
+       WHERE d.group_id IS NOT NULL AND gc.descendant_id = d.group_id
+       ORDER BY gc.depth ASC
+       LIMIT 1
+     ) gpa ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT pa.policy_id
+       FROM policy_assignments pa
+       WHERE pa.scope_type = 'environment' AND pa.scope_id = d.environment_id
+       LIMIT 1
+     ) epa ON TRUE
+     WHERE d.environment_id = $2
+       AND d.deleted_at IS NULL
+       AND COALESCE(dpa.policy_id, gpa.policy_id, epa.policy_id, d.policy_id) = $1`,
+    [policyId, environmentId]
+  );
+  return Number.parseInt(row?.count ?? '0', 10);
+}
+
 async function canViewPolicyInScopedEnvironment(
   policyId: string,
   environmentId: string,
@@ -873,12 +906,7 @@ export default async (request: Request, context: Context) => {
     }
     await requireEnvironmentResourcePermission(auth, policy.environment_id, 'policy', 'delete');
 
-    // Check if devices are using this policy
-    const deviceCount = await queryOne<{ count: string }>(
-      'SELECT COUNT(*) as count FROM devices WHERE policy_id = $1 AND deleted_at IS NULL',
-      [action]
-    );
-    if (parseInt(deviceCount?.count ?? '0', 10) > 0) {
+    if (await countDevicesUsingPolicy(action, policy.environment_id) > 0) {
       return errorResponse('Cannot delete policy: devices are still using it', 409);
     }
 
@@ -1087,11 +1115,7 @@ async function performPolicyDelete(
   if (policy.name === 'Default') return { ok: false, error: 'The Default policy cannot be deleted' };
   await requireEnvironmentResourcePermission(auth, policy.environment_id, 'policy', 'delete');
 
-  const deviceCount = await queryOne<{ count: string }>(
-    'SELECT COUNT(*) as count FROM devices WHERE policy_id = $1 AND deleted_at IS NULL',
-    [policyId]
-  );
-  if (parseInt(deviceCount?.count ?? '0', 10) > 0) {
+  if (await countDevicesUsingPolicy(policyId, policy.environment_id) > 0) {
     return { ok: false, error: 'Cannot delete policy: devices are still using it' };
   }
 

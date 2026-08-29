@@ -1,5 +1,5 @@
 import type { Context } from '@netlify/functions';
-import { query, queryOne, execute, transaction } from './_lib/db.js';
+import { query, queryOne, execute } from './_lib/db.js';
 import { requireAuth } from './_lib/auth.js';
 import { requireEnvironmentPermission } from './_lib/rbac.js';
 import { logAudit } from './_lib/audit.js';
@@ -10,6 +10,7 @@ import {
   assignPolicyToDeviceWithDerivative,
 } from './_lib/policy-derivatives.js';
 import { jsonResponse, errorResponse, parseJsonBody, getSearchParams, getClientIp } from './_lib/helpers.js';
+import { internalFunctionUrl, shouldTriggerBackgroundFunction } from './_lib/runtime.js';
 
 type DeploymentJobRow = {
   id: string;
@@ -111,7 +112,20 @@ export default async function handler(request: Request, _context: Context) {
       ip_address: getClientIp(request),
     });
 
-    await triggerDeploymentJobBackground(request, job.id);
+    const dispatched = await triggerDeploymentJobBackground(request, job.id);
+    if (!dispatched) {
+      const message = 'Background worker dispatch failed before processing started';
+      await execute(
+        `UPDATE deployment_jobs
+         SET status = 'failed',
+             error_log = $2::jsonb,
+             completed_at = now(),
+             updated_at = now()
+         WHERE id = $1`,
+        [job.id, JSON.stringify([{ device_id: 'all', error: message, timestamp: new Date().toISOString() }])]
+      );
+      return jsonResponse({ error: message, job: { id: job.id, status: 'failed' } }, 503);
+    }
 
     return jsonResponse({ job: { id: job.id, status: 'pending', total_devices: totalDevices } }, 201);
   }
@@ -274,7 +288,7 @@ export async function processDeploymentJob(
   environmentId: string,
   deviceIds: string[],
   amapiContext: DeploymentJobAmapiContext,
-  userId: string
+  _userId: string
 ): Promise<void> {
   // Mark as running
   await execute(
@@ -408,10 +422,11 @@ export async function getDeploymentTargetDeviceIds(policyId: string, environment
   return [...allDeviceIds];
 }
 
-async function triggerDeploymentJobBackground(request: Request, jobId: string): Promise<void> {
+async function triggerDeploymentJobBackground(request: Request, jobId: string): Promise<boolean> {
+  if (!shouldTriggerBackgroundFunction()) return true;
+
   try {
-    const origin = new URL(request.url).origin;
-    const response = await fetch(`${origin}/.netlify/functions/deployment-jobs-background`, {
+    const response = await fetch(internalFunctionUrl(request, 'deployment-jobs-background'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -425,12 +440,15 @@ async function triggerDeploymentJobBackground(request: Request, jobId: string): 
         job_id: jobId,
         status: response.status,
       });
+      return false;
     }
+    return true;
   } catch (err) {
     console.warn('deployment-jobs: failed to trigger background processor', {
       job_id: jobId,
       error: err instanceof Error ? err.message : String(err),
     });
+    return false;
   }
 }
 

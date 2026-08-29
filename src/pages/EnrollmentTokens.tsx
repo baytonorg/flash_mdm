@@ -13,6 +13,7 @@ import BulkActionBar, { type BulkAction } from '@/components/common/BulkActionBa
 import ConfirmModal from '@/components/common/ConfirmModal';
 import SelectAllMatchingNotice from '@/components/common/SelectAllMatchingNotice';
 import TableLoadingState from '@/components/common/TableLoadingState';
+import QueryErrorState from '@/components/common/QueryErrorState';
 import TokenCreator from '@/components/enrollment/TokenCreator';
 import EnrollmentQrPreview from '@/components/enrollment/EnrollmentQrPreview';
 import { Plus, Trash2, Key, Clock, Loader2, X, Copy, Check, RefreshCw } from 'lucide-react';
@@ -65,7 +66,9 @@ export default function EnrollmentTokens() {
     };
   }, []);
 
-  const { data: tokens = [], isLoading } = useEnrollmentTokens(environmentId ?? '');
+  const tokensQuery = useEnrollmentTokens(environmentId ?? '');
+  const tokens = tokensQuery.data ?? [];
+  const { isLoading, isError, error, refetch, isFetching } = tokensQuery;
   const deleteMutation = useDeleteEnrollmentToken();
   const bulkEnrollmentAction = useBulkEnrollmentAction();
   const bulkSelection = useBulkSelection<EnrollmentToken>({
@@ -145,6 +148,20 @@ export default function EnrollmentTokens() {
     );
   }
 
+  if (isError && !tokensQuery.data) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl font-bold text-gray-900">Enrolment Tokens</h1>
+        <QueryErrorState
+          title="Unable to load enrolment tokens"
+          error={error}
+          onRetry={() => void refetch()}
+          retrying={isFetching}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -175,6 +192,16 @@ export default function EnrollmentTokens() {
           </button>
         </div>
       </div>
+
+      {isError && (
+        <QueryErrorState
+          compact
+          title="Enrolment token data may be out of date"
+          error={error}
+          onRetry={() => void refetch()}
+          retrying={isFetching}
+        />
+      )}
 
       {/* Sync result toast */}
       {syncResult && (
@@ -323,6 +350,7 @@ export default function EnrollmentTokens() {
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
+                          deleteMutation.reset();
                           setDeleteTarget(token);
                         }}
                         className="inline-flex items-center gap-1 rounded-lg p-1.5 text-muted hover:bg-red-50 hover:text-red-600 transition-colors"
@@ -497,9 +525,13 @@ export default function EnrollmentTokens() {
       {/* Delete confirmation */}
       <ConfirmModal
         open={!!deleteTarget}
-        onClose={() => setDeleteTarget(null)}
+        onClose={() => {
+          deleteMutation.reset();
+          setDeleteTarget(null);
+        }}
         onConfirm={() => {
           if (deleteTarget) {
+            deleteMutation.reset();
             deleteMutation.mutate(deleteTarget.id, {
               onSuccess: () => setDeleteTarget(null),
             });
@@ -510,6 +542,9 @@ export default function EnrollmentTokens() {
         confirmLabel="Delete"
         variant="danger"
         loading={deleteMutation.isPending}
+        error={deleteMutation.isError
+          ? (deleteMutation.error instanceof Error ? deleteMutation.error.message : 'Failed to delete enrolment token.')
+          : undefined}
       />
     </div>
   );

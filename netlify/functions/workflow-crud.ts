@@ -4,6 +4,8 @@ import { requireAuth } from './_lib/auth.js';
 import { requireEnvironmentPermission } from './_lib/rbac.js';
 import { logAudit } from './_lib/audit.js';
 import { jsonResponse, errorResponse, parseJsonBody, getClientIp, getSearchParams } from './_lib/helpers.js';
+import { buildAmapiCommandPayload } from './_lib/amapi-command.js';
+import { validateWorkflowCommandConfig } from '../../shared/amapi-workflow-commands.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -113,6 +115,20 @@ function validateWorkflowBody(body: Partial<WorkflowBody>): string | null {
   if (!VALID_ACTION_TYPES.includes(body.action_type)) {
     return `Invalid action_type. Must be one of: ${VALID_ACTION_TYPES.join(', ')}`;
   }
+  if (body.action_type === 'device.command') {
+    const actionConfig = body.action_config ?? {};
+    const commandValidationError = validateWorkflowCommandConfig(actionConfig);
+    if (commandValidationError) return commandValidationError;
+
+    try {
+      buildAmapiCommandPayload(
+        actionConfig.command_type as string,
+        (actionConfig.command_data as Record<string, unknown> | undefined) ?? {}
+      );
+    } catch (error) {
+      return error instanceof Error ? error.message : 'Invalid AMAPI command configuration';
+    }
+  }
   if (body.conditions && Array.isArray(body.conditions)) {
     for (const c of body.conditions) {
       if (!VALID_CONDITION_FIELDS.includes(c.field)) {
@@ -189,7 +205,7 @@ async function validateAndNormalizeWorkflowScope(
 
 // ─── Handler ────────────────────────────────────────────────────────────────
 
-export default async (request: Request, context: Context) => {
+export default async (request: Request, _context: Context) => {
   try {
     const auth = await requireAuth(request);
     const url = new URL(request.url);

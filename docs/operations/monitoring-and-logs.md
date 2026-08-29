@@ -12,6 +12,11 @@ Flash MDM exposes operational signals through:
 - Function logs are available in the Netlify dashboard under the site's Functions tab.
 - Deploy history and rollbacks are managed in Netlify's deploy list.
 
+### VPS logs
+- Web and durable-worker logs are available through `journalctl -u flashmdm` and `journalctl -u flashmdm-worker`.
+- Scheduled-run failures are written to the system journal with the `flashmdm-cron` tag.
+- The VPS cron wrapper rejects overlapping runs and applies a bounded request timeout. A non-2xx response, malformed response, or non-zero response error count exits unsuccessfully and is retained in the journal.
+
 ### In-app server logs
 - Flash MDM surfaces server logs in Superadmin pages.
 - Useful for support triage and incident correlation.

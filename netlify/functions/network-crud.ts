@@ -1,11 +1,13 @@
 import type { Context } from '@netlify/functions';
-import { queryOne, execute, transaction } from './_lib/db.js';
+import { queryOne, transaction } from './_lib/db.js';
 import { requireAuth } from './_lib/auth.js';
 import { requireEnvironmentPermission } from './_lib/rbac.js';
 import { logAudit } from './_lib/audit.js';
 import { parseOncDocument, getApnSettingKey, removeOncDeploymentFromPolicyConfig, removeApnDeploymentFromPolicyConfig } from './_lib/policy-merge.js';
 import { jsonResponse, errorResponse, parseJsonBody, getClientIp } from './_lib/helpers.js';
 import { syncAffectedPoliciesToAmapi, selectPoliciesForDeploymentScope } from './_lib/deployment-sync.js';
+import { assertSupportedWifiCertificateReferences } from './_lib/certificate-policy.js';
+import { resolveOncServerCaCertificates } from './_lib/certificate-deployment.js';
 
 type DeploymentRow = {
   id: string;
@@ -331,6 +333,12 @@ async function handleUpdate(request: Request, deploymentId: string) {
       const doc = parseOncDocument(body.onc_document);
       if (!doc.NetworkConfigurations || doc.NetworkConfigurations.length === 0) {
         return errorResponse('ONC document must contain at least one NetworkConfiguration', 400);
+      }
+      try {
+        assertSupportedWifiCertificateReferences(doc);
+        await resolveOncServerCaCertificates(existing.environment_id, doc);
+      } catch (err) {
+        return errorResponse(err instanceof Error ? err.message : 'Unsupported certificate configuration', 400);
       }
       updatedProfile = doc;
       if (!body.name) {

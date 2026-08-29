@@ -60,6 +60,8 @@ const PLAN_ID = '223e4567-e89b-12d3-a456-426614174001';
 
 beforeEach(() => {
   process.env.STRIPE_SECRET_KEY = 'sk_test';
+  delete process.env.URL;
+  delete process.env.FLASH_RUNTIME;
 
   mockRequireAuth.mockReset();
   mockQuery.mockReset();
@@ -107,6 +109,8 @@ beforeEach(() => {
 
 describe('stripe-checkout', () => {
   it('applies gift offset seats and bills only the remaining quantity', async () => {
+    process.env.URL = 'https://flash.example.test';
+    process.env.FLASH_RUNTIME = 'vps';
     mockGetWorkspaceAvailableGiftSeats.mockResolvedValueOnce(3);
     mockQueryOne
       .mockResolvedValueOnce({ id: 'plan_1', name: 'Pro', stripe_price_id: 'price_1' })
@@ -133,7 +137,7 @@ describe('stripe-checkout', () => {
       WORKSPACE_ID,
       'price_1',
       'cus_existing',
-      'http://localhost/licenses',
+      'https://flash.example.test/licenses',
       expect.objectContaining({
         quantity: 7,
         metadata: expect.objectContaining({

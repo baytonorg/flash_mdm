@@ -58,6 +58,7 @@ vi.mock('../_lib/helpers.js', () => ({
   getSearchParams: vi.fn((req: Request) => new URL(req.url).searchParams),
   isValidUuid: vi.fn(() => true),
   getClientIp: vi.fn(() => '127.0.0.1'),
+  getPublicOrigin: vi.fn(() => 'https://flash.example.test'),
   jsonResponse: vi.fn((data: unknown, status = 200) =>
     new Response(JSON.stringify(data), {
       status,
@@ -147,6 +148,11 @@ describe('environment-renew hardening', () => {
 
     expect(res.status).toBe(200);
     expect(mockRequireEnvironmentResourcePermission).toHaveBeenCalledWith(expect.objectContaining({ authType: 'session' }), 'env_1', 'environment', 'manage_settings');
+    expect(mockAmapiCall).toHaveBeenCalledWith(
+      expect.stringContaining(encodeURIComponent('https://flash.example.test/settings/enterprise/callback?environment_id=env_1')),
+      'ws_1',
+      expect.any(Object)
+    );
   });
 });
 

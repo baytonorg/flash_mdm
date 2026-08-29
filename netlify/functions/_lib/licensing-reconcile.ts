@@ -1,4 +1,4 @@
-import { execute, query, queryOne } from './db.js';
+import { execute, query, queryOne, transaction, withClient } from './db.js';
 import { isMissingRelationError } from './db-errors.js';
 import {
   getEnvironmentLicensingSnapshot,
@@ -60,18 +60,6 @@ function toBoolean(value: unknown): boolean {
   return value === true || value === 't' || value === 'true' || value === 1 || value === '1';
 }
 
-async function tryAcquireReconcileLock(): Promise<boolean> {
-  const row = await queryOne<{ locked: boolean | string | number }>(
-    'SELECT pg_try_advisory_lock($1) AS locked',
-    [RECONCILE_ADVISORY_LOCK_KEY]
-  );
-  return toBoolean(row?.locked);
-}
-
-async function releaseReconcileLock(): Promise<void> {
-  await execute('SELECT pg_advisory_unlock($1)', [RECONCILE_ADVISORY_LOCK_KEY]);
-}
-
 async function ensureOpenCase(
   workspaceId: string,
   environmentId: string,
@@ -121,16 +109,37 @@ async function ensureOpenCase(
   };
 }
 
-async function enqueueDeviceCommand(environmentId: string, deviceId: string, commandType: 'DISABLE' | 'ENABLE' | 'WIPE'): Promise<void> {
+export async function enqueueEnforcementAction(input: {
+  caseId: string;
+  workspaceId: string;
+  environmentId: string;
+  deviceId: string;
+  action: 'disable' | 'enable' | 'wipe';
+  reason: string;
+}): Promise<boolean> {
+  const commandType = input.action.toUpperCase() as 'DISABLE' | 'ENABLE' | 'WIPE';
   const payload = commandType === 'WIPE'
-    ? { device_id: deviceId, command_type: commandType, params: { wipeReason: 'License expiry. Oversubscribed.' } }
-    : { device_id: deviceId, command_type: commandType };
+    ? { device_id: input.deviceId, command_type: commandType, params: { wipeReason: input.reason } }
+    : { device_id: input.deviceId, command_type: commandType };
 
-  await execute(
-    `INSERT INTO job_queue (id, job_type, environment_id, payload, status, scheduled_for)
-     VALUES (gen_random_uuid(), 'device_command', $1, $2::jsonb, 'pending', now())`,
-    [environmentId, JSON.stringify(payload)]
-  );
+  return transaction(async (client) => {
+    const inserted = await client.query(
+      `INSERT INTO license_enforcement_actions
+         (id, case_id, workspace_id, environment_id, device_id, action, status, reason, executed_at, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, 'queued', $7, now(), now(), now())
+       ON CONFLICT (case_id, device_id, action) DO NOTHING
+       RETURNING id`,
+      [crypto.randomUUID(), input.caseId, input.workspaceId, input.environmentId, input.deviceId, input.action, input.reason]
+    );
+    if ((inserted.rowCount ?? 0) === 0) return false;
+
+    await client.query(
+      `INSERT INTO job_queue (id, job_type, environment_id, payload, status, scheduled_for)
+       VALUES (gen_random_uuid(), 'device_command', $1, $2::jsonb, 'pending', now())`,
+      [input.environmentId, JSON.stringify(payload)]
+    );
+    return true;
+  });
 }
 
 interface NotificationContext {
@@ -162,7 +171,7 @@ function buildNotificationSubject(
   workspaceName: string,
   environmentName: string,
   notificationKey: string,
-  payload: Record<string, unknown>
+  _payload: Record<string, unknown>
 ): string {
   if (notificationKey.startsWith('overage:day:')) {
     const day = notificationKey.split(':').pop();
@@ -527,15 +536,15 @@ async function reconcileEnvironment(
         );
 
         for (const row of devicesToEnable) {
-          await execute(
-            `INSERT INTO license_enforcement_actions
-               (id, case_id, workspace_id, environment_id, device_id, action, status, reason, executed_at, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, 'enable', 'queued', 'Licensing overage resolved', now(), now(), now())
-             ON CONFLICT (case_id, device_id, action) DO NOTHING`,
-            [crypto.randomUUID(), snapshot.open_case_id, snapshot.workspace_id, snapshot.environment_id, row.device_id]
-          );
-          await enqueueDeviceCommand(snapshot.environment_id, row.device_id, 'ENABLE');
-          stats.enable_actions_queued += 1;
+          const queued = await enqueueEnforcementAction({
+            caseId: snapshot.open_case_id,
+            workspaceId: snapshot.workspace_id,
+            environmentId: snapshot.environment_id,
+            deviceId: row.device_id,
+            action: 'enable',
+            reason: 'Licensing overage resolved',
+          });
+          if (queued) stats.enable_actions_queued += 1;
         }
       }
       return;
@@ -610,15 +619,15 @@ async function reconcileEnvironment(
       for (const device of devicesToDisable) {
         if (!canQueueEnforcementAction(enforcementState)) break;
 
-        const inserted = await execute(
-          `INSERT INTO license_enforcement_actions
-             (id, case_id, workspace_id, environment_id, device_id, action, status, reason, executed_at, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, 'disable', 'queued', 'License expiry. Oversubscribed.', now(), now(), now())
-           ON CONFLICT (case_id, device_id, action) DO NOTHING`,
-          [crypto.randomUUID(), openCaseId, env.workspace_id, env.id, device.id]
-        );
-        if ((inserted.rowCount ?? 0) > 0) {
-          await enqueueDeviceCommand(env.id, device.id, 'DISABLE');
+        const queued = await enqueueEnforcementAction({
+          caseId: openCaseId,
+          workspaceId: env.workspace_id,
+          environmentId: env.id,
+          deviceId: device.id,
+          action: 'disable',
+          reason: 'License expiry. Oversubscribed.',
+        });
+        if (queued) {
           stats.disable_actions_queued += 1;
           enforcementState.actionsQueued += 1;
         }
@@ -647,15 +656,15 @@ async function reconcileEnvironment(
       for (const row of devicesToWipe) {
         if (!canQueueEnforcementAction(enforcementState)) break;
 
-        const inserted = await execute(
-          `INSERT INTO license_enforcement_actions
-             (id, case_id, workspace_id, environment_id, device_id, action, status, reason, executed_at, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, 'wipe', 'queued', 'License expiry. Oversubscribed.', now(), now(), now())
-           ON CONFLICT (case_id, device_id, action) DO NOTHING`,
-          [crypto.randomUUID(), openCaseId, env.workspace_id, env.id, row.device_id]
-        );
-        if ((inserted.rowCount ?? 0) > 0) {
-          await enqueueDeviceCommand(env.id, row.device_id, 'WIPE');
+        const queued = await enqueueEnforcementAction({
+          caseId: openCaseId,
+          workspaceId: env.workspace_id,
+          environmentId: env.id,
+          deviceId: row.device_id,
+          action: 'wipe',
+          reason: 'License expiry. Oversubscribed.',
+        });
+        if (queued) {
           stats.wipe_actions_queued += 1;
           enforcementState.actionsQueued += 1;
         }
@@ -688,14 +697,19 @@ export async function runLicensingReconcile(options: ReconcileOptions): Promise<
   const workspaceSettingsCache = new Map<string, WorkspaceLicensingSettings>();
   const enforcementState: EnforcementActionState = { actionsQueued: 0, capWarningLogged: false };
 
-  const lockAcquired = await tryAcquireReconcileLock();
-  stats.lock_acquired = lockAcquired;
-  if (!lockAcquired) {
-    stats.skipped_due_to_lock = true;
-    return stats;
-  }
+  return withClient(async (lockClient) => {
+    const lockResult = await lockClient.query<{ locked: boolean | string | number }>(
+      'SELECT pg_try_advisory_lock($1) AS locked',
+      [RECONCILE_ADVISORY_LOCK_KEY]
+    );
+    const lockAcquired = toBoolean(lockResult.rows[0]?.locked);
+    stats.lock_acquired = lockAcquired;
+    if (!lockAcquired) {
+      stats.skipped_due_to_lock = true;
+      return stats;
+    }
 
-  try {
+    try {
     const platformLicensingEnabled = await isPlatformLicensingEnabled();
     if (!platformLicensingEnabled) {
       if (!options.dryRun) {
@@ -751,8 +765,9 @@ export async function runLicensingReconcile(options: ReconcileOptions): Promise<
       }
     }
 
-    return stats;
-  } finally {
-    await releaseReconcileLock();
-  }
+      return stats;
+    } finally {
+      await lockClient.query('SELECT pg_advisory_unlock($1)', [RECONCILE_ADVISORY_LOCK_KEY]);
+    }
+  });
 }

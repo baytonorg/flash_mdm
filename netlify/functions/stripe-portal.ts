@@ -3,7 +3,7 @@ import { requireAuth } from './_lib/auth.js';
 import { queryOne } from './_lib/db.js';
 import { requireWorkspaceResourcePermission } from './_lib/rbac.js';
 import { createPortalSession } from './_lib/stripe.js';
-import { jsonResponse, errorResponse, parseJsonBody, isValidUuid } from './_lib/helpers.js';
+import { jsonResponse, errorResponse, parseJsonBody, isValidUuid, getPublicOrigin } from './_lib/helpers.js';
 import { logAudit } from './_lib/audit.js';
 import { getWorkspaceLicensingSettings } from './_lib/licensing.js';
 
@@ -47,7 +47,7 @@ export default async function handler(request: Request, _context: Context) {
     if (!workspace) return errorResponse('Workspace not found', 404);
     if (!workspace.stripe_customer_id) return errorResponse('No Stripe customer found for workspace', 404);
 
-    const origin = new URL(request.url).origin;
+    const origin = getPublicOrigin(request);
     const portalUrl = await createPortalSession(workspace.stripe_customer_id, `${origin}/licenses`);
 
     await logAudit({

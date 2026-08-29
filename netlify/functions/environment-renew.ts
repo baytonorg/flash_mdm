@@ -2,7 +2,7 @@ import type { Context } from '@netlify/functions';
 import { requireAuth } from './_lib/auth.js';
 import { queryOne, execute } from './_lib/db.js';
 import { requireEnvironmentResourcePermission } from './_lib/rbac.js';
-import { jsonResponse, errorResponse, parseJsonBody, getClientIp } from './_lib/helpers.js';
+import { jsonResponse, errorResponse, parseJsonBody, getClientIp, getPublicOrigin } from './_lib/helpers.js';
 import { amapiCall, getAmapiErrorHttpStatus } from './_lib/amapi.js';
 import { logAudit } from './_lib/audit.js';
 
@@ -58,7 +58,7 @@ export default async function handler(request: Request, _context: Context) {
     }
 
     // Renew by creating a fresh top-level signup URL (same AMAPI flow as initial bind step 1)
-    const callbackUrl = `${new URL(request.url).origin}/settings/enterprise/callback?environment_id=${body.environment_id}`;
+    const callbackUrl = `${getPublicOrigin(request)}/settings/enterprise/callback?environment_id=${body.environment_id}`;
     const result = await amapiCall<{ name: string; url: string }>(
       `signupUrls?projectId=${encodeURIComponent(workspace.gcp_project_id)}&callbackUrl=${encodeURIComponent(callbackUrl)}`,
       env.workspace_id,

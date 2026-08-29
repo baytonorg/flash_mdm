@@ -1,3 +1,5 @@
+import { validateAmapiPolicyAgainstDiscovery } from './amapi-discovery-validation.js';
+
 type JsonObject = Record<string, unknown>;
 
 export class AmapiPolicyValidationError extends Error {
@@ -98,6 +100,8 @@ export function validateAmapiPolicyPayload(payload: unknown): AmapiPolicyValidat
   if (!policy) {
     return { errors: ['Policy payload must be a JSON object'], warnings };
   }
+
+  errors.push(...validateAmapiPolicyAgainstDiscovery(policy));
 
   const applications = asArray<JsonObject>(policy.applications);
   if (applications.length > 3000) {
@@ -829,6 +833,9 @@ export function validateAmapiPolicyPayload(payload: unknown): AmapiPolicyValidat
   }
 
   const oncProviders = asArray<JsonObject>(policy.oncCertificateProviders);
+  if (oncProviders.length > 0) {
+    errors.push('oncCertificateProviders is not generally available in AMAPI and is not supported by Flash');
+  }
   oncProviders.forEach((provider, idx) => {
     const endpoint = asObject(provider.contentProviderEndpoint);
     if (!endpoint) return;

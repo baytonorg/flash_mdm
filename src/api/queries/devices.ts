@@ -21,16 +21,24 @@ export interface DeviceListParams {
   search?: string;
   state?: string;
   ownership?: string;
+  manufacturer?: string;
+  policy_compliant?: boolean;
   group_id?: string;
   sort_by?: string;
   sort_dir?: 'asc' | 'desc';
 }
 
-interface DeviceListResponse {
+export interface DeviceListResponse {
   devices: Device[];
-  total: number;
-  page: number;
-  per_page: number;
+  pagination: {
+    page: number;
+    per_page: number;
+    total: number;
+    total_pages: number;
+  };
+  facets: {
+    manufacturers: Array<{ value: string; label: string }>;
+  };
 }
 
 interface DeviceDetailResponse {
@@ -80,6 +88,8 @@ function buildDeviceListQuery(params: DeviceListParams): string {
   if (params.search) searchParams.set('search', params.search);
   if (params.state) searchParams.set('state', params.state);
   if (params.ownership) searchParams.set('ownership', params.ownership);
+  if (params.manufacturer) searchParams.set('manufacturer', params.manufacturer);
+  if (params.policy_compliant != null) searchParams.set('policy_compliant', String(params.policy_compliant));
   if (params.group_id) searchParams.set('group_id', params.group_id);
   if (params.sort_by) searchParams.set('sort_by', params.sort_by);
   if (params.sort_dir) searchParams.set('sort_dir', params.sort_dir);

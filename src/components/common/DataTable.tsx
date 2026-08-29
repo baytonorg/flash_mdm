@@ -1,5 +1,5 @@
-import { type ReactNode, useCallback, useMemo } from 'react';
-import { ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
+import { type MouseEvent, type ReactNode, useCallback, useMemo } from 'react';
+import { ArrowUp, ArrowDown, ArrowUpDown, ChevronRight } from 'lucide-react';
 import clsx from 'clsx';
 import TableLoadingState from '@/components/common/TableLoadingState';
 
@@ -22,6 +22,7 @@ export interface DataTableProps<T = Record<string, unknown>> {
   sortDirection?: 'asc' | 'desc';
   onSort?: (column: string, direction: 'asc' | 'desc') => void;
   onRowClick?: (row: T) => void;
+  rowActionLabel?: (row: T, index: number) => string;
   selectedRows?: T[];
   rowKey?: (row: T) => string;
 }
@@ -37,6 +38,7 @@ export default function DataTable<T extends object>({
   sortDirection,
   onSort,
   onRowClick,
+  rowActionLabel,
   selectedRows = [],
   rowKey,
 }: DataTableProps<T>) {
@@ -93,9 +95,25 @@ export default function DataTable<T extends object>({
     return (row as Record<string, unknown>)[key];
   };
 
+  const isInteractiveTarget = (target: EventTarget | null) => {
+    return target instanceof Element && Boolean(target.closest(
+      'a, button, input, select, textarea, label, summary, audio[controls], video[controls], [role="button"], [role="link"], [role="checkbox"], [role="radio"], [role="switch"], [role="slider"], [role="spinbutton"], [role="combobox"], [role="textbox"], [role="searchbox"], [role="listbox"], [role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"], [role="option"], [role="tab"], [role="treeitem"], [contenteditable]:not([contenteditable="false"]), [data-row-click-ignore]',
+    ));
+  };
+
+  const handleRowPointerClick = (event: MouseEvent<HTMLTableRowElement>, row: T) => {
+    if (!onRowClick || isInteractiveTarget(event.target)) return;
+    onRowClick(row);
+  };
+
   // Loading skeleton
   if (loading) {
-    return <TableLoadingState columnCount={columns.length} selectable={selectable} />;
+    return (
+      <TableLoadingState
+        columnCount={columns.length + (onRowClick ? 1 : 0)}
+        selectable={selectable}
+      />
+    );
   }
 
   // Empty state
@@ -105,15 +123,25 @@ export default function DataTable<T extends object>({
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border bg-surface-secondary">
-              {selectable && <th className="w-10 px-3 py-3" />}
+              {selectable && (
+                <th scope="col" className="w-10 px-3 py-3">
+                  <span className="sr-only">Selection</span>
+                </th>
+              )}
               {columns.map((col) => (
                 <th
                   key={col.key}
+                  scope="col"
                   className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted"
                 >
                   {col.label}
                 </th>
               ))}
+              {onRowClick && (
+                <th scope="col" className="w-12 px-3 py-3">
+                  <span className="sr-only">Open</span>
+                </th>
+              )}
             </tr>
           </thead>
         </table>
@@ -128,7 +156,7 @@ export default function DataTable<T extends object>({
         <thead>
           <tr className="border-b border-border bg-surface-secondary">
             {selectable && (
-              <th className="w-10 px-3 py-3">
+              <th scope="col" className="w-10 px-3 py-3">
                 <input
                   type="checkbox"
                   checked={allSelected}
@@ -141,32 +169,36 @@ export default function DataTable<T extends object>({
             {columns.map((col) => (
               <th
                 key={col.key}
+                scope="col"
                 className={clsx(
                   'px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted',
-                  col.sortable && 'cursor-pointer select-none hover:text-gray-900',
                   col.className,
                 )}
-                onClick={() => handleSort(col)}
-                role={col.sortable ? 'button' : undefined}
-                tabIndex={col.sortable ? 0 : undefined}
-                onKeyDown={col.sortable ? (e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    handleSort(col);
-                  }
-                } : undefined}
                 aria-sort={
                   col.sortable && sortColumn === col.key
                     ? (sortDirection === 'asc' ? 'ascending' : 'descending')
-                    : col.sortable ? 'none' : undefined
+                  : col.sortable ? 'none' : undefined
                 }
               >
-                <span className="inline-flex items-center">
-                  {col.label}
-                  {renderSortIcon(col)}
-                </span>
+                {col.sortable && onSort ? (
+                  <button
+                    type="button"
+                    className="inline-flex w-full items-center text-left hover:text-gray-900 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+                    onClick={() => handleSort(col)}
+                  >
+                    {col.label}
+                    {renderSortIcon(col)}
+                  </button>
+                ) : (
+                  <span className="inline-flex items-center">{col.label}</span>
+                )}
               </th>
             ))}
+            {onRowClick && (
+              <th scope="col" className="w-12 px-3 py-3">
+                <span className="sr-only">Open</span>
+              </th>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -181,7 +213,7 @@ export default function DataTable<T extends object>({
                   isSelected ? 'bg-accent/5' : 'hover:bg-surface-secondary',
                   onRowClick && 'cursor-pointer',
                 )}
-                onClick={() => onRowClick?.(row)}
+                onClick={(event) => handleRowPointerClick(event, row)}
               >
                 {selectable && (
                   <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
@@ -201,6 +233,18 @@ export default function DataTable<T extends object>({
                       : (String(getValue(row, col.key) ?? ''))}
                   </td>
                 ))}
+                {onRowClick && (
+                  <td className="w-12 px-3 py-3 text-right">
+                    <button
+                      type="button"
+                      aria-label={rowActionLabel?.(row, rowIndex) ?? `Open row ${rowIndex + 1}`}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded text-muted transition-colors hover:bg-surface-secondary hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+                      onClick={() => onRowClick(row)}
+                    >
+                      <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  </td>
+                )}
               </tr>
             );
           })}

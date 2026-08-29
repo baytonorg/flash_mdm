@@ -3,24 +3,42 @@ import { Loader2, Plus, Wifi, X, Code2, FormInput, Pencil, Trash2 } from 'lucide
 import { useContextStore } from '@/stores/context';
 import AppScopeSelector from '@/components/apps/AppScopeSelector';
 import { useDeployNetwork, useNetworkDeployments, useUpdateNetworkDeployment, useDeleteNetworkDeployment, useBulkNetworkAction } from '@/api/queries/networks';
-import type { NetworkDeployment } from '@/api/queries/networks';
+import type { NetworkAmapiSync, NetworkDeployment } from '@/api/queries/networks';
 import BulkActionBar, { type BulkAction } from '@/components/common/BulkActionBar';
 import SelectAllMatchingNotice from '@/components/common/SelectAllMatchingNotice';
 import { useBulkSelection } from '@/hooks/useBulkSelection';
+import TrustedCaManager from '@/components/networks/TrustedCaManager';
+import { useTrustedCaCertificates, type TrustedCaCertificate } from '@/api/queries/certificates';
 
 type ScopeValue = { scope_type: 'environment' | 'group' | 'device'; scope_id: string };
 type EditorMode = 'form' | 'json';
 type NetworkKind = 'wifi' | 'apn';
 type WifiSecurityMode = 'OPEN' | 'WPA_PSK' | 'WPA_EAP';
-type EapOuter = 'PEAP' | 'EAP-TTLS' | 'EAP-TLS';
-type EapInner = 'Automatic' | 'MSCHAPv2' | 'PAP' | 'CHAP';
+type EapOuter = 'PEAP' | 'EAP-TTLS';
+type EapInner = 'MSCHAPv2' | 'PAP';
 type ApnAuthType = 'AUTH_TYPE_UNSPECIFIED' | 'NONE' | 'PAP' | 'CHAP' | 'PAP_OR_CHAP';
 type ApnProtocol = 'PROTOCOL_UNSPECIFIED' | 'IPV4' | 'IPV6' | 'IPV4V6';
 type ApnMvnoType = 'MVNO_TYPE_UNSPECIFIED' | 'GID' | 'ICCID' | 'IMSI' | 'SPN';
 type ApnAlwaysOn = 'ALWAYS_ON_UNSPECIFIED' | 'ENABLED' | 'DISABLED';
 
+type AmapiSyncNotice = { message: string; tone: 'success' | 'error' };
+
+export function buildAmapiSyncNotice(action: string, sync: NetworkAmapiSync): AmapiSyncNotice {
+  const failureDetail = sync.failures?.[0]?.error;
+  return {
+    tone: sync.failed > 0 ? 'error' : 'success',
+    message: `${action ? `${action}: ` : ''}AMAPI sync: ${sync.synced}/${sync.attempted} policies synced${sync.failed ? `, ${sync.failed} failed` : ''}${failureDetail ? ` - ${failureDetail}` : ''}${sync.skipped_reason ? ` (${sync.skipped_reason})` : ''}`,
+  };
+}
+
 type OncDoc = Record<string, unknown>;
 type ApnPolicyDoc = Record<string, unknown>;
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
 
 const APN_TYPE_OPTIONS = [
   'DEFAULT',
@@ -67,6 +85,7 @@ export default function Networks() {
   const [eapAnonymousIdentity, setEapAnonymousIdentity] = useState('');
   const [eapPassword, setEapPassword] = useState('');
   const [eapServerCaRefs, setEapServerCaRefs] = useState('');
+  const [eapDomainSuffixMatch, setEapDomainSuffixMatch] = useState('');
 
   const [apnOverrideApns, setApnOverrideApns] = useState('OVERRIDE_APNS_UNSPECIFIED');
   const [apnEntryName, setApnEntryName] = useState('');
@@ -99,7 +118,7 @@ export default function Networks() {
     scope_type: 'environment',
     scope_id: environmentId ?? '',
   });
-  const [lastAmapiSummary, setLastAmapiSummary] = useState<string | null>(null);
+  const [lastAmapiSummary, setLastAmapiSummary] = useState<AmapiSyncNotice | null>(null);
 
   const [editingDeployment, setEditingDeployment] = useState<NetworkDeployment | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -112,6 +131,7 @@ export default function Networks() {
   }, [environmentId]);
 
   const deploymentsQuery = useNetworkDeployments(environmentId);
+  const certificatesQuery = useTrustedCaCertificates(environmentId);
   const deployMutation = useDeployNetwork();
   const updateMutation = useUpdateNetworkDeployment();
   const deleteMutation = useDeleteNetworkDeployment();
@@ -140,6 +160,7 @@ export default function Networks() {
         eapAnonymousIdentity,
         eapPassword,
         eapServerCaRefs,
+        eapDomainSuffixMatch,
       }),
     [
       scope.scope_type,
@@ -156,6 +177,7 @@ export default function Networks() {
       eapAnonymousIdentity,
       eapPassword,
       eapServerCaRefs,
+      eapDomainSuffixMatch,
     ]
   );
 
@@ -241,6 +263,7 @@ export default function Networks() {
     setEapAnonymousIdentity('');
     setEapPassword('');
     setEapServerCaRefs('');
+    setEapDomainSuffixMatch('');
 
     setApnOverrideApns('OVERRIDE_APNS_UNSPECIFIED');
     setApnEntryName('');
@@ -294,6 +317,7 @@ export default function Networks() {
       setEapAnonymousIdentity(wifiMeta.eapAnonymousIdentity);
       setEapPassword(wifiMeta.eapPassword);
       setEapServerCaRefs(wifiMeta.eapServerCaRefs);
+      setEapDomainSuffixMatch(wifiMeta.eapDomainSuffixMatch);
 
       // Pre-fill JSON editor too
       setJsonOverride(JSON.stringify(dep.onc_profile, null, 2));
@@ -344,9 +368,7 @@ export default function Networks() {
       {
         onSuccess: (data) => {
           const sync = data.amapi_sync;
-          setLastAmapiSummary(
-            `Deleted: AMAPI sync: ${sync.synced}/${sync.attempted} policies synced${sync.failed ? `, ${sync.failed} failed` : ''}${sync.skipped_reason ? ` (${sync.skipped_reason})` : ''}`
-          );
+          setLastAmapiSummary(buildAmapiSyncNotice('Deleted', sync));
           setDeleteConfirmId(null);
         },
         onError: () => {
@@ -360,11 +382,9 @@ export default function Networks() {
     if (!environmentId || !editingDeployment) return;
     const kind = inferDeploymentKind(editingDeployment.network_type, editingDeployment.onc_profile);
 
-    const onUpdateSuccess = (data: { amapi_sync: { synced: number; attempted: number; failed: number; skipped_reason?: string | null } }) => {
+    const onUpdateSuccess = (data: { amapi_sync: NetworkAmapiSync }) => {
       const sync = data.amapi_sync;
-      setLastAmapiSummary(
-        `Updated: AMAPI sync: ${sync.synced}/${sync.attempted} policies synced${sync.failed ? `, ${sync.failed} failed` : ''}${sync.skipped_reason ? ` (${sync.skipped_reason})` : ''}`
-      );
+      setLastAmapiSummary(buildAmapiSyncNotice('Updated', sync));
       setModalOpen(false);
       setEditingDeployment(null);
     };
@@ -426,9 +446,7 @@ export default function Networks() {
         {
           onSuccess: (data) => {
             const sync = data.amapi_sync;
-            setLastAmapiSummary(
-              `AMAPI sync: ${sync.synced}/${sync.attempted} policies synced${sync.failed ? `, ${sync.failed} failed` : ''}${sync.skipped_reason ? ` (${sync.skipped_reason})` : ''}`
-            );
+            setLastAmapiSummary(buildAmapiSyncNotice('', sync));
             setModalOpen(false);
           },
         }
@@ -453,9 +471,7 @@ export default function Networks() {
       {
         onSuccess: (data) => {
           const sync = data.amapi_sync;
-          setLastAmapiSummary(
-            `AMAPI sync: ${sync.synced}/${sync.attempted} policies synced${sync.failed ? `, ${sync.failed} failed` : ''}${sync.skipped_reason ? ` (${sync.skipped_reason})` : ''}`
-          );
+          setLastAmapiSummary(buildAmapiSyncNotice('', sync));
           setModalOpen(false);
         },
       }
@@ -499,10 +515,12 @@ export default function Networks() {
       </div>
 
       {lastAmapiSummary && (
-        <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
-          {lastAmapiSummary}
+        <div className={`mb-4 rounded-lg border px-3 py-2 text-sm ${lastAmapiSummary.tone === 'error' ? 'border-red-200 bg-red-50 text-red-800' : 'border-blue-200 bg-blue-50 text-blue-800'}`}>
+          {lastAmapiSummary.message}
         </div>
       )}
+
+      <TrustedCaManager environmentId={environmentId} />
 
       <div className="bg-white rounded-xl border border-gray-200">
         <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
@@ -805,6 +823,9 @@ export default function Networks() {
                     setEapPassword={setEapPassword}
                     eapServerCaRefs={eapServerCaRefs}
                     setEapServerCaRefs={setEapServerCaRefs}
+                    eapDomainSuffixMatch={eapDomainSuffixMatch}
+                    setEapDomainSuffixMatch={setEapDomainSuffixMatch}
+                    trustedCas={certificatesQuery.data ?? []}
                   />
                 ) : (
                   <ApnFormFields
@@ -927,7 +948,9 @@ export default function Networks() {
                   (!editingDeployment && !scope.scope_id) ||
                   (editorMode === 'form'
                     ? networkKind === 'wifi'
-                      ? !ssid.trim() || (securityMode === 'WPA_PSK' && passphrase.trim().length === 0)
+                      ? !ssid.trim()
+                        || (securityMode === 'WPA_PSK' && passphrase.trim().length === 0)
+                        || (securityMode === 'WPA_EAP' && eapDomainSuffixMatch.trim().length === 0)
                       : !apnEntryName.trim() || !apnValue.trim()
                     : !activeJsonValidation.ok)
                 }
@@ -971,11 +994,15 @@ function WifiFormFields(props: {
   setEapPassword: (v: string) => void;
   eapServerCaRefs: string;
   setEapServerCaRefs: (v: string) => void;
+  eapDomainSuffixMatch: string;
+  setEapDomainSuffixMatch: (v: string) => void;
+  trustedCas: TrustedCaCertificate[];
 }) {
   const {
     ssid, setSsid, hiddenSsid, setHiddenSsid, autoConnect, setAutoConnect, securityMode, setSecurityMode,
     passphrase, setPassphrase, eapOuter, setEapOuter, eapInner, setEapInner, eapIdentity, setEapIdentity,
     eapAnonymousIdentity, setEapAnonymousIdentity, eapPassword, setEapPassword, eapServerCaRefs, setEapServerCaRefs,
+    eapDomainSuffixMatch, setEapDomainSuffixMatch, trustedCas,
   } = props;
 
   return (
@@ -1027,24 +1054,19 @@ function WifiFormFields(props: {
               >
                 <option value="PEAP">PEAP</option>
                 <option value="EAP-TTLS">EAP-TTLS</option>
-                <option value="EAP-TLS">EAP-TLS</option>
               </select>
             </div>
-            {eapOuter !== 'EAP-TLS' && (
-              <div>
-                <label className="block text-sm font-medium text-gray-900 mb-1">EAP Inner Method</label>
-                <select
-                  value={eapInner}
-                  onChange={(e) => setEapInner(e.target.value as EapInner)}
-                  className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
-                >
-                  <option value="Automatic">Automatic</option>
-                  <option value="MSCHAPv2">MSCHAPv2</option>
-                  <option value="PAP">PAP</option>
-                  <option value="CHAP">CHAP</option>
-                </select>
-              </div>
-            )}
+            <div>
+              <label className="block text-sm font-medium text-gray-900 mb-1">EAP Inner Method</label>
+              <select
+                value={eapInner}
+                onChange={(e) => setEapInner(e.target.value as EapInner)}
+                className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
+              >
+                <option value="MSCHAPv2">MSCHAPv2</option>
+                <option value="PAP">PAP</option>
+              </select>
+            </div>
             <div>
               <label className="block text-sm font-medium text-gray-900 mb-1">Identity</label>
               <input
@@ -1065,27 +1087,58 @@ function WifiFormFields(props: {
                 className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
               />
             </div>
-            {eapOuter !== 'EAP-TLS' && (
-              <div>
-                <label className="block text-sm font-medium text-gray-900 mb-1">Password</label>
-                <input
-                  type="password"
-                  value={eapPassword}
-                  onChange={(e) => setEapPassword(e.target.value)}
-                  placeholder="EAP password"
-                  className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
-                />
-              </div>
-            )}
             <div>
-              <label className="block text-sm font-medium text-gray-900 mb-1">Server CA Refs (comma-separated)</label>
+              <label className="block text-sm font-medium text-gray-900 mb-1">Password</label>
               <input
-                type="text"
-                value={eapServerCaRefs}
-                onChange={(e) => setEapServerCaRefs(e.target.value)}
-                placeholder="corp-root-ca, corp-int-ca"
+                type="password"
+                value={eapPassword}
+                onChange={(e) => setEapPassword(e.target.value)}
+                placeholder="EAP password"
                 className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
               />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-900 mb-1">Server domain suffixes</label>
+              <input
+                type="text"
+                value={eapDomainSuffixMatch}
+                onChange={(e) => setEapDomainSuffixMatch(e.target.value)}
+                placeholder="example.com, wifi.example.com"
+                className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
+              />
+              <p className="mt-1 text-xs text-gray-500">Required by AMAPI for enterprise Wi-Fi server validation.</p>
+            </div>
+            <div>
+              <span className="block text-sm font-medium text-gray-900 mb-1">Trusted server CAs</span>
+              {trustedCas.length === 0 ? (
+                <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-500">Upload a Wi-Fi trusted CA on the Networks page to select it here.</p>
+              ) : (
+                <div className="space-y-2 rounded-md border border-gray-200 p-3">
+                  {trustedCas.map((certificate) => {
+                    const selectedRefs = eapServerCaRefs.split(',').map((value) => value.trim()).filter(Boolean);
+                    const checked = selectedRefs.includes(certificate.onc_guid);
+                    return (
+                      <label key={certificate.id} className="flex items-start gap-2">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) => {
+                            const next = new Set(selectedRefs);
+                            if (event.target.checked) next.add(certificate.onc_guid);
+                            else next.delete(certificate.onc_guid);
+                            setEapServerCaRefs([...next].join(', '));
+                          }}
+                          className="mt-0.5 h-4 w-4 rounded border-gray-300 text-accent focus:ring-accent/20"
+                        />
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm text-gray-800">{certificate.name}</span>
+                          <span className="block truncate text-xs text-gray-500">{certificate.subject || certificate.fingerprint_sha256}</span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1366,7 +1419,7 @@ function SelectField(props: {
   );
 }
 
-function buildStructuredWifiOncDoc(params: {
+export function buildStructuredWifiOncDoc(params: {
   scopeType: ScopeValue['scope_type'];
   scopeId: string;
   ssid: string;
@@ -1381,6 +1434,7 @@ function buildStructuredWifiOncDoc(params: {
   eapAnonymousIdentity: string;
   eapPassword: string;
   eapServerCaRefs: string;
+  eapDomainSuffixMatch: string;
 }): OncDoc {
   const guid = `wifi-${params.scopeType}-${(params.scopeId || 'scope').slice(0, 8)}-${(params.ssid || 'network')
     .toLowerCase()
@@ -1400,11 +1454,12 @@ function buildStructuredWifiOncDoc(params: {
     if (params.passphrase.trim()) wifi.Passphrase = params.passphrase;
   } else {
     wifi.Security = 'WPA-EAP';
-    const eap: Record<string, unknown> = { Outer: params.eapOuter };
-    if (params.eapOuter !== 'EAP-TLS') eap.Inner = params.eapInner;
+    const eap: Record<string, unknown> = { Outer: params.eapOuter, Inner: params.eapInner };
     if (params.eapIdentity.trim()) eap.Identity = params.eapIdentity.trim();
     if (params.eapAnonymousIdentity.trim()) eap.AnonymousIdentity = params.eapAnonymousIdentity.trim();
-    if (params.eapOuter !== 'EAP-TLS' && params.eapPassword) eap.Password = params.eapPassword;
+    if (params.eapPassword) eap.Password = params.eapPassword;
+    const domainSuffixMatch = params.eapDomainSuffixMatch.split(',').map((s) => s.trim()).filter(Boolean);
+    if (domainSuffixMatch.length > 0) eap.DomainSuffixMatch = domainSuffixMatch;
     const serverCaRefs = params.eapServerCaRefs.split(',').map((s) => s.trim()).filter(Boolean);
     if (serverCaRefs.length > 0) eap.ServerCARefs = serverCaRefs;
     wifi.EAP = eap;
@@ -1481,7 +1536,7 @@ function buildStructuredApnPolicy(params: {
   return policy;
 }
 
-function validateOncJson(input: string): { ok: true; doc: OncDoc } | { ok: false; error: string } {
+export function validateOncJson(input: string): { ok: true; doc: OncDoc } | { ok: false; error: string } {
   try {
     const parsed = JSON.parse(input);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -1489,6 +1544,30 @@ function validateOncJson(input: string): { ok: true; doc: OncDoc } | { ok: false
     }
     const meta = extractPrimaryWifiMeta(parsed as OncDoc);
     if (!meta.ok) return { ok: false, error: meta.error };
+    const parsedDocument = parsed as OncDoc;
+    if (Array.isArray(parsedDocument.Certificates) && parsedDocument.Certificates.length > 0) {
+      return { ok: false, error: 'Inline certificates are not supported. Upload a trusted CA and select it in Form mode.' };
+    }
+    const firstNetwork = asRecord(
+      Array.isArray(parsedDocument.NetworkConfigurations)
+        ? parsedDocument.NetworkConfigurations[0]
+        : null
+    );
+    const eap = asRecord(asRecord(firstNetwork?.WiFi)?.EAP);
+    if (eap) {
+      if (eap.ServerCARef && eap.ServerCARefs) {
+        return { ok: false, error: 'ServerCARef and ServerCARefs are mutually exclusive. Use ServerCARefs.' };
+      }
+      if (eap.Outer === 'EAP-TLS' || eap.ClientCertRef || eap.ClientCertKeyPairAlias || eap.ClientCertType) {
+        return { ok: false, error: 'Client identity certificates and EAP-TLS are not supported.' };
+      }
+      if (typeof eap.Inner === 'string' && !['MSCHAPv2', 'PAP'].includes(eap.Inner)) {
+        return { ok: false, error: 'EAP Inner must be MSCHAPv2 or PAP.' };
+      }
+      if (!Array.isArray(eap.DomainSuffixMatch) || eap.DomainSuffixMatch.filter((value: unknown) => typeof value === 'string' && value.trim()).length === 0) {
+        return { ok: false, error: 'Enterprise Wi-Fi requires at least one DomainSuffixMatch value.' };
+      }
+    }
     return { ok: true, doc: parsed as OncDoc };
   } catch {
     return { ok: false, error: 'Invalid JSON.' };
@@ -1632,6 +1711,7 @@ function extractWifiFormFields(profile: Record<string, unknown>): {
   eapAnonymousIdentity: string;
   eapPassword: string;
   eapServerCaRefs: string;
+  eapDomainSuffixMatch: string;
 } {
   const defaults = {
     ssid: '',
@@ -1643,6 +1723,7 @@ function extractWifiFormFields(profile: Record<string, unknown>): {
     eapAnonymousIdentity: '',
     eapPassword: '',
     eapServerCaRefs: '',
+    eapDomainSuffixMatch: '',
   };
 
   const entry = firstWifiNetwork(profile);
@@ -1662,14 +1743,15 @@ function extractWifiFormFields(profile: Record<string, unknown>): {
   const passphrase = typeof wifi.Passphrase === 'string' ? wifi.Passphrase : '';
 
   const eap = wifi.EAP && typeof wifi.EAP === 'object' ? wifi.EAP : {};
-  const eapOuter = (['PEAP', 'EAP-TTLS', 'EAP-TLS'].includes(eap.Outer) ? eap.Outer : 'PEAP') as EapOuter;
-  const eapInner = (['Automatic', 'MSCHAPv2', 'PAP', 'CHAP'].includes(eap.Inner) ? eap.Inner : 'MSCHAPv2') as EapInner;
+  const eapOuter = (['PEAP', 'EAP-TTLS'].includes(eap.Outer) ? eap.Outer : 'PEAP') as EapOuter;
+  const eapInner = (['MSCHAPv2', 'PAP'].includes(eap.Inner) ? eap.Inner : 'MSCHAPv2') as EapInner;
   const eapIdentity = typeof eap.Identity === 'string' ? eap.Identity : '';
   const eapAnonymousIdentity = typeof eap.AnonymousIdentity === 'string' ? eap.AnonymousIdentity : '';
   const eapPassword = typeof eap.Password === 'string' ? eap.Password : '';
   const eapServerCaRefs = Array.isArray(eap.ServerCARefs) ? eap.ServerCARefs.filter((v: unknown): v is string => typeof v === 'string').join(', ') : '';
+  const eapDomainSuffixMatch = Array.isArray(eap.DomainSuffixMatch) ? eap.DomainSuffixMatch.filter((v: unknown): v is string => typeof v === 'string').join(', ') : '';
 
-  return { ssid, securityMode, passphrase, eapOuter, eapInner, eapIdentity, eapAnonymousIdentity, eapPassword, eapServerCaRefs };
+  return { ssid, securityMode, passphrase, eapOuter, eapInner, eapIdentity, eapAnonymousIdentity, eapPassword, eapServerCaRefs, eapDomainSuffixMatch };
 }
 
 /**

@@ -26,13 +26,15 @@ vi.mock('../_lib/audit.js', () => ({
   logAudit: vi.fn(),
 }));
 
-import { queryOne, execute } from '../_lib/db.js';
+import { queryOne, execute, transaction } from '../_lib/db.js';
 import { requireAuth } from '../_lib/auth.js';
 import { requireWorkspaceResourcePermission } from '../_lib/rbac.js';
 import handler from '../environment-crud.ts';
 
 const mockQueryOne = vi.mocked(queryOne);
 const mockExecute = vi.mocked(execute);
+const mockTransaction = vi.mocked(transaction);
+const mockTransactionQuery = vi.fn();
 const mockRequireAuth = vi.mocked(requireAuth);
 const mockRequireWorkspaceResourcePermission = vi.mocked(requireWorkspaceResourcePermission);
 
@@ -48,6 +50,8 @@ describe('environment-crud customer setup flow', () => {
   beforeEach(() => {
     mockQueryOne.mockReset();
     mockExecute.mockReset();
+    mockTransaction.mockReset();
+    mockTransactionQuery.mockReset();
     mockRequireAuth.mockReset();
     mockRequireWorkspaceResourcePermission.mockReset();
 
@@ -61,6 +65,8 @@ describe('environment-crud customer setup flow', () => {
       },
     } as never);
     mockExecute.mockResolvedValue({ rowCount: 1 } as never);
+    mockTransactionQuery.mockResolvedValue({ rows: [], rowCount: 1 });
+    mockTransaction.mockImplementation(async (callback) => callback({ query: mockTransactionQuery } as never));
   });
 
   it('allows first environment creation when user is setup-flagged and scoped', async () => {
@@ -76,11 +82,13 @@ describe('environment-crud customer setup flow', () => {
     const res = await handler(makeCreateRequest(), {} as never);
 
     expect(res.status).toBe(201);
-    expect(mockExecute).toHaveBeenCalledWith(
+    expect(mockTransaction).toHaveBeenCalledTimes(1);
+    expect(mockExecute).not.toHaveBeenCalled();
+    expect(mockTransactionQuery).toHaveBeenCalledWith(
       'INSERT INTO environment_memberships (environment_id, user_id, role) VALUES ($1, $2, $3)',
       expect.arrayContaining([expect.any(String), 'user_1', 'owner'])
     );
-    expect(mockExecute).not.toHaveBeenCalledWith(
+    expect(mockTransactionQuery).not.toHaveBeenCalledWith(
       expect.stringContaining('UPDATE workspace_memberships'),
       expect.any(Array)
     );
@@ -97,15 +105,15 @@ describe('environment-crud customer setup flow', () => {
     const res = await handler(makeCreateRequest(), {} as never);
 
     expect(res.status).toBe(201);
-    expect(mockExecute).toHaveBeenCalledWith(
+    expect(mockTransactionQuery).toHaveBeenCalledWith(
       'INSERT INTO environment_memberships (environment_id, user_id, role) VALUES ($1, $2, $3)',
       expect.arrayContaining([expect.any(String), 'user_1', 'owner'])
     );
-    expect(mockExecute).not.toHaveBeenCalledWith(
+    expect(mockTransactionQuery).not.toHaveBeenCalledWith(
       expect.stringContaining('UPDATE workspace_memberships'),
       expect.any(Array)
     );
-    expect(mockExecute).toHaveBeenCalledWith(
+    expect(mockTransactionQuery).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO group_memberships'),
       expect.arrayContaining([expect.any(String), 'user_1', 'owner'])
     );
@@ -128,5 +136,6 @@ describe('environment-crud customer setup flow', () => {
       error: 'Forbidden: insufficient workspace role',
     });
     expect(mockExecute).not.toHaveBeenCalled();
+    expect(mockTransaction).not.toHaveBeenCalled();
   });
 });

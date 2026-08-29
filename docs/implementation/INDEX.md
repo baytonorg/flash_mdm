@@ -147,7 +147,7 @@ For deeper information on architecture, deployment, security, operations, and de
 | [policy-versions.md](backend/handlers/policy-versions.md) | Read-only handler for listing policy version history and retrieving version config snapshots |
 | [component-crud.md](backend/handlers/component-crud.md) | CRUD for policy components with automatic recompilation of affected policies on change |
 | [component-assign.md](backend/handlers/component-assign.md) | Manages component-to-policy assignment/unassignment with policy recompilation triggers |
-| [certificate-crud.md](backend/handlers/certificate-crud.md) | Certificate management: list, upload (PEM parsing, blob storage), soft-delete with derivative sync |
+| [certificate-crud.md](backend/handlers/certificate-crud.md) | Environment-owned Wi-Fi trusted CA library with X.509 validation and reference-safe deletion |
 | [deployment-jobs.md](backend/handlers/deployment-jobs.md) | Manages deployment jobs: queue, list, cancel, rollback with batch AMAPI sync |
 | [deployment-jobs-background.md](backend/handlers/deployment-jobs-background.md) | Background function processing a deployment job asynchronously via batch AMAPI sync |
 

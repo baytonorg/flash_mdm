@@ -16,6 +16,7 @@ import {
   listAffectedDevicesForPolicyContext,
 } from './_lib/policy-derivatives.js';
 import { jsonResponse, errorResponse, parseJsonBody, getClientIp, getSearchParams } from './_lib/helpers.js';
+import { preparePolicyBaseForDerivativeGeneration } from './_lib/policy-merge.js';
 
 /**
  * Derive the environment_id from a scope target.
@@ -261,7 +262,9 @@ export default async (request: Request, context: Context) => {
         const rawConfig = typeof policyRow?.config === 'string'
           ? JSON.parse(policyRow.config)
           : (policyRow?.config ?? {});
-        const { openNetworkConfiguration: _onc, deviceConnectivityManagement: _dcm, applications: _apps, ...cleanBase } = rawConfig as Record<string, unknown>;
+        const cleanBase = preparePolicyBaseForDerivativeGeneration(
+          rawConfig as Record<string, unknown>
+        );
 
         // For group/device scope: ensure a scope-specific derivative exists
         if (body.scope_type !== 'environment') {
@@ -439,7 +442,9 @@ export default async (request: Request, context: Context) => {
                 const rawConfig = typeof policyRow?.config === 'string'
                   ? JSON.parse(policyRow.config)
                   : (policyRow?.config ?? {});
-                const { openNetworkConfiguration: _onc, deviceConnectivityManagement: _dcm, applications: _apps, ...cleanBase } = rawConfig as Record<string, unknown>;
+                const cleanBase = preparePolicyBaseForDerivativeGeneration(
+                  rawConfig as Record<string, unknown>
+                );
 
                 await assignPolicyToDeviceWithDerivative({
                   policyId: newPolicy.policy_id,

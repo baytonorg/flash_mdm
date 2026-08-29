@@ -4,6 +4,9 @@ const {
   mockExecute,
   mockQuery,
   mockQueryOne,
+  mockTransaction,
+  mockWithClient,
+  mockLockClientQuery,
   mockGetEnvironmentLicensingSnapshot,
   mockGetOveragePhaseForAgeDays,
   mockIsPlatformLicensingEnabled,
@@ -18,6 +21,9 @@ const {
   mockExecute: vi.fn(),
   mockQuery: vi.fn(),
   mockQueryOne: vi.fn(),
+  mockTransaction: vi.fn(),
+  mockWithClient: vi.fn(),
+  mockLockClientQuery: vi.fn(),
   mockGetEnvironmentLicensingSnapshot: vi.fn(),
   mockGetOveragePhaseForAgeDays: vi.fn(),
   mockIsPlatformLicensingEnabled: vi.fn(),
@@ -34,6 +40,8 @@ vi.mock('../db.js', () => ({
   execute: mockExecute,
   query: mockQuery,
   queryOne: mockQueryOne,
+  transaction: mockTransaction,
+  withClient: mockWithClient,
 }));
 
 vi.mock('../licensing.js', () => ({
@@ -58,12 +66,15 @@ vi.mock('../billing-notifications.js', () => ({
   queueAndSendBillingEmail: mockQueueAndSendBillingEmail,
 }));
 
-import { runLicensingReconcile } from '../licensing-reconcile.js';
+import { enqueueEnforcementAction, runLicensingReconcile } from '../licensing-reconcile.js';
 
 beforeEach(() => {
   mockExecute.mockReset();
   mockQuery.mockReset();
   mockQueryOne.mockReset();
+  mockTransaction.mockReset();
+  mockWithClient.mockReset();
+  mockLockClientQuery.mockReset();
   mockGetEnvironmentLicensingSnapshot.mockReset();
   mockGetOveragePhaseForAgeDays.mockReset();
   mockIsPlatformLicensingEnabled.mockReset();
@@ -75,6 +86,18 @@ beforeEach(() => {
   mockGetWorkspaceScopeNames.mockReset();
   mockQueueAndSendBillingEmail.mockReset();
   mockQuery.mockResolvedValue([]);
+  mockLockClientQuery.mockImplementation(async (sql: string) => ({
+    rows: sql.includes('pg_try_advisory_lock') ? [{ locked: true }] : [],
+    rowCount: 1,
+  }));
+  mockWithClient.mockImplementation(async (fn) => fn({ query: mockLockClientQuery }));
+  mockTransaction.mockImplementation(async (fn) => fn({
+    query: async (sql: string, params?: unknown[]) => {
+      const result = await mockExecute(sql, params);
+      const rowCount = result?.rowCount ?? 0;
+      return { rows: rowCount > 0 ? [{ id: 'action_1' }] : [], rowCount };
+    },
+  }));
   mockIsPlatformLicensingEnabled.mockResolvedValue(true);
   mockSyncLicensingWindowExpiries.mockResolvedValue({
     platform_grants_expired: 0,
@@ -87,8 +110,46 @@ beforeEach(() => {
 });
 
 describe('runLicensingReconcile', () => {
+  it('creates the enforcement action and command through one transaction client', async () => {
+    const clientQuery = vi.fn()
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'action_1' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] });
+    mockTransaction.mockImplementation(async (fn) => fn({ query: clientQuery }));
+
+    const queued = await enqueueEnforcementAction({
+      caseId: 'case_1',
+      workspaceId: 'ws_1',
+      environmentId: 'env_1',
+      deviceId: 'device_1',
+      action: 'disable',
+      reason: 'License expiry. Oversubscribed.',
+    });
+
+    expect(queued).toBe(true);
+    expect(mockTransaction).toHaveBeenCalledTimes(1);
+    expect(String(clientQuery.mock.calls[0]?.[0])).toContain('INSERT INTO license_enforcement_actions');
+    expect(String(clientQuery.mock.calls[1]?.[0])).toContain('INSERT INTO job_queue');
+  });
+
+  it('does not enqueue a duplicate command when the enforcement action conflicts', async () => {
+    const clientQuery = vi.fn().mockResolvedValue({ rowCount: 0, rows: [] });
+    mockTransaction.mockImplementation(async (fn) => fn({ query: clientQuery }));
+
+    const queued = await enqueueEnforcementAction({
+      caseId: 'case_1',
+      workspaceId: 'ws_1',
+      environmentId: 'env_1',
+      deviceId: 'device_1',
+      action: 'wipe',
+      reason: 'License expiry. Oversubscribed.',
+    });
+
+    expect(queued).toBe(false);
+    expect(clientQuery).toHaveBeenCalledTimes(1);
+  });
+
   it('skips processing when advisory lock is already held', async () => {
-    mockQueryOne.mockResolvedValueOnce({ locked: false });
+    mockLockClientQuery.mockResolvedValueOnce({ rows: [{ locked: false }], rowCount: 1 });
 
     const stats = await runLicensingReconcile({ dryRun: true });
 
@@ -98,8 +159,23 @@ describe('runLicensingReconcile', () => {
     expect(mockExecute).not.toHaveBeenCalled();
   });
 
+  it('releases the advisory lock through the same checked-out client after a failure', async () => {
+    mockIsPlatformLicensingEnabled.mockRejectedValueOnce(new Error('database unavailable'));
+
+    await expect(runLicensingReconcile({ dryRun: false })).rejects.toThrow('database unavailable');
+
+    expect(mockWithClient).toHaveBeenCalledOnce();
+    expect(mockLockClientQuery.mock.calls[0]).toEqual([
+      'SELECT pg_try_advisory_lock($1) AS locked',
+      [724501923],
+    ]);
+    expect(mockLockClientQuery.mock.calls.at(-1)).toEqual([
+      'SELECT pg_advisory_unlock($1)',
+      [724501923],
+    ]);
+  });
+
   it('resolves open overage cases and exits early when platform licensing is disabled', async () => {
-    mockQueryOne.mockResolvedValueOnce({ locked: true });
     mockIsPlatformLicensingEnabled.mockResolvedValueOnce(false);
 
     const stats = await runLicensingReconcile({ dryRun: false });
@@ -113,8 +189,6 @@ describe('runLicensingReconcile', () => {
   });
 
   it('does not create cases or queue commands while dry-run is enabled', async () => {
-    mockQueryOne.mockResolvedValueOnce({ locked: true });
-
     mockQuery
       .mockResolvedValueOnce([{ id: 'env_1', workspace_id: 'ws_1' }])
       .mockResolvedValueOnce([]);
@@ -157,9 +231,10 @@ describe('runLicensingReconcile', () => {
     expect(stats.cases_created).toBe(0);
     expect(stats.disable_actions_queued).toBe(0);
     expect(stats.wipe_actions_queued).toBe(0);
-    expect(
-      mockExecute.mock.calls.some(([sql]) => typeof sql === 'string' && sql.includes('pg_advisory_unlock'))
-    ).toBe(true);
+    expect(mockLockClientQuery).toHaveBeenCalledWith(
+      'SELECT pg_advisory_unlock($1)',
+      [724501923]
+    );
     expect(
       mockExecute.mock.calls.some(([sql]) => typeof sql === 'string' && sql.includes('license_overage_cases'))
     ).toBe(false);
@@ -170,7 +245,6 @@ describe('runLicensingReconcile', () => {
 
   it('creates a case and queues disable commands in live mode when phase is disable', async () => {
     mockQueryOne
-      .mockResolvedValueOnce({ locked: true })
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ id: 'case_live_1', started_at: '2026-01-01T00:00:00.000Z' });
 
@@ -236,7 +310,9 @@ describe('runLicensingReconcile', () => {
     ).toBe(true);
     expect(
       mockExecute.mock.calls.some(
-        ([sql]) => typeof sql === 'string' && sql.includes("action, status, reason, executed_at") && sql.includes("'disable'")
+        ([sql, params]) => typeof sql === 'string'
+          && sql.includes('INSERT INTO license_enforcement_actions')
+          && (params as unknown[] | undefined)?.[5] === 'disable'
       )
     ).toBe(true);
     const queuedDisablePayloads = mockExecute.mock.calls
@@ -248,7 +324,6 @@ describe('runLicensingReconcile', () => {
 
   it('updates existing case and queues wipe commands when phase is wipe', async () => {
     mockQueryOne
-      .mockResolvedValueOnce({ locked: true })
       .mockResolvedValueOnce({ id: 'case_live_2', started_at: '2026-01-01T00:00:00.000Z', overage_peak: 3 });
 
     mockQuery.mockImplementation(async (sql: string, params?: unknown[]) => {
@@ -474,10 +549,10 @@ describe('runLicensingReconcile', () => {
       )
     ).toBe(true);
     expect(
-      mockExecute.mock.calls.some(([sql]) =>
+      mockExecute.mock.calls.some(([sql, params]) =>
         typeof sql === 'string'
         && sql.includes('INSERT INTO license_enforcement_actions')
-        && sql.includes("'enable'")
+        && (params as unknown[] | undefined)?.[5] === 'enable'
       )
     ).toBe(true);
     expect(
@@ -502,7 +577,6 @@ describe('runLicensingReconcile', () => {
   });
 
   it('queues near-expiry billing notifications for platform and environment entitlements', async () => {
-    mockQueryOne.mockResolvedValueOnce({ locked: true });
     mockQuery.mockImplementation(async (sql: string) => {
       if (sql.includes('FROM license_grants lg')) {
         return [{

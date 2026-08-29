@@ -19,7 +19,6 @@
 | `syncDeviceApplicationsTable` | 84-135 | Upserts device application reports and removes stale entries |
 | `resolveUsageLogDeviceAmapiName` | 162-190 | Resolves device AMAPI name from usage log payloads (handles string and object device fields) |
 | `extractLostModeLocationRecords` | 192-244 | Parses lost-mode location data from batch usage log events |
-| `extractCommandType` | 251-275 | Extracts the command type string from a command notification payload |
 | `syncAppFeedbackFromReports` | 277-502 | Extracts keyed app states from AMAPI application reports and upserts into `app_feedback_items` |
 | `processEnterpriseUpgrade` | 504-555 | Handles enterprise upgrade completion: updates `enterprise_features.enterprise_upgrade_status`, triggers device re-import |
 | `syncEnrollmentPolicyFromGroup` | 564-785 | Resolves the effective policy for a device (device > group hierarchy > environment) and assigns the appropriate derivative policy via AMAPI |
@@ -57,7 +56,7 @@
 
 **Retry logic:** Failed jobs increment `attempts` and are retried up to `MAX_ATTEMPTS` (5). Jobs exceeding max attempts are marked `dead`. Successful jobs are marked `completed`.
 
-**Enrollment deduplication:** Handles `previousDeviceNames` by finding canonical prior records (scored by active state, IMEI/serial match, recency), collapsing transient webhook placeholder rows, and renaming the canonical record. Guards against reviving historical predecessor devices.
+**Enrollment lineage reconciliation:** `previousDeviceNames` is processed in a database transaction protected by a per-device advisory lock. If the current AMAPI name already has a local row, that row and all predecessor history are retained. Only when no current row exists is one ranked predecessor renamed to the current name; ranking prefers active rows, then IMEI/serial identity and recency. The upsert records the lineage atomically, and a unique-name race falls back to preserving the winning current row. Historical predecessors referenced by an active successor are not re-imported.
 
 **Policy assignment:** Resolves effective policy through a hierarchy (device assignment > group closure walk > environment assignment) and pushes the appropriate derivative policy to AMAPI. Includes generation hash comparison for change detection and rollback on AMAPI failure.
 

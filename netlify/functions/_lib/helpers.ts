@@ -35,6 +35,23 @@ export function errorResponse(message: string, status = 400): Response {
   return jsonResponse({ error: message }, status);
 }
 
+export function getPublicOrigin(request: Request): string {
+  const configuredUrl = process.env.FLASH_PUBLIC_URL?.trim()
+    || (process.env.FLASH_RUNTIME === 'vps' ? process.env.URL?.trim() : undefined);
+  try {
+    const publicUrl = new URL(configuredUrl || request.url);
+    if (publicUrl.protocol !== 'https:' && publicUrl.protocol !== 'http:') {
+      throw new Error('Unsupported public URL protocol');
+    }
+    return publicUrl.origin;
+  } catch {
+    throw new Response(JSON.stringify({ error: 'Public URL is not configured correctly' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function isValidUuid(value: string): boolean {

@@ -7,6 +7,11 @@ import {
   FileText,
 } from 'lucide-react';
 import clsx from 'clsx';
+import {
+  WORKFLOW_AMAPI_COMMANDS,
+  validateWorkflowCommandConfig,
+  type WorkflowCommandField,
+} from '../../../shared/amapi-workflow-commands';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -73,20 +78,19 @@ export const ACTION_OPTIONS = [
   },
 ] as const;
 
-const COMMAND_TYPES = [
-  { value: 'LOCK', label: 'Lock Device' },
-  { value: 'RESET_PASSWORD', label: 'Reset Password' },
-  { value: 'REBOOT', label: 'Reboot' },
-  { value: 'WIPE', label: 'Factory Reset (Wipe)' },
-  { value: 'CLEAR_APP_DATA', label: 'Clear App Data' },
-  { value: 'START_LOST_MODE', label: 'Start Lost Mode' },
-  { value: 'STOP_LOST_MODE', label: 'Stop Lost Mode' },
-];
-
 // ─── Component ──────────────────────────────────────────────────────────────
 
 export default function ActionSelector({ value, onChange }: ActionSelectorProps) {
   const selectedAction = ACTION_OPTIONS.find((a) => a.value === value.action_type);
+  const selectedCommandType = String(value.action_config.command_type ?? '');
+  const selectedCommand = WORKFLOW_AMAPI_COMMANDS.find(
+    (command) => command.type === selectedCommandType
+  );
+  const selectedCommandFields: ReadonlyArray<WorkflowCommandField> = selectedCommand?.fields ?? [];
+  const commandData = (value.action_config.command_data as Record<string, unknown> | undefined) ?? {};
+  const commandValidationError = value.action_type === 'device.command'
+    ? validateWorkflowCommandConfig(value.action_config)
+    : null;
 
   const handleTypeChange = (actionType: string) => {
     onChange({ action_type: actionType, action_config: {} });
@@ -96,6 +100,20 @@ export default function ActionSelector({ value, onChange }: ActionSelectorProps)
     onChange({
       ...value,
       action_config: { ...value.action_config, [key]: configValue },
+    });
+  };
+
+  const handleCommandTypeChange = (commandType: string) => {
+    onChange({
+      ...value,
+      action_config: commandType ? { command_type: commandType } : {},
+    });
+  };
+
+  const handleCommandDataChange = (key: string, configValue: string) => {
+    handleConfigChange('command_data', {
+      ...commandData,
+      [key]: configValue || undefined,
     });
   };
 
@@ -137,41 +155,58 @@ export default function ActionSelector({ value, onChange }: ActionSelectorProps)
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Command Type</label>
             <select
-              value={String(value.action_config.command_type ?? '')}
-              onChange={(e) => handleConfigChange('command_type', e.target.value)}
+              value={selectedCommandType}
+              onChange={(e) => handleCommandTypeChange(e.target.value)}
               className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
             >
               <option value="">Select a command...</option>
-              {COMMAND_TYPES.map((cmd) => (
-                <option key={cmd.value} value={cmd.value}>{cmd.label}</option>
+              {WORKFLOW_AMAPI_COMMANDS.map((command) => (
+                <option key={command.type} value={command.type}>{command.label}</option>
               ))}
             </select>
           </div>
-          {value.action_config.command_type === 'RESET_PASSWORD' && (
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">New Password (optional)</label>
-              <input
-                type="text"
-                value={String((value.action_config.command_data as Record<string, unknown>)?.newPassword ?? '')}
-                onChange={(e) =>
-                  handleConfigChange('command_data', { newPassword: e.target.value || undefined })
-                }
-                placeholder="Leave empty for auto-generated"
-                className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
-              />
+          {selectedCommandFields.map((field) => (
+            <div key={field.key}>
+              <label className="block text-xs font-medium text-gray-600 mb-1" htmlFor={`workflow-command-${field.key}`}>
+                {field.label}{field.required ? ' *' : ''}
+              </label>
+              {field.input === 'textarea' ? (
+                <textarea
+                  id={`workflow-command-${field.key}`}
+                  value={String(commandData[field.key] ?? '')}
+                  onChange={(event) => handleCommandDataChange(field.key, event.target.value)}
+                  placeholder={field.placeholder}
+                  required={field.required}
+                  rows={3}
+                  className="block w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
+                />
+              ) : (
+                <input
+                  id={`workflow-command-${field.key}`}
+                  type="text"
+                  value={String(commandData[field.key] ?? '')}
+                  onChange={(event) => handleCommandDataChange(field.key, event.target.value)}
+                  placeholder={field.placeholder}
+                  required={field.required}
+                  className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
+                />
+              )}
             </div>
+          ))}
+          {selectedCommandType === 'START_LOST_MODE' && (
+            <p className="text-xs text-gray-500">
+              Provide a message, phone number, email address, or street address. Organization alone cannot start lost mode.
+            </p>
           )}
-          {value.action_config.command_type === 'WIPE' && (
+          {selectedCommandType === 'WIPE' && (
             <label className="flex items-start gap-3 rounded-lg border border-gray-200 bg-white px-3 py-2">
               <input
                 type="checkbox"
-                checked={Array.isArray((value.action_config.command_data as Record<string, unknown> | undefined)?.wipeDataFlags)
-                  && ((value.action_config.command_data as Record<string, unknown>).wipeDataFlags as unknown[])
-                    .includes('WIPE_ESIMS')}
+                checked={Array.isArray(commandData.wipeDataFlags)
+                  && (commandData.wipeDataFlags as unknown[]).includes('WIPE_ESIMS')}
                 onChange={(e) => {
-                  const current = (value.action_config.command_data as Record<string, unknown> | undefined) ?? {};
                   handleConfigChange('command_data', {
-                    ...current,
+                    ...commandData,
                     wipeDataFlags: e.target.checked ? ['WIPE_ESIMS'] : undefined,
                   });
                 }}
@@ -184,6 +219,11 @@ export default function ActionSelector({ value, onChange }: ActionSelectorProps)
                 </span>
               </span>
             </label>
+          )}
+          {commandValidationError && (
+            <p role="alert" className="text-xs text-red-600">
+              {commandValidationError}
+            </p>
           )}
         </div>
       )}

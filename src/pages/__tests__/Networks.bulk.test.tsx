@@ -21,6 +21,14 @@ vi.mock('@/api/queries/networks', () => ({
   useBulkNetworkAction: () => ({ mutate: mocks.bulkMutate, isPending: false }),
 }));
 
+vi.mock('@/api/queries/certificates', () => ({
+  useTrustedCaCertificates: () => ({ data: [], isLoading: false }),
+}));
+
+vi.mock('@/components/networks/TrustedCaManager', () => ({
+  default: () => null,
+}));
+
 vi.mock('@/hooks/useBulkSelection', () => ({
   useBulkSelection: () => ({
     selectedRows: [],

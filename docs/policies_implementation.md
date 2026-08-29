@@ -27,7 +27,7 @@ This document describes the complete policy management system in Flash MDM: how 
 ```
 Policy (template)                    "Corporate Standard"
   |-- Base AMAPI JSON                The admin-authored policy configuration
-  |-- Shared items                   Apps, WiFi networks, certificates assigned at scope
+  |-- Shared items                   Apps and WiFi networks assigned at scope; referenced WiFi CAs
   |-- Variables                      ${device.sn}, ${user.email}, ${group.department}
   +-- Overrides                      Group/device-level JSON patches that diverge from template
         |
@@ -39,6 +39,14 @@ Generated derivatives (per scope)   What actually gets pushed to AMAPI
 ```
 
 A **policy** is a JSON template that maps to the [AMAPI Policy resource](https://developers.google.com/android/management/reference/rest/v1/enterprises.policies). It is never pushed to AMAPI directly. Instead, the system generates **derivatives** — one per scope where the policy is assigned — that incorporate shared items, overrides, and variable substitution. Each derivative becomes a real AMAPI policy resource that devices are pointed at.
+
+Wi-Fi trusted CA certificates are environment-owned public X.509 assets. Enterprise Wi-Fi deployments select them through `EAP.ServerCARefs`; generation embeds only those referenced assets in the derivative's `openNetworkConfiguration.Certificates` array. Certificates do not have a separate AMAPI assignment. Their effective environment/group/device scope comes from the network deployment and policy derivative that references them.
+
+Network writes resolve every selected CA and re-parse its blob before persistence. Unknown references, missing blobs, expired certificates, and unsupported ONC certificate shapes fail with `400` instead of leaving an undeployable network record.
+
+Only certificates uploaded after migration 055 are selectable. Earlier records are retained but left unvalidated because the previous upload path checked only PEM markers; operators must re-upload them before deployment.
+
+Client identity certificates, PKCS#12/private-key storage, EAP-TLS, `KeyPairAlias`, and `oncCertificateProviders` are intentionally unsupported. They require a separate secrets and device-side key lifecycle; AMAPI also marks `oncCertificateProviders` as not generally available.
 
 ---
 

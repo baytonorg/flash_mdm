@@ -131,6 +131,7 @@ describe('processDeploymentJob cancellation handling', () => {
 
 describe('deployment-jobs handler POST dispatching', () => {
   beforeEach(() => {
+    delete process.env.FLASH_RUNTIME;
     mockQuery.mockReset();
     mockQueryOne.mockReset();
     mockExecute.mockReset();
@@ -208,5 +209,47 @@ describe('deployment-jobs handler POST dispatching', () => {
 
     const executeSql = mockExecute.mock.calls.map(([sql]) => String(sql));
     expect(executeSql.some((sql) => sql.includes("SET status = 'running'"))).toBe(false);
+  });
+
+  it('returns immediately on VPS after the durable deployment row is committed', async () => {
+    process.env.FLASH_RUNTIME = 'vps';
+    mockQueryOne
+      .mockResolvedValueOnce({ id: 'policy_1', config: {} } as never)
+      .mockResolvedValueOnce({ id: 'job_1' } as never);
+    mockQuery
+      .mockResolvedValueOnce([{ scope_type: 'group', scope_id: 'group_1' }] as never)
+      .mockResolvedValueOnce([] as never);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+    const response = await handler(makeCreateRequest(), {} as never);
+
+    expect(response.status).toBe(201);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(mockSyncPolicyDerivativesForPolicy).not.toHaveBeenCalled();
+    expect(mockAssignPolicyToDeviceWithDerivative).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a rejected dispatch', () => Promise.reject(new Error('connection refused'))],
+    ['a non-2xx dispatch', () => Promise.resolve(new Response(null, { status: 503 }))],
+  ])('marks the Netlify deployment failed after %s', async (_label, fetchResult) => {
+    mockQueryOne
+      .mockResolvedValueOnce({ id: 'policy_1', config: {} } as never)
+      .mockResolvedValueOnce({ id: 'job_1' } as never);
+    mockQuery
+      .mockResolvedValueOnce([{ scope_type: 'group', scope_id: 'group_1' }] as never)
+      .mockResolvedValueOnce([] as never);
+    vi.spyOn(globalThis, 'fetch').mockImplementation(fetchResult);
+
+    const response = await handler(makeCreateRequest(), {} as never);
+
+    expect(response.status).toBe(503);
+    expect(mockExecute).toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'failed'"),
+      expect.arrayContaining(['job_1'])
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      job: { id: 'job_1', status: 'failed' },
+    });
   });
 });

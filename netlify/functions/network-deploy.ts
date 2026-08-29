@@ -3,9 +3,11 @@ import { queryOne, transaction } from './_lib/db.js';
 import { requireAuth } from './_lib/auth.js';
 import { requireEnvironmentPermission } from './_lib/rbac.js';
 import { logAudit } from './_lib/audit.js';
-import { parseOncDocument, parseApnPolicy, getApnSettingKey } from './_lib/policy-merge.js';
+import { parseOncDocument, parseApnPolicy } from './_lib/policy-merge.js';
 import { jsonResponse, errorResponse, parseJsonBody, getClientIp } from './_lib/helpers.js';
 import { syncAffectedPoliciesToAmapi, selectPoliciesForDeploymentScope } from './_lib/deployment-sync.js';
+import { assertSupportedWifiCertificateReferences } from './_lib/certificate-policy.js';
+import { resolveOncServerCaCertificates } from './_lib/certificate-deployment.js';
 
 type DeployBody = {
   environment_id: string;
@@ -142,6 +144,7 @@ export default async (request: Request, _context: Context) => {
         storedProfile: normalizedOnc.document,
         summary: { ssid: normalizedOnc.ssid },
       };
+      await resolveOncServerCaCertificates(body.environment_id, normalizedDeployment.storedProfile);
     }
   } catch (err) {
     return errorResponse(err instanceof Error ? err.message : 'Invalid network document', 400);
@@ -350,6 +353,7 @@ function normalizeOncDeploymentDocument(
     ...doc,
     NetworkConfigurations: [normalizedEntry],
   };
+  assertSupportedWifiCertificateReferences(normalizedDoc);
 
   return {
     document: normalizedDoc,

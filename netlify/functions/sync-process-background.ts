@@ -9,6 +9,9 @@ import { requireInternalCaller } from './_lib/internal-auth.js';
 import { dispatchWorkflowEvent } from './_lib/workflow-dispatch.js';
 import { buildEnterpriseUpgradeStatus } from './_lib/enterprise-upgrade.js';
 import { executeValidatedOutboundWebhook } from './_lib/outbound-webhook.js';
+import { internalFunctionUrl } from './_lib/runtime.js';
+import { resolveAmapiDeviceImei } from './_lib/amapi-device-network.js';
+import { classifyAmapiCommandOperation } from './_lib/amapi-command-result.js';
 
 export const config = {
   type: 'background',
@@ -38,6 +41,18 @@ interface Job {
   environment_id: string;
   payload: unknown;
   attempts: number;
+  max_attempts?: number;
+}
+
+interface DeviceLineageRow {
+  id: string;
+  amapi_name: string;
+  serial_number: string | null;
+  imei: string | null;
+  deleted_at: string | null;
+  enrollment_time: string | null;
+  last_status_report_at: string | null;
+  created_at: string | null;
 }
 
 interface ProcessEventPayload {
@@ -54,6 +69,74 @@ interface BulkCommandPayload {
   workspace_id: string;
   project_id: string;
   enterprise_name: string;
+}
+
+const ENROLLMENT_DEVICE_UPSERT_SQL = `INSERT INTO devices (
+   id, environment_id, amapi_name, name, serial_number, imei,
+   manufacturer, model, os_version, security_patch_level,
+   state, ownership, management_mode, policy_compliant,
+   enrollment_time, last_status_report_at, previous_device_names, snapshot
+ )
+ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now(), $16, $17)
+ ON CONFLICT (amapi_name) DO UPDATE SET
+   environment_id = EXCLUDED.environment_id,
+   name = COALESCE(devices.name, EXCLUDED.name),
+   serial_number = COALESCE(EXCLUDED.serial_number, devices.serial_number),
+   imei = COALESCE(EXCLUDED.imei, devices.imei),
+   manufacturer = COALESCE(EXCLUDED.manufacturer, devices.manufacturer),
+   model = COALESCE(EXCLUDED.model, devices.model),
+   os_version = COALESCE(EXCLUDED.os_version, devices.os_version),
+   security_patch_level = COALESCE(EXCLUDED.security_patch_level, devices.security_patch_level),
+   state = COALESCE(EXCLUDED.state, devices.state),
+   ownership = COALESCE(EXCLUDED.ownership, devices.ownership),
+   management_mode = COALESCE(EXCLUDED.management_mode, devices.management_mode),
+   policy_compliant = EXCLUDED.policy_compliant,
+   enrollment_time = COALESCE(EXCLUDED.enrollment_time, devices.enrollment_time),
+   last_status_report_at = now(),
+   previous_device_names = COALESCE(EXCLUDED.previous_device_names, devices.previous_device_names),
+   snapshot = EXCLUDED.snapshot,
+   deleted_at = NULL,
+   updated_at = now()`;
+
+function timestampOrZero(value: string | null): number {
+  if (!value) return 0;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function selectCanonicalPredecessor(
+  rows: DeviceLineageRow[],
+  previousNames: string[],
+  serialNumber: string | null,
+  imei: string | null
+): DeviceLineageRow {
+  return [...rows].sort((left, right) => {
+    const score = (row: DeviceLineageRow) => [
+      row.deleted_at ? 0 : 1,
+      imei !== null && row.imei === imei ? 1 : 0,
+      serialNumber !== null && row.serial_number === serialNumber ? 1 : 0,
+      timestampOrZero(row.enrollment_time),
+      timestampOrZero(row.last_status_report_at),
+      timestampOrZero(row.created_at),
+      previousNames.indexOf(row.amapi_name),
+    ];
+    const leftScore = score(left);
+    const rightScore = score(right);
+    for (let index = 0; index < leftScore.length; index += 1) {
+      if (leftScore[index] !== rightScore[index]) {
+        return rightScore[index] - leftScore[index];
+      }
+    }
+    return left.id.localeCompare(right.id);
+  })[0];
+}
+
+function isAmapiNameUniqueViolation(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const pgError = error as { code?: string; constraint?: string; message?: string };
+  return pgError.code === '23505'
+    && (pgError.constraint === 'devices_amapi_name_key'
+      || pgError.message?.includes('devices_amapi_name_key') === true);
 }
 
 function isUsableDevicePayloadSnapshot(
@@ -249,32 +332,6 @@ function extractDeviceAmapiNameFromOperationName(operationName: string): string 
   return match?.[1] ?? null;
 }
 
-function extractCommandType(payload: Record<string, unknown>): string | null {
-  const metadata = parseJsonObject(payload.metadata);
-  const response = parseJsonObject(payload.response);
-  const responseCommand = parseJsonObject(response.command);
-  const payloadCommand = parseJsonObject(payload.command);
-  const responseType =
-    typeof response['@type'] === 'string'
-      ? String(response['@type'])
-      : null;
-  if (responseType?.includes('StartLostModeStatus')) return 'START_LOST_MODE';
-  if (responseType?.includes('StopLostModeStatus')) return 'STOP_LOST_MODE';
-
-  const typeCandidates = [
-    payload.type,
-    metadata.type,
-    payloadCommand.type,
-    responseCommand.type,
-  ];
-  for (const candidate of typeCandidates) {
-    if (typeof candidate === 'string' && candidate.trim()) {
-      return candidate.trim().toUpperCase();
-    }
-  }
-  return null;
-}
-
 async function syncAppFeedbackFromReports(
   environmentId: string,
   deviceId: string | null,
@@ -292,7 +349,7 @@ async function syncAppFeedbackFromReports(
     feedback_key: string;
     severity: string | null;
     message: string | null;
-    data_json: Record<string, unknown>;
+    data_json: string | null;
     last_update_time: string | null;
     status: string;
   }> = [];
@@ -311,9 +368,7 @@ async function syncAppFeedbackFromReports(
 
       const severity = typeof state.severity === 'string' ? state.severity : null;
       const message = typeof state.message === 'string' ? state.message : null;
-      const dataJson = state.data && typeof state.data === 'object' && !Array.isArray(state.data)
-        ? state.data
-        : null;
+      const dataJson = typeof state.data === 'string' ? state.data : null;
       const lastUpdateTime = toTimestampOrNull(state.stateTimestampMillis ?? state.lastUpdateTime);
       const normalizedStatus = severity === 'INFO' ? 'resolved' : 'open';
       allRows.push({
@@ -325,7 +380,7 @@ async function syncAppFeedbackFromReports(
         feedback_key: feedbackKey,
         severity,
         message,
-        data_json: (dataJson ?? {}) as Record<string, unknown>,
+        data_json: dataJson,
         last_update_time: lastUpdateTime,
         status: normalizedStatus,
       });
@@ -856,109 +911,13 @@ async function processEnrollment(
   const hardwareInfo = (device.hardwareInfo as Record<string, unknown>) ?? {};
   const softwareInfo = (device.softwareInfo as Record<string, unknown>) ?? {};
   const networkInfo = (device.networkInfo as Record<string, unknown>) ?? {};
-  const primaryTelephonyInfo =
-    (
-      (networkInfo.telephonyInfos as Array<Record<string, unknown>> | undefined) ??
-      (networkInfo.telephonyInfo as Array<Record<string, unknown>> | undefined)
-    )?.[0] ?? null;
-  const normalizedImei =
-    (networkInfo.imei as string | undefined) ??
-    (primaryTelephonyInfo?.imei as string | undefined) ??
-    null;
+  const normalizedImei = resolveAmapiDeviceImei(networkInfo);
 
-  // Deduplicate via AMAPI previousDeviceNames only.
-  // Keep a single prior record (if any) as canonical, and collapse a transient
-  // webhook placeholder row for the current amapi_name before renaming.
-  const previousNames = Array.isArray(device.previousDeviceNames)
-    ? (device.previousDeviceNames as string[])
-    : [];
-  if (previousNames.length > 0) {
-    const previousMatches = await query<{
-      id: string;
-      amapi_name: string;
-      serial_number: string | null;
-      imei: string | null;
-      deleted_at: string | null;
-      enrollment_time: string | null;
-      last_status_report_at: string | null;
-      created_at: string | null;
-    }>(
-      `SELECT id, amapi_name, serial_number, imei, deleted_at,
-              enrollment_time, last_status_report_at, created_at
-       FROM devices
-       WHERE environment_id = $1
-         AND amapi_name = ANY($2::text[])
-       ORDER BY created_at ASC`,
-      [environmentId, previousNames]
-    );
-
-    if (previousMatches.length > 0) {
-      const hardwareSerial = (hardwareInfo.serialNumber as string | undefined) ?? null;
-      const canonicalPrevious = [...previousMatches].sort((a, b) => {
-        const score = (row: typeof a) => {
-          const deletedPenalty = row.deleted_at ? 0 : 1;
-          const imeiMatch = normalizedImei && row.imei === normalizedImei ? 1 : 0;
-          const serialMatch = hardwareSerial && row.serial_number === hardwareSerial ? 1 : 0;
-          const enrollmentTs = row.enrollment_time ? Date.parse(row.enrollment_time) : 0;
-          const statusTs = row.last_status_report_at ? Date.parse(row.last_status_report_at) : 0;
-          const createdTs = row.created_at ? Date.parse(row.created_at) : 0;
-          return [deletedPenalty, imeiMatch, serialMatch, enrollmentTs, statusTs, createdTs];
-        };
-        const sa = score(a);
-        const sb = score(b);
-        for (let i = 0; i < sa.length; i += 1) {
-          if (sa[i] === sb[i]) continue;
-          return (sb[i] as number) - (sa[i] as number);
-        }
-        return 0;
-      })[0];
-
-      const currentRow = await queryOne<{
-        id: string;
-        state: string | null;
-        group_id: string | null;
-        snapshot: Record<string, unknown> | string | null;
-      }>(
-        `SELECT id, state, group_id, snapshot
-         FROM devices
-         WHERE environment_id = $1 AND amapi_name = $2`,
-        [environmentId, deviceAmapiName]
-      );
-
-      if (currentRow) {
-        if (currentRow.group_id !== null) {
-          console.warn('enrollment: collapsing current re-enrollment row that already had group assignment', {
-            environment_id: environmentId,
-            device_amapi_name: deviceAmapiName,
-            current_device_id: currentRow.id,
-            group_id: currentRow.group_id,
-          });
-        }
-
-        await execute(
-          'DELETE FROM devices WHERE id = $1',
-          [currentRow.id]
-        );
-      }
-
-      // Rename exactly one canonical prior record. Renaming all previous names can
-      // conflict once duplicate historic rows already exist from past failures.
-      await execute(
-        `UPDATE devices SET amapi_name = $1, updated_at = now()
-         WHERE id = $2`,
-        [deviceAmapiName, canonicalPrevious.id]
-      );
-
-      if (previousMatches.length > 1) {
-        console.warn('enrollment: multiple previousDeviceNames matched local rows; canonicalized one record only', {
-          environment_id: environmentId,
-          device_amapi_name: deviceAmapiName,
-          matched_count: previousMatches.length,
-          canonical_device_id: canonicalPrevious.id,
-        });
-      }
-    }
-  }
+  const previousNames = [...new Set(
+    (Array.isArray(device.previousDeviceNames) ? device.previousDeviceNames : [])
+      .filter((name): name is string => typeof name === 'string' && name.length > 0)
+      .filter((name) => name !== deviceAmapiName)
+  )];
 
   // Guard against reviving historical predecessor devices during manual/full imports.
   // If another active local row already references this AMAPI name as a previousDeviceName,
@@ -988,70 +947,114 @@ async function processEnrollment(
     }
   }
 
-  // Snapshot the existing device record BEFORE the upsert so we can detect
-  // re-enrollment (device wiped and re-enrolled with a new token). After
-  // previousDeviceNames consolidation above, the old record already carries
-  // the new amapi_name so this lookup will find it.
-  const existingBeforeUpsert = await queryOne<{ enrollment_time: string | null }>(
-    'SELECT enrollment_time FROM devices WHERE environment_id = $1 AND amapi_name = $2',
-    [environmentId, deviceAmapiName]
-  );
+  const deviceId = crypto.randomUUID();
+  const modelStr = (hardwareInfo.model as string) ?? 'Device';
+  const serialStr = (hardwareInfo.serialNumber as string) ?? deviceAmapiName.split('/').pop() ?? deviceId;
+  const autoName = `${modelStr}_${serialStr}`;
   const newEnrollmentTime = (device.enrollmentTime as string) ?? null;
+  const upsertParams = [
+    deviceId,
+    environmentId,
+    deviceAmapiName,
+    autoName,
+    hardwareInfo.serialNumber ?? null,
+    normalizedImei,
+    hardwareInfo.manufacturer ?? hardwareInfo.brand ?? null,
+    hardwareInfo.model ?? null,
+    (softwareInfo.androidVersion as string) ?? null,
+    (softwareInfo.securityPatchLevel as string) ?? null,
+    (device.state as string) ?? 'ACTIVE',
+    (device.ownership as string) ?? null,
+    (device.managementMode as string) ?? null,
+    device.policyCompliant === true,
+    newEnrollmentTime,
+    previousNames.length > 0 ? previousNames : null,
+    JSON.stringify(device),
+  ];
+
+  let existingBeforeUpsert: { enrollment_time: string | null } | null;
+  if (previousNames.length > 0) {
+    try {
+      existingBeforeUpsert = await transaction(async (client) => {
+        await client.query(
+          'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+          [`${environmentId}:${deviceAmapiName}`]
+        );
+        const lineageResult = await client.query<DeviceLineageRow>(
+          `SELECT id, amapi_name, serial_number, imei, deleted_at,
+                  enrollment_time, last_status_report_at, created_at
+           FROM devices
+           WHERE environment_id = $1
+             AND (amapi_name = $2 OR amapi_name = ANY($3::text[]))
+           ORDER BY id
+           FOR UPDATE`,
+          [environmentId, deviceAmapiName, previousNames]
+        );
+        const currentRow = lineageResult.rows.find((row) => row.amapi_name === deviceAmapiName);
+        const previousMatches = lineageResult.rows.filter((row) =>
+          previousNames.includes(row.amapi_name)
+        );
+        let preservedRow = currentRow ?? null;
+
+        if (!currentRow && previousMatches.length > 0) {
+          const canonicalPredecessor = selectCanonicalPredecessor(
+            previousMatches,
+            previousNames,
+            typeof hardwareInfo.serialNumber === 'string' ? hardwareInfo.serialNumber : null,
+            normalizedImei
+          );
+          await client.query(
+            `UPDATE devices SET amapi_name = $1, updated_at = now()
+             WHERE id = $2`,
+            [deviceAmapiName, canonicalPredecessor.id]
+          );
+          preservedRow = canonicalPredecessor;
+
+          if (previousMatches.length > 1) {
+            console.warn('enrollment: multiple previousDeviceNames matched; canonicalized one record', {
+              environment_id: environmentId,
+              device_amapi_name: deviceAmapiName,
+              matched_count: previousMatches.length,
+              canonical_device_id: canonicalPredecessor.id,
+            });
+          }
+        } else if (currentRow && previousMatches.length > 0) {
+          console.warn('enrollment: retained existing current row and preserved predecessor history', {
+            environment_id: environmentId,
+            device_amapi_name: deviceAmapiName,
+            current_device_id: currentRow.id,
+            predecessor_count: previousMatches.length,
+          });
+        }
+
+        await client.query(ENROLLMENT_DEVICE_UPSERT_SQL, upsertParams);
+        return preservedRow ? { enrollment_time: preservedRow.enrollment_time } : null;
+      });
+    } catch (error) {
+      if (!isAmapiNameUniqueViolation(error)) throw error;
+      console.warn('enrollment: concurrent lineage update won; preserving current row', {
+        environment_id: environmentId,
+        device_amapi_name: deviceAmapiName,
+      });
+      existingBeforeUpsert = await queryOne<{ enrollment_time: string | null }>(
+        'SELECT enrollment_time FROM devices WHERE environment_id = $1 AND amapi_name = $2',
+        [environmentId, deviceAmapiName]
+      );
+      await execute(ENROLLMENT_DEVICE_UPSERT_SQL, upsertParams);
+    }
+  } else {
+    existingBeforeUpsert = await queryOne<{ enrollment_time: string | null }>(
+      'SELECT enrollment_time FROM devices WHERE environment_id = $1 AND amapi_name = $2',
+      [environmentId, deviceAmapiName]
+    );
+    await execute(ENROLLMENT_DEVICE_UPSERT_SQL, upsertParams);
+  }
+
   const isReEnrollment =
     existingBeforeUpsert !== null &&
     existingBeforeUpsert.enrollment_time !== null &&
     newEnrollmentTime !== null &&
     existingBeforeUpsert.enrollment_time !== newEnrollmentTime;
-
-  const deviceId = crypto.randomUUID();
-
-  const modelStr = (hardwareInfo.model as string) ?? 'Device';
-  const serialStr = (hardwareInfo.serialNumber as string) ?? deviceAmapiName.split('/').pop() ?? deviceId;
-  const autoName = `${modelStr}_${serialStr}`;
-
-  await execute(
-    `INSERT INTO devices (
-       id, environment_id, amapi_name, name, serial_number, imei,
-       manufacturer, model, os_version, security_patch_level,
-       state, ownership, management_mode, policy_compliant,
-       enrollment_time, last_status_report_at, snapshot
-     )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now(), $16)
-     ON CONFLICT (amapi_name) DO UPDATE SET
-       name = COALESCE(devices.name, EXCLUDED.name),
-       serial_number = EXCLUDED.serial_number,
-       imei = EXCLUDED.imei,
-       manufacturer = EXCLUDED.manufacturer,
-       model = EXCLUDED.model,
-       os_version = EXCLUDED.os_version,
-       security_patch_level = EXCLUDED.security_patch_level,
-       state = EXCLUDED.state,
-       ownership = EXCLUDED.ownership,
-       management_mode = EXCLUDED.management_mode,
-       policy_compliant = EXCLUDED.policy_compliant,
-       enrollment_time = EXCLUDED.enrollment_time,
-       last_status_report_at = now(),
-       snapshot = EXCLUDED.snapshot,
-       updated_at = now()`,
-    [
-      deviceId,
-      environmentId,
-      deviceAmapiName,
-      autoName,
-      hardwareInfo.serialNumber ?? null,
-      normalizedImei,
-      hardwareInfo.manufacturer ?? hardwareInfo.brand ?? null,
-      hardwareInfo.model ?? null,
-      (softwareInfo.androidVersion as string) ?? null,
-      (softwareInfo.securityPatchLevel as string) ?? null,
-      (device.state as string) ?? 'ACTIVE',
-      (device.ownership as string) ?? null,
-      (device.managementMode as string) ?? null,
-      device.policyCompliant === true,
-      (device.enrollmentTime as string) ?? null,
-      JSON.stringify(device),
-    ]
-  );
 
   const enrolledDeviceForApps = await queryOne<{ id: string }>(
     'SELECT id FROM devices WHERE environment_id = $1 AND amapi_name = $2',
@@ -1121,15 +1124,25 @@ async function processEnrollment(
       }
     }
   } else {
-    console.log(`enrollment: no group_id found for ${deviceAmapiName} (enrollmentTokenData=${!!rawTokenData}, enrollmentTokenName=${(device.enrollmentTokenName as string) ?? 'N/A'})`);
-  }
-
-  // Persist previousDeviceNames for reference
-  if (previousNames.length > 0) {
-    await execute(
-      'UPDATE devices SET previous_device_names = $1, updated_at = now() WHERE environment_id = $2 AND amapi_name = $3',
-      [previousNames, environmentId, deviceAmapiName]
+    // No group from enrollment token — fall back to the environment's root group
+    // so the device is visible when the UI auto-selects a single group.
+    const rootGroup = await queryOne<{ id: string }>(
+      `SELECT id FROM groups
+       WHERE environment_id = $1 AND parent_group_id IS NULL
+       ORDER BY created_at ASC LIMIT 1`,
+      [environmentId]
     );
+    if (rootGroup) {
+      const fallbackResult = await execute(
+        'UPDATE devices SET group_id = $1, updated_at = now() WHERE environment_id = $2 AND amapi_name = $3 AND group_id IS NULL',
+        [rootGroup.id, environmentId, deviceAmapiName]
+      );
+      if ((fallbackResult.rowCount ?? 0) > 0) {
+        console.log(`enrollment: assigned root group ${rootGroup.id} to ${deviceAmapiName} (no token group)`);
+      }
+    } else {
+      console.log(`enrollment: no group_id found for ${deviceAmapiName} (enrollmentTokenData=${!!rawTokenData}, enrollmentTokenName=${(device.enrollmentTokenName as string) ?? 'N/A'})`);
+    }
   }
 
   await syncEnrollmentPolicyFromGroup(environmentId, deviceAmapiName);
@@ -1210,15 +1223,7 @@ async function processStatusReport(
   const hardwareInfo = (device.hardwareInfo as Record<string, unknown>) ?? {};
   const softwareInfo = (device.softwareInfo as Record<string, unknown>) ?? {};
   const networkInfo = (device.networkInfo as Record<string, unknown>) ?? {};
-  const primaryTelephonyInfo =
-    (
-      (networkInfo.telephonyInfos as Array<Record<string, unknown>> | undefined) ??
-      (networkInfo.telephonyInfo as Array<Record<string, unknown>> | undefined)
-    )?.[0] ?? null;
-  const normalizedImei =
-    (networkInfo.imei as string | undefined) ??
-    (primaryTelephonyInfo?.imei as string | undefined) ??
-    null;
+  const normalizedImei = resolveAmapiDeviceImei(networkInfo);
 
   // Fetch previous state/compliance before updating so we can detect changes
   const previousDevice = await queryOne<{
@@ -1351,35 +1356,16 @@ async function processCommand(
     (payload.name as string | undefined);
   if (!commandName) return;
 
-  // Prefer documented AMAPI COMMAND payload fields (`done`, `response`, `error`)
-  // and fall back to older/internal shapes if present.
-  const done = payload.done;
-  const hasOperationError =
-    payload.error !== null &&
-    typeof payload.error === 'object' &&
-    !Array.isArray(payload.error);
-  const commandState = typeof payload.commandState === 'string'
-    ? (hasOperationError ? 'FAILED' : payload.commandState)
-    : done === true
-      ? (hasOperationError ? 'FAILED' : 'SUCCEEDED')
-      : done === false
-        ? 'RUNNING'
-        : 'UNKNOWN';
-  const normalizedCommandState = commandState.toUpperCase();
-  const commandSucceeded =
-    !hasOperationError && (
-      (done === true && normalizedCommandState !== 'FAILED') ||
-      normalizedCommandState === 'SUCCEEDED' ||
-      normalizedCommandState === 'EXECUTED'
-    );
+  const commandResult = classifyAmapiCommandOperation(payload);
 
   try {
     await execute(
       `UPDATE device_commands SET
          status = $1,
+         error = LEFT($2, 2000),
          updated_at = now()
-       WHERE environment_id = $2 AND amapi_name = $3`,
-      [commandState, environmentId, commandName]
+       WHERE environment_id = $3 AND amapi_name = $4`,
+      [commandResult.status, commandResult.error, environmentId, commandName]
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -1390,11 +1376,10 @@ async function processCommand(
     }
   }
 
-  const commandType = extractCommandType(payload);
   const commandDeviceAmapiName = extractDeviceAmapiNameFromOperationName(commandName);
-  if (!commandSucceeded || !commandType || !commandDeviceAmapiName) return;
+  if (!commandResult.succeeded || !commandResult.commandType || !commandDeviceAmapiName) return;
 
-  if (commandType === 'START_LOST_MODE') {
+  if (commandResult.commandType === 'START_LOST_MODE') {
     await execute(
       `UPDATE devices
        SET snapshot = jsonb_set(COALESCE(snapshot, '{}'::jsonb), '{appliedState}', to_jsonb($3::text), true),
@@ -1404,7 +1389,7 @@ async function processCommand(
          AND deleted_at IS NULL`,
       [environmentId, commandDeviceAmapiName, 'LOST']
     );
-  } else if (commandType === 'STOP_LOST_MODE') {
+  } else if (commandResult.commandType === 'STOP_LOST_MODE') {
     await execute(
       `UPDATE devices
        SET snapshot = jsonb_set(
@@ -1587,7 +1572,7 @@ async function processQueuedDeviceDelete(payload: {
   });
 }
 
-export default async (request: Request, context: Context) => {
+export default async (request: Request, _context: Context) => {
   console.log('Background sync processor started');
 
   try {
@@ -1601,22 +1586,72 @@ export default async (request: Request, context: Context) => {
     let totalProcessed = 0;
 
     while (batchNum < MAX_BATCHES) {
-      // Fetch and lock pending jobs
+      // Claim due jobs and atomically recover expired worker leases. A stale
+      // lease consumes an attempt because the prior worker may have performed
+      // part of the job before it stopped.
       const jobs = await transaction(async (client) => {
         const result = await client.query(
-          `UPDATE job_queue SET
-             status = 'locked',
-             locked_at = now()
-           WHERE id IN (
-             SELECT id FROM job_queue
-             WHERE status = 'pending'
-               AND scheduled_for <= now()
+          `WITH candidates AS (
+             SELECT id, status, COALESCE(attempts, 0) AS attempts,
+                    COALESCE(max_attempts, $2) AS max_attempts
+             FROM job_queue
+             WHERE (
+                 (status = 'pending' AND scheduled_for <= now())
+                 OR (status = 'locked' AND locked_at < now() - interval '10 minutes')
+               )
              ORDER BY created_at ASC
              LIMIT $1
              FOR UPDATE SKIP LOCKED
+           ), claimed AS (
+             UPDATE job_queue jq
+             SET status = CASE
+                   WHEN candidates.status = 'locked'
+                    AND candidates.attempts + 1 >= candidates.max_attempts THEN 'dead'
+                   ELSE 'locked'
+                 END,
+                 attempts = CASE
+                   WHEN candidates.status = 'locked' THEN candidates.attempts + 1
+                   ELSE candidates.attempts
+                 END,
+                 locked_at = CASE
+                   WHEN candidates.status = 'locked'
+                    AND candidates.attempts + 1 >= candidates.max_attempts THEN NULL
+                   ELSE now()
+                 END,
+                 locked_by = CASE
+                   WHEN candidates.status = 'locked'
+                    AND candidates.attempts + 1 >= candidates.max_attempts THEN NULL
+                   ELSE $3
+                 END,
+                 error = CASE
+                   WHEN candidates.status = 'locked'
+                    AND candidates.attempts + 1 >= candidates.max_attempts
+                     THEN 'Worker lease expired too many times'
+                   ELSE jq.error
+                 END,
+                 completed_at = CASE
+                   WHEN candidates.status = 'locked'
+                    AND candidates.attempts + 1 >= candidates.max_attempts THEN now()
+                   ELSE jq.completed_at
+                 END
+             FROM candidates
+             WHERE jq.id = candidates.id
+             RETURNING jq.id, jq.job_type, jq.environment_id, jq.payload,
+                       jq.attempts, jq.max_attempts, jq.status
+           ), dead_events AS (
+             UPDATE pubsub_events pe
+             SET status = 'dead',
+                 error = 'Worker lease expired too many times'
+             FROM claimed
+             WHERE claimed.status = 'dead'
+               AND pe.environment_id = claimed.environment_id
+               AND pe.message_id = claimed.payload ->> 'event_message_id'
+             RETURNING pe.id
            )
-           RETURNING id, job_type, environment_id, payload, attempts`,
-          [BATCH_SIZE]
+           SELECT id, job_type, environment_id, payload, attempts, max_attempts
+           FROM claimed
+           WHERE status = 'locked'`,
+          [BATCH_SIZE, MAX_ATTEMPTS, `sync-${process.pid}`]
         );
         return result.rows as Job[];
       });
@@ -1716,8 +1751,7 @@ export default async (request: Request, context: Context) => {
               device_id: string;
               trigger_data?: Record<string, unknown>;
             };
-            const origin = new URL(request.url).origin;
-            await fetch(`${origin}/.netlify/functions/workflow-evaluate-background`, {
+            const response = await fetch(internalFunctionUrl(request, 'workflow-evaluate-background'), {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
@@ -1725,6 +1759,9 @@ export default async (request: Request, context: Context) => {
               },
               body: JSON.stringify({ workflow_id, device_id, trigger_data }),
             });
+            if (!response.ok) {
+              throw new Error(`Workflow evaluator returned HTTP ${response.status}`);
+            }
             break;
           }
 
@@ -1840,7 +1877,9 @@ export default async (request: Request, context: Context) => {
               );
             }
             await execute(
-              `UPDATE job_queue SET status = 'dead', error = $2 WHERE id = $1`,
+              `UPDATE job_queue
+               SET status = 'dead', error = $2, completed_at = now(), locked_at = NULL, locked_by = NULL
+               WHERE id = $1`,
               [job.id, `Unhandled job type: ${job.job_type}`]
             );
             continue; // Skip the "mark completed" below
@@ -1849,15 +1888,18 @@ export default async (request: Request, context: Context) => {
 
         // Mark job as completed
         await execute(
-          `UPDATE job_queue SET status = 'completed', completed_at = now() WHERE id = $1`,
+          `UPDATE job_queue
+           SET status = 'completed', completed_at = now(), locked_at = NULL, locked_by = NULL
+           WHERE id = $1`,
           [job.id]
         );
       } catch (err) {
         console.error(`Job ${job.id} (${job.job_type}) failed:`, err);
 
         const newAttempts = job.attempts + 1;
+        const maxAttempts = job.max_attempts ?? MAX_ATTEMPTS;
         const failedEventMessageId = extractPubSubEventMessageId(job.payload);
-        if (newAttempts >= MAX_ATTEMPTS) {
+        if (newAttempts >= maxAttempts) {
           // Mark as dead
           await updateJobQueueFailure(job.id, newAttempts, String(err), null);
           if (failedEventMessageId) {
@@ -1889,8 +1931,10 @@ export default async (request: Request, context: Context) => {
     }
 
     console.log(`Background sync processor completed: ${totalProcessed} jobs across ${batchNum} batch(es)`);
+    return Response.json({ status: 'processed', jobs: totalProcessed, batches: batchNum });
   } catch (err) {
     console.error('Background sync processor error:', err);
+    return Response.json({ error: 'Background sync processor failed' }, { status: 500 });
   }
 };
 
@@ -1956,7 +2000,7 @@ async function updateJobQueueFailure(
   if (backoffSeconds == null) {
     try {
       await execute(
-        `UPDATE job_queue SET status = 'dead', attempts = $2, error = $3, updated_at = now() WHERE id = $1`,
+        `UPDATE job_queue SET status = 'dead', attempts = $2, error = $3, locked_at = NULL, locked_by = NULL, updated_at = now() WHERE id = $1`,
         [jobId, attempts, error]
       );
       return;
@@ -1964,7 +2008,7 @@ async function updateJobQueueFailure(
       const message = err instanceof Error ? err.message : String(err);
       if (!message.includes('column "updated_at" of relation "job_queue" does not exist')) throw err;
       await execute(
-        `UPDATE job_queue SET status = 'dead', attempts = $2, error = $3 WHERE id = $1`,
+        `UPDATE job_queue SET status = 'dead', attempts = $2, error = $3, locked_at = NULL, locked_by = NULL WHERE id = $1`,
         [jobId, attempts, error]
       );
       return;
@@ -1979,6 +2023,7 @@ async function updateJobQueueFailure(
          error = $3,
          scheduled_for = now() + interval '1 second' * $4,
          locked_at = NULL,
+         locked_by = NULL,
          updated_at = now()
        WHERE id = $1`,
       [jobId, attempts, error, backoffSeconds]
@@ -1992,7 +2037,8 @@ async function updateJobQueueFailure(
          attempts = $2,
          error = $3,
          scheduled_for = now() + interval '1 second' * $4,
-         locked_at = NULL
+         locked_at = NULL,
+         locked_by = NULL
        WHERE id = $1`,
       [jobId, attempts, error, backoffSeconds]
     );

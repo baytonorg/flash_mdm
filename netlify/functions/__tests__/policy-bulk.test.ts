@@ -120,6 +120,59 @@ describe('POST /api/policies/bulk', () => {
     });
   });
 
+  it('blocks direct deletion when a policy is effective through device, group, or environment assignment', async () => {
+    mockQueryOne
+      .mockResolvedValueOnce({
+        id: 'p1',
+        environment_id: 'env1',
+        name: 'Policy A',
+        amapi_name: null,
+      } as never)
+      .mockResolvedValueOnce({ count: '1' } as never);
+
+    const res = await handler(
+      new Request('http://localhost/api/policies/p1', { method: 'DELETE' }),
+      {} as never
+    );
+
+    expect(res.status).toBe(409);
+    const effectiveCountSql = String(mockQueryOne.mock.calls[1]?.[0]);
+    expect(effectiveCountSql).toContain("pa.scope_type = 'device'");
+    expect(effectiveCountSql).toContain("pa.scope_type = 'group'");
+    expect(effectiveCountSql).toContain("pa.scope_type = 'environment'");
+    expect(effectiveCountSql).toContain('COALESCE(dpa.policy_id, gpa.policy_id, epa.policy_id, d.policy_id)');
+    expect(mockExecute).not.toHaveBeenCalledWith('DELETE FROM policies WHERE id = $1', ['p1']);
+  });
+
+  it('blocks bulk deletion when inherited assignment resolution finds an affected device', async () => {
+    mockQueryOne
+      .mockResolvedValueOnce({
+        id: 'p1',
+        environment_id: 'env1',
+        name: 'Policy A',
+        amapi_name: null,
+      } as never)
+      .mockResolvedValueOnce({
+        id: 'p1',
+        environment_id: 'env1',
+        name: 'Policy A',
+        amapi_name: null,
+      } as never)
+      .mockResolvedValueOnce({ count: '1' } as never);
+
+    const res = await handler(makeRequest({
+      environment_id: 'env1',
+      operation: 'delete',
+      selection: { ids: ['p1'] },
+    }), {} as never);
+    const body = await res.json() as { failed: number; results: Array<{ error?: string }> };
+
+    expect(res.status).toBe(200);
+    expect(body.failed).toBe(1);
+    expect(body.results[0]?.error).toBe('Cannot delete policy: devices are still using it');
+    expect(mockExecute).not.toHaveBeenCalledWith('DELETE FROM policies WHERE id = $1', ['p1']);
+  });
+
   it('bulk copy returns new policy identifiers', async () => {
     mockQueryOne.mockResolvedValueOnce({
       id: 'p1',

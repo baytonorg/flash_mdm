@@ -170,6 +170,8 @@ const CATEGORY_HELP: Record<string, { title: string; description: string; docLin
   },
 };
 
+const NEW_POLICY_ROUTE = '__new_policy__';
+
 // ─── Component ──────────────────────────────────────────────────────────────
 
 export default function PolicyEditor() {
@@ -192,6 +194,7 @@ export default function PolicyEditor() {
   const [version, setVersion] = useState(1);
   const [status, setStatus] = useState('draft');
   const [hasInitialised, setHasInitialised] = useState(false);
+  const [initialisedPolicyId, setInitialisedPolicyId] = useState<string | null>(() => id ? null : NEW_POLICY_ROUTE);
   const [isDirty, setIsDirty] = useState(false);
   const [saveWarning, setSaveWarning] = useState<PolicySaveWarning | null>(null);
 
@@ -204,19 +207,54 @@ export default function PolicyEditor() {
 
   useEnvironmentGuard(policyData?.policy?.environment_id, '/policies');
 
+  useEffect(() => {
+    if (id || initialisedPolicyId === NEW_POLICY_ROUTE) return;
+    if (initialisedPolicyId && isDirty) {
+      const proceed = window.confirm('Discard your unsaved policy changes and create a new policy?');
+      if (!proceed) {
+        navigate(`/policies/${initialisedPolicyId}`, { replace: true });
+        return;
+      }
+    }
+    setName('');
+    setDescription('');
+    setScenario('fm');
+    setConfig({});
+    setActiveCategory('password');
+    setViewMode('form');
+    setPushToAmapi(false);
+    setVersion(1);
+    setStatus('draft');
+    setHasInitialised(false);
+    setInitialisedPolicyId(NEW_POLICY_ROUTE);
+    setIsDirty(false);
+    setSaveWarning(null);
+  }, [id, initialisedPolicyId, isDirty, navigate]);
+
   // Populate form from fetched policy
   useEffect(() => {
-    if (policyData?.policy && !hasInitialised) {
+    if (policyData?.policy && policyData.policy.id === id && policyData.policy.id !== initialisedPolicyId) {
       const p = policyData.policy;
+      if (initialisedPolicyId && isDirty) {
+        const proceed = window.confirm('Discard your unsaved policy changes and open the selected policy?');
+        if (!proceed) {
+          navigate(initialisedPolicyId === NEW_POLICY_ROUTE ? '/policies/new' : `/policies/${initialisedPolicyId}`, { replace: true });
+          return;
+        }
+      }
       setName(p.name);
       setDescription(p.description ?? '');
       setScenario(p.deployment_scenario);
       setConfig(p.config ?? {});
       setVersion(p.version);
       setStatus(p.status);
+      setPushToAmapi(false);
+      setInitialisedPolicyId(p.id);
       setHasInitialised(true);
+      setIsDirty(false);
+      setSaveWarning(null);
     }
-  }, [policyData, hasInitialised]);
+  }, [id, initialisedPolicyId, isDirty, navigate, policyData]);
 
   // Refresh config after component recompile changes
   useEffect(() => {
@@ -248,6 +286,8 @@ export default function PolicyEditor() {
     }) => apiClient.post<CreatePolicyResponse>('/api/policies/create', body),
     onSuccess: (data) => {
       setSaveWarning(null);
+      setInitialisedPolicyId(data.policy.id);
+      setIsDirty(false);
       queryClient.invalidateQueries({ queryKey: ['policies', environmentId] });
       navigate(`/policies/${data.policy.id}`, { replace: true });
     },
@@ -355,7 +395,10 @@ export default function PolicyEditor() {
             <input
               type="text"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                setName(e.target.value);
+                setIsDirty(true);
+              }}
               placeholder="e.g. Corporate Device Policy"
               className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
             />
@@ -366,7 +409,10 @@ export default function PolicyEditor() {
             <label className="block text-sm font-medium text-gray-900 mb-1">Description</label>
             <textarea
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e) => {
+                setDescription(e.target.value);
+                setIsDirty(true);
+              }}
               placeholder="Optional description for this policy..."
               rows={3}
               className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 resize-y"
@@ -392,7 +438,10 @@ export default function PolicyEditor() {
                     name="scenario"
                     value={opt.value}
                     checked={scenario === opt.value}
-                    onChange={() => setScenario(opt.value)}
+                    onChange={() => {
+                      setScenario(opt.value);
+                      setIsDirty(true);
+                    }}
                     className="mt-0.5 h-4 w-4 text-accent focus:ring-accent/30"
                   />
                   <div>
@@ -442,7 +491,10 @@ export default function PolicyEditor() {
           <input
             type="text"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value);
+              setIsDirty(true);
+            }}
             readOnly={isDefaultPolicy}
             className="min-w-0 flex-1 bg-transparent border-none text-base font-semibold text-gray-900 focus:outline-none focus:ring-0 sm:min-w-[200px] sm:flex-none sm:text-lg"
             placeholder="Policy name"
@@ -498,6 +550,7 @@ export default function PolicyEditor() {
               onChange={(e) => {
                 if (isDefaultPolicy) return;
                 setPushToAmapi(e.target.checked);
+                setIsDirty(true);
               }}
               className="h-4 w-4 rounded border-gray-300 text-accent focus:ring-accent/20"
             />

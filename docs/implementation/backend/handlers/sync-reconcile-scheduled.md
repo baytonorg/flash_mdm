@@ -14,7 +14,7 @@
 | Name | Lines | Description |
 |------|-------|-------------|
 | `listReconcilableEnvironments` | 88-111 | Queries environments that have an enterprise binding and credentials, with schema fallback for missing `deleted_at` column |
-| `reconcileEnvironment` | 113-267 | Paginates through AMAPI devices, upserts each into the local DB, and soft-deletes devices no longer present in AMAPI |
+| `reconcileEnvironment` | 113-267 | Paginates through AMAPI devices, reconciles device lineage and upserts each local record, then soft-deletes devices no longer present in AMAPI |
 | `reconcileEnrollmentTokens` | 269-354 | Hard-deletes expired tokens (after a 24h grace period), paginates AMAPI enrollment tokens, and retires stale/orphaned local tokens |
 
 ## Dependencies (imports from project)
@@ -31,7 +31,7 @@ Runs as a Netlify scheduled function (cron: `*/15 * * * *`). Iterates all enviro
 
 **Device reconciliation per environment:**
 1. Paginates through all AMAPI devices (page size 100).
-2. For each device: handles `previousDeviceNames` by updating existing records to the new AMAPI name, then upserts the device record using `ON CONFLICT (amapi_name) DO UPDATE`.
+2. For each device: reconciles `previousDeviceNames` in a per-device advisory-lock transaction. An existing current row is retained with its predecessor history. Only if no current row exists is one ranked predecessor renamed to the current AMAPI name; ranking prefers active rows, matching IMEI/serial, and recency. The upsert records `previous_device_names` atomically and a unique-name race preserves the winning row.
 3. After full pagination completes, queries local active devices and soft-deletes any not seen in the AMAPI response (sets `state = 'DELETED'`, `deleted_at = now()`). Logs each deletion to the audit trail.
 4. If pagination fails partway, the soft-delete pass is skipped to avoid false deletions.
 

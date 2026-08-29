@@ -86,7 +86,7 @@ For route-level detail, see: `docs/reference/endpoints.md`.
 
 ## Certificates
 
-- `certificate-crud`
+- `certificate-crud` - environment-owned Wi-Fi trusted CA library used by ONC policy generation
 
 ## Workflows
 

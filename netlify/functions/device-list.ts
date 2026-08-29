@@ -4,7 +4,7 @@ import { requireAuth } from './_lib/auth.js';
 import { requireEnvironmentAccessScopeForResourcePermission } from './_lib/rbac.js';
 import { jsonResponse, errorResponse, getSearchParams, isValidUuid } from './_lib/helpers.js';
 
-export default async (request: Request, context: Context) => {
+export default async (request: Request, _context: Context) => {
   try {
     if (request.method !== 'GET') {
       return errorResponse('Method not allowed', 405);
@@ -24,6 +24,14 @@ export default async (request: Request, context: Context) => {
   const search = params.get('search');
   const stateFilter = params.get('state');
   const ownershipFilter = params.get('ownership');
+  const manufacturerFilter = params.get('manufacturer')?.trim() ?? '';
+  const policyCompliantParam = params.get('policy_compliant');
+  if (policyCompliantParam && policyCompliantParam !== 'true' && policyCompliantParam !== 'false') {
+    return errorResponse('policy_compliant must be true or false');
+  }
+  const policyCompliantFilter = policyCompliantParam
+    ? policyCompliantParam === 'true'
+    : null;
   const groupId = params.get('group_id');
   if (groupId && !isValidUuid(groupId)) return errorResponse('group_id must be a valid UUID');
   const sortBy = params.get('sort_by') ?? 'last_status_report_at';
@@ -37,9 +45,52 @@ export default async (request: Request, context: Context) => {
       ? `d.last_status_report_at ${sortDir} NULLS LAST, d.updated_at DESC`
       : `d.${safeSortBy} ${sortDir}`;
 
-  let whereClause = 'd.environment_id = $1 AND d.deleted_at IS NULL';
-  const queryParams: unknown[] = [environmentId];
-  let paramIdx = 2;
+  let scopeWhereClause = 'd.environment_id = $1 AND d.deleted_at IS NULL';
+  const scopeParams: unknown[] = [environmentId];
+  let scopeParamIdx = 2;
+
+  if (groupId) {
+    if (envScope.mode === 'group' && !(envScope.accessible_group_ids ?? []).includes(groupId)) {
+      return errorResponse('Forbidden: no access to this group', 403);
+    }
+    // Include all descendants of the group
+    scopeWhereClause += ` AND d.group_id IN (SELECT descendant_id FROM group_closures WHERE ancestor_id = $${scopeParamIdx})`;
+    scopeParams.push(groupId);
+    scopeParamIdx++;
+  } else if (envScope.mode === 'group') {
+    const accessibleGroupIds = envScope.accessible_group_ids ?? [];
+    if (accessibleGroupIds.length === 0) {
+      return jsonResponse({
+        devices: [],
+        pagination: { page, per_page: perPage, total: 0, total_pages: 0 },
+        facets: { manufacturers: [] },
+      });
+    }
+    scopeWhereClause += ` AND d.group_id = ANY($${scopeParamIdx}::uuid[])`;
+    scopeParams.push(accessibleGroupIds);
+    scopeParamIdx++;
+  }
+
+  const manufacturerRows = await query<{ manufacturer: string }>(
+    `SELECT manufacturer
+     FROM (
+       SELECT MIN(BTRIM(d.manufacturer)) AS manufacturer
+       FROM devices d
+       WHERE ${scopeWhereClause}
+         AND NULLIF(BTRIM(d.manufacturer), '') IS NOT NULL
+       GROUP BY LOWER(BTRIM(d.manufacturer))
+     ) manufacturer_facets
+     ORDER BY LOWER(manufacturer), manufacturer`,
+    scopeParams
+  );
+  const manufacturerFacets = manufacturerRows.map(({ manufacturer }) => ({
+    value: manufacturer,
+    label: manufacturer,
+  }));
+
+  let whereClause = scopeWhereClause;
+  const queryParams = [...scopeParams];
+  let paramIdx = scopeParamIdx;
 
   if (search) {
     whereClause += ` AND (d.name ILIKE $${paramIdx} OR d.serial_number ILIKE $${paramIdx} OR d.model ILIKE $${paramIdx} OR d.manufacturer ILIKE $${paramIdx} OR d.imei ILIKE $${paramIdx})`;
@@ -59,24 +110,15 @@ export default async (request: Request, context: Context) => {
     paramIdx++;
   }
 
-  if (groupId) {
-    if (envScope.mode === 'group' && !(envScope.accessible_group_ids ?? []).includes(groupId)) {
-      return errorResponse('Forbidden: no access to this group', 403);
-    }
-    // Include all descendants of the group
-    whereClause += ` AND d.group_id IN (SELECT descendant_id FROM group_closures WHERE ancestor_id = $${paramIdx})`;
-    queryParams.push(groupId);
+  if (manufacturerFilter) {
+    whereClause += ` AND LOWER(BTRIM(d.manufacturer)) = LOWER($${paramIdx})`;
+    queryParams.push(manufacturerFilter);
     paramIdx++;
-  } else if (envScope.mode === 'group') {
-    const accessibleGroupIds = envScope.accessible_group_ids ?? [];
-    if (accessibleGroupIds.length === 0) {
-      return jsonResponse({
-        devices: [],
-        pagination: { page, per_page: perPage, total: 0, total_pages: 0 },
-      });
-    }
-    whereClause += ` AND d.group_id = ANY($${paramIdx}::uuid[])`;
-    queryParams.push(accessibleGroupIds);
+  }
+
+  if (policyCompliantFilter !== null) {
+    whereClause += ` AND d.policy_compliant = $${paramIdx}`;
+    queryParams.push(policyCompliantFilter);
     paramIdx++;
   }
 
@@ -128,6 +170,7 @@ export default async (request: Request, context: Context) => {
         total,
         total_pages: Math.ceil(total / perPage),
       },
+      facets: { manufacturers: manufacturerFacets },
     });
   } catch (err) {
     if (isResponseLike(err)) return err;

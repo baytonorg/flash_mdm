@@ -9,6 +9,7 @@ import Pagination from '@/components/common/Pagination';
 import BulkActionBar, { type BulkAction } from '@/components/common/BulkActionBar';
 import StatusBadge from '@/components/common/StatusBadge';
 import LivePageIndicator from '@/components/common/LivePageIndicator';
+import QueryErrorState from '@/components/common/QueryErrorState';
 import CommandModal from '@/components/device/CommandModal';
 import { getDeviceDisplayState } from '@/lib/device-state';
 import { Lock, RotateCcw, Trash2, Smartphone, Terminal } from 'lucide-react';
@@ -42,6 +43,9 @@ interface DevicesResponse {
     per_page: number;
     total: number;
     total_pages: number;
+  };
+  facets: {
+    manufacturers: Array<{ value: string; label: string }>;
   };
 }
 
@@ -105,7 +109,7 @@ export default function Devices() {
     return params.toString();
   }, [environmentId, groupId, page, perPage, search, stateFilter, ownershipFilter, manufacturerFilter, complianceFilter, sortBy, sortDir]);
 
-  const { data, isLoading, dataUpdatedAt } = useQuery({
+  const { data, isLoading, isError, error, refetch, isFetching, dataUpdatedAt } = useQuery({
     queryKey: ['devices', queryParams],
     queryFn: () => apiClient.get<DevicesResponse>(`/api/devices/list?${queryParams}`),
     enabled: !!environmentId,
@@ -235,18 +239,8 @@ export default function Devices() {
 
   const devices = data?.devices ?? [];
   const total = data?.pagination?.total ?? 0;
-  const totalPages = Math.max(1, Math.ceil(total / perPage));
-
-  // Derive unique manufacturer list from loaded devices for the dropdown
-  const manufacturerOptions = useMemo(() => {
-    const manufacturers = new Set<string>();
-    for (const d of devices) {
-      if (d.manufacturer) manufacturers.add(d.manufacturer);
-    }
-    return Array.from(manufacturers)
-      .sort()
-      .map((m) => ({ value: m, label: m }));
-  }, [devices]);
+  const totalPages = Math.max(1, data?.pagination?.total_pages ?? Math.ceil(total / perPage));
+  const manufacturerOptions = data?.facets?.manufacturers ?? [];
 
   const bulkActions: BulkAction[] = [
     { key: 'LOCK', label: 'Lock', icon: <Lock className="h-3.5 w-3.5" /> },
@@ -280,6 +274,20 @@ export default function Devices() {
     );
   }
 
+  if (isError && !data) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl font-bold text-gray-900">Devices</h1>
+        <QueryErrorState
+          title="Unable to load devices"
+          error={error}
+          onRetry={() => void refetch()}
+          retrying={isFetching}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -289,6 +297,16 @@ export default function Devices() {
         </div>
         <p className="text-sm text-muted">{total} device{total !== 1 ? 's' : ''}</p>
       </div>
+
+      {isError && (
+        <QueryErrorState
+          compact
+          title="Device data may be out of date"
+          error={error}
+          onRetry={() => void refetch()}
+          retrying={isFetching}
+        />
+      )}
 
       {/* Filters */}
       <FilterBar

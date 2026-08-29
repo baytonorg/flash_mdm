@@ -1,5 +1,6 @@
 import type { Context } from '@netlify/functions';
 import type Stripe from 'stripe';
+import type { PoolClient } from 'pg';
 import { transaction } from './_lib/db.js';
 import { getSearchParams, jsonResponse, errorResponse, isValidUuid } from './_lib/helpers.js';
 import { logAudit } from './_lib/audit.js';
@@ -11,6 +12,14 @@ import {
   getWorkspaceScopeNames,
   queueAndSendBillingEmail,
 } from './_lib/billing-notifications.js';
+
+type WorkspaceEventClient = Pick<PoolClient, 'query'>;
+type AfterCommit = () => Promise<void>;
+
+interface WorkspaceEventResult {
+  response: Record<string, string>;
+  afterCommit: AfterCommit | null;
+}
 
 function toPositiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? '', 10);
@@ -35,19 +44,6 @@ function getWorkspaceIdFromEventMetadata(event: Stripe.Event): string | null {
   if (fromParentSubscriptionDetails) return fromParentSubscriptionDetails;
 
   return null;
-}
-
-async function markWorkspaceEventProcessed(workspaceId: string, eventId: string): Promise<void> {
-  await transaction(async (client) => {
-    await client.query(
-      `UPDATE workspace_billing_events
-       SET processed_at = now()
-       WHERE workspace_id = $1
-         AND source = 'workspace_stripe'
-         AND event_id = $2`,
-      [workspaceId, eventId]
-    );
-  });
 }
 
 export default async function handler(request: Request, _context: Context) {
@@ -85,179 +81,166 @@ export default async function handler(request: Request, _context: Context) {
       return errorResponse('workspace_id does not match signed event metadata', 403);
     }
 
-    const inserted = await transaction(async (client) => {
-      const result = await client.query(
+    const processing = await transaction(async (client) => {
+      const claim = await client.query<{ id: string }>(
         `INSERT INTO workspace_billing_events
            (id, workspace_id, source, event_id, event_type, payload, created_at)
          VALUES ($1, $2, 'workspace_stripe', $3, $4, $5::jsonb, now())
-         ON CONFLICT (source, event_id) DO NOTHING`,
+         ON CONFLICT (source, event_id) DO UPDATE
+         SET workspace_id = EXCLUDED.workspace_id,
+             event_type = EXCLUDED.event_type,
+             payload = EXCLUDED.payload
+         WHERE workspace_billing_events.processed_at IS NULL
+         RETURNING id`,
         [crypto.randomUUID(), workspaceId, event.id, event.type, JSON.stringify(event)]
       );
-      return (result.rowCount ?? 0) > 0;
+
+      if ((claim.rowCount ?? 0) === 0) {
+        return {
+          duplicate: true,
+          response: {},
+          afterCommit: null as AfterCommit | null,
+        };
+      }
+
+      const result = await processWorkspaceStripeEvent(event, workspaceId, stripe, client);
+      await client.query(
+        `UPDATE workspace_billing_events
+         SET processed_at = now()
+         WHERE source = 'workspace_stripe' AND event_id = $1`,
+        [event.id]
+      );
+
+      return { duplicate: false, ...result };
     });
 
-    if (!inserted) {
+    if (processing.duplicate) {
       return jsonResponse({ received: true, duplicate: true });
     }
 
-    if (event.type === 'checkout.session.completed') {
-      const session = event.data.object as Stripe.Checkout.Session;
-      const metadata = session.metadata ?? {};
-      const environmentId = metadata.environment_id;
-      if (!environmentId) {
-        await markWorkspaceEventProcessed(workspaceId, event.id);
-        return jsonResponse({ received: true, ignored: 'missing environment_id metadata' });
+    if (processing.afterCommit) {
+      try {
+        await processing.afterCommit();
+      } catch (err) {
+        console.error('Workspace billing webhook post-processing error:', err);
       }
+    }
 
-      const seatCount = toPositiveInt(metadata.seat_count, 1);
-      const durationMonths = toPositiveInt(metadata.duration_months, 1);
-      const billingMode = String(metadata.billing_mode ?? '').toLowerCase();
+    return jsonResponse({ received: true, ...processing.response });
+  } catch (err) {
+    if (err instanceof Response) return err;
+    console.error('workspace-billing-webhook error:', err);
+    return errorResponse('Internal server error', 500);
+  }
+}
 
-      // For recurring subscription mode, entitlements are granted on invoice.paid renewals.
-      // Keep legacy one-time checkout entitlement grants for pre-existing payment-mode sessions.
-      if (billingMode === 'subscription') {
-        await markWorkspaceEventProcessed(workspaceId, event.id);
-        return jsonResponse({ received: true, deferred: 'awaiting_invoice_paid' });
-      }
+async function processWorkspaceStripeEvent(
+  event: Stripe.Event,
+  workspaceId: string,
+  stripe: Stripe,
+  client: WorkspaceEventClient
+): Promise<WorkspaceEventResult> {
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object as Stripe.Checkout.Session;
+    const metadata = session.metadata ?? {};
+    const environmentId = metadata.environment_id;
+    if (!environmentId) {
+      return terminalResult({ ignored: 'missing environment_id metadata' });
+    }
 
-      const granted = await transaction(async (client) => {
-        const envResult = await client.query<{ workspace_id: string }>(
-          `SELECT workspace_id
-           FROM environments
-           WHERE id = $1`,
-          [environmentId]
-        );
-        const env = envResult.rows[0];
-        if (!env || env.workspace_id !== workspaceId) {
-          await client.query(
-            `UPDATE workspace_billing_events
-             SET processed_at = now()
-             WHERE source = 'workspace_stripe' AND event_id = $1`,
-            [event.id]
-          );
-          return false;
-        }
+    const seatCount = toPositiveInt(metadata.seat_count, 1);
+    const durationMonths = toPositiveInt(metadata.duration_months, 1);
+    const billingMode = String(metadata.billing_mode ?? '').toLowerCase();
 
-        await client.query(
-          `INSERT INTO environment_entitlements
-             (id, workspace_id, environment_id, source, seat_count, starts_at, ends_at, status, external_ref, metadata)
-           VALUES ($1, $2, $3, 'workspace_customer_payment', $4, now(), now() + ($5 || ' months')::interval, 'active', $6, $7::jsonb)`,
-          [
-            crypto.randomUUID(),
-            workspaceId,
-            environmentId,
-            seatCount,
-            String(durationMonths),
-            session.id,
-            JSON.stringify({
-              event_id: event.id,
-              workspace_customer_id: metadata.workspace_customer_id ?? null,
-              pricing_id: metadata.pricing_id ?? null,
-            }),
-          ]
-        );
+    // Subscription checkouts are granted by invoice.paid, not twice at checkout.
+    if (billingMode === 'subscription') {
+      return terminalResult({ deferred: 'awaiting_invoice_paid' });
+    }
 
-        await client.query(
-          `UPDATE workspace_billing_events
-           SET processed_at = now()
-           WHERE source = 'workspace_stripe' AND event_id = $1`,
-          [event.id]
-        );
-        return true;
-      });
+    if (!await environmentBelongsToWorkspace(client, environmentId, workspaceId)) {
+      return terminalResult({ ignored: 'environment is not in workspace scope' });
+    }
 
-      if (!granted) {
-        return jsonResponse({ received: true, ignored: 'environment is not in workspace scope' });
-      }
-
-      await logAudit({
-        workspace_id: workspaceId,
-        environment_id: environmentId,
-        actor_type: 'system',
-        visibility_scope: 'privileged',
-        action: 'workspace_billing.entitlement.granted',
-        resource_type: 'environment_entitlement',
-        details: {
+    await client.query(
+      `INSERT INTO environment_entitlements
+         (id, workspace_id, environment_id, source, seat_count, starts_at, ends_at, status, external_ref, metadata)
+       VALUES ($1, $2, $3, 'workspace_customer_payment', $4, now(), now() + ($5 || ' months')::interval, 'active', $6, $7::jsonb)`,
+      [
+        crypto.randomUUID(),
+        workspaceId,
+        environmentId,
+        seatCount,
+        String(durationMonths),
+        session.id,
+        JSON.stringify({
           event_id: event.id,
-          seat_count: seatCount,
-          duration_months: durationMonths,
-          checkout_session_id: session.id,
-        },
-      });
-    } else if (event.type === 'invoice.paid') {
-      const invoice = event.data.object as Stripe.Invoice;
-      const subscriptionId = typeof invoice.subscription === 'string'
-        ? invoice.subscription
-        : invoice.subscription?.id;
-      if (!subscriptionId) {
-        await markWorkspaceEventProcessed(workspaceId, event.id);
-        return jsonResponse({ received: true, ignored: 'missing subscription on invoice' });
-      }
+          workspace_customer_id: metadata.workspace_customer_id ?? null,
+          pricing_id: metadata.pricing_id ?? null,
+        }),
+      ]
+    );
 
-      const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-      const metadata = subscription.metadata ?? {};
-      const environmentId = metadata.environment_id;
-      if (!environmentId) {
-        await markWorkspaceEventProcessed(workspaceId, event.id);
-        return jsonResponse({ received: true, ignored: 'missing environment_id metadata' });
-      }
+    return terminalResult({}, () => logAudit({
+      workspace_id: workspaceId,
+      environment_id: environmentId,
+      actor_type: 'system',
+      visibility_scope: 'privileged',
+      action: 'workspace_billing.entitlement.granted',
+      resource_type: 'environment_entitlement',
+      details: {
+        event_id: event.id,
+        seat_count: seatCount,
+        duration_months: durationMonths,
+        checkout_session_id: session.id,
+      },
+    }));
+  }
 
-      const seatCount = toPositiveInt(metadata.seat_count, 1);
-      const durationMonths = toPositiveInt(metadata.duration_months, 1);
+  if (event.type === 'invoice.paid') {
+    const invoice = event.data.object as Stripe.Invoice;
+    const subscriptionId = typeof invoice.subscription === 'string'
+      ? invoice.subscription
+      : invoice.subscription?.id;
+    if (!subscriptionId) {
+      return terminalResult({ ignored: 'missing subscription on invoice' });
+    }
 
-      const granted = await transaction(async (client) => {
-        const envResult = await client.query<{ workspace_id: string }>(
-          `SELECT workspace_id
-           FROM environments
-           WHERE id = $1`,
-          [environmentId]
-        );
-        const env = envResult.rows[0];
-        if (!env || env.workspace_id !== workspaceId) {
-          await client.query(
-            `UPDATE workspace_billing_events
-             SET processed_at = now()
-             WHERE source = 'workspace_stripe' AND event_id = $1`,
-            [event.id]
-          );
-          return false;
-        }
+    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+    const metadata = subscription.metadata ?? {};
+    const environmentId = metadata.environment_id;
+    if (!environmentId) {
+      return terminalResult({ ignored: 'missing environment_id metadata' });
+    }
 
-        await client.query(
-          `INSERT INTO environment_entitlements
-             (id, workspace_id, environment_id, source, seat_count, starts_at, ends_at, status, external_ref, metadata)
-           VALUES ($1, $2, $3, 'workspace_customer_payment', $4, now(), now() + ($5 || ' months')::interval, 'active', $6, $7::jsonb)`,
-          [
-            crypto.randomUUID(),
-            workspaceId,
-            environmentId,
-            seatCount,
-            String(durationMonths),
-            invoice.id,
-            JSON.stringify({
-              event_id: event.id,
-              invoice_id: invoice.id,
-              subscription_id: subscriptionId,
-              workspace_customer_id: metadata.workspace_customer_id ?? null,
-              pricing_id: metadata.pricing_id ?? null,
-              billing_mode: metadata.billing_mode ?? null,
-            }),
-          ]
-        );
+    const seatCount = toPositiveInt(metadata.seat_count, 1);
+    const durationMonths = toPositiveInt(metadata.duration_months, 1);
+    if (!await environmentBelongsToWorkspace(client, environmentId, workspaceId)) {
+      return terminalResult({ ignored: 'environment is not in workspace scope' });
+    }
 
-        await client.query(
-          `UPDATE workspace_billing_events
-           SET processed_at = now()
-           WHERE source = 'workspace_stripe' AND event_id = $1`,
-          [event.id]
-        );
-        return true;
-      });
+    await client.query(
+      `INSERT INTO environment_entitlements
+         (id, workspace_id, environment_id, source, seat_count, starts_at, ends_at, status, external_ref, metadata)
+       VALUES ($1, $2, $3, 'workspace_customer_payment', $4, now(), now() + ($5 || ' months')::interval, 'active', $6, $7::jsonb)`,
+      [
+        crypto.randomUUID(),
+        workspaceId,
+        environmentId,
+        seatCount,
+        String(durationMonths),
+        invoice.id,
+        JSON.stringify({
+          event_id: event.id,
+          invoice_id: invoice.id,
+          subscription_id: subscriptionId,
+          workspace_customer_id: metadata.workspace_customer_id ?? null,
+          pricing_id: metadata.pricing_id ?? null,
+          billing_mode: metadata.billing_mode ?? null,
+        }),
+      ]
+    );
 
-      if (!granted) {
-        return jsonResponse({ received: true, ignored: 'environment is not in workspace scope' });
-      }
-
+    return terminalResult({}, async () => {
       await logAudit({
         workspace_id: workspaceId,
         environment_id: environmentId,
@@ -291,27 +274,23 @@ export default async function handler(request: Request, _context: Context) {
         },
         includeEnvironmentCustomer: true,
       });
-    } else if (event.type === 'invoice.payment_failed') {
-      const invoice = event.data.object as Stripe.Invoice;
-      const subscriptionId = typeof invoice.subscription === 'string'
-        ? invoice.subscription
-        : invoice.subscription?.id;
-      if (!subscriptionId) {
-        await markWorkspaceEventProcessed(workspaceId, event.id);
-        return jsonResponse({ received: true, ignored: 'missing subscription on invoice' });
-      }
+    });
+  }
 
-      const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-      const metadata = subscription.metadata ?? {};
-      const environmentId = metadata.environment_id ?? null;
+  if (event.type === 'invoice.payment_failed') {
+    const invoice = event.data.object as Stripe.Invoice;
+    const subscriptionId = typeof invoice.subscription === 'string'
+      ? invoice.subscription
+      : invoice.subscription?.id;
+    if (!subscriptionId) {
+      return terminalResult({ ignored: 'missing subscription on invoice' });
+    }
 
-      await markWorkspaceEventProcessed(workspaceId, event.id);
+    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+    const environmentId = subscription.metadata?.environment_id ?? null;
+    return terminalResult({}, async () => {
       const names = await getWorkspaceScopeNames(workspaceId, environmentId);
-      const { subject, html } = buildPaymentFailedEmail(
-        names,
-        invoice.id ?? null,
-        subscriptionId
-      );
+      const { subject, html } = buildPaymentFailedEmail(names, invoice.id ?? null, subscriptionId);
       await queueAndSendBillingEmail({
         workspaceId,
         environmentId,
@@ -326,21 +305,27 @@ export default async function handler(request: Request, _context: Context) {
         },
         includeEnvironmentCustomer: Boolean(environmentId),
       });
-    } else {
-      await transaction(async (client) => {
-        await client.query(
-          `UPDATE workspace_billing_events
-           SET processed_at = now()
-           WHERE source = 'workspace_stripe' AND event_id = $1`,
-          [event.id]
-        );
-      });
-    }
-
-    return jsonResponse({ received: true });
-  } catch (err) {
-    if (err instanceof Response) return err;
-    console.error('workspace-billing-webhook error:', err);
-    return errorResponse('Internal server error', 500);
+    });
   }
+
+  return terminalResult();
+}
+
+async function environmentBelongsToWorkspace(
+  client: WorkspaceEventClient,
+  environmentId: string,
+  workspaceId: string
+): Promise<boolean> {
+  const result = await client.query<{ workspace_id: string }>(
+    `SELECT workspace_id FROM environments WHERE id = $1`,
+    [environmentId]
+  );
+  return result.rows[0]?.workspace_id === workspaceId;
+}
+
+function terminalResult(
+  response: Record<string, string> = {},
+  afterCommit: AfterCommit | null = null
+): WorkspaceEventResult {
+  return { response, afterCommit };
 }

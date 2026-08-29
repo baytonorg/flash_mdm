@@ -1,4 +1,4 @@
-class ApiError extends Error {
+export class ApiError extends Error {
   status: number;
   data: unknown;
   constructor(message: string, status: number, data?: unknown) {
@@ -77,8 +77,8 @@ class ApiClient {
     return response.json() as Promise<T>;
   }
 
-  get<T>(path: string): Promise<T> {
-    return this.request<T>(path);
+  get<T>(path: string, options: Pick<RequestInit, 'signal'> = {}): Promise<T> {
+    return this.request<T>(path, options);
   }
 
   post<T>(path: string, body?: unknown): Promise<T> {

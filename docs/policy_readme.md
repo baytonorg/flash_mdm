@@ -209,7 +209,7 @@ There is a fallback query if `policy_derivatives` does not exist yet (pre-migrat
 
 ## How to extend the derivative stack safely
 
-### If adding a new scoped overlay type (e.g. certificates, restrictions, scripts)
+### If adding a new scoped overlay type (e.g. restrictions or scripts)
 
 1. Add storage table for deployments/overrides
 2. Add overlay application logic in `policy-generation.ts`
@@ -218,6 +218,8 @@ There is a fallback query if `policy_derivatives` does not exist yet (pre-migrat
    - merge
    - remove/tombstone
 4. Trigger `syncPolicyDerivativesForPolicy(...)` from the write path
+
+Wi-Fi trusted CAs are not an independent scoped overlay. They are environment-owned public assets selected by scoped Wi-Fi deployments. The policy generator resolves each `ServerCARefs` GUID and embeds its X.509 material in the same ONC document. Deletion is blocked while a network deployment still references the CA.
 
 ### If extending variable interpolation
 

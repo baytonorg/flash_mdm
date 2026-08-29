@@ -23,11 +23,17 @@ interface AmapiEnrollmentToken {
   name: string;
   value?: string;
   qrCode?: string;
+  expirationTimestamp?: string;
   oneTimeOnly?: boolean;
   allowPersonalUsage?: string;
 }
 
 const SENSITIVE_KEY_PATTERN = /(password|certificate|private[_-]?key|secret|token|credential)/i;
+const ZERO_TOUCH_ENROLLMENT_TOKEN_DURATION = '315576000000s';
+const ANDROID_DEVICE_POLICY_DPC_ID = 'com.google.android.apps.work.clouddpc';
+const ANDROID_DEVICE_POLICY_COMPONENT = `${ANDROID_DEVICE_POLICY_DPC_ID}/.receivers.CloudDeviceAdminReceiver`;
+const ANDROID_DEVICE_POLICY_SIGNATURE_CHECKSUM = 'I5YvS0O5hXY46mb01BlRjq4oJJGs2kuUcHvVkAPEXlg';
+const ENROLLMENT_TOKEN_EXTRA = `${ANDROID_DEVICE_POLICY_DPC_ID}.EXTRA_ENROLLMENT_TOKEN`;
 
 function ensureNonSensitiveExtras(extras: Record<string, unknown>): string | null {
   for (const [key, value] of Object.entries(extras)) {
@@ -39,6 +45,31 @@ function ensureNonSensitiveExtras(extras: Record<string, unknown>): string | nul
     }
   }
   return null;
+}
+
+function buildAndroidDevicePolicyDpcExtras(
+  enrollmentTokenValue: string,
+  provisioningExtras: ProvisioningExtrasInput | null,
+  customExtras: Record<string, unknown>
+): Record<string, unknown> {
+  const payload: Record<string, unknown> = { ...customExtras };
+  const syntheticQr = applyProvisioningExtrasToQrPayload('{}', provisioningExtras);
+
+  if (syntheticQr) {
+    const parsed = JSON.parse(syntheticQr) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      Object.assign(payload, parsed);
+    }
+  }
+
+  // These documented ADP values are authoritative and cannot be overridden by custom extras.
+  payload['android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME'] = ANDROID_DEVICE_POLICY_COMPONENT;
+  payload['android.app.extra.PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM'] = ANDROID_DEVICE_POLICY_SIGNATURE_CHECKSUM;
+  payload['android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE'] = {
+    [ENROLLMENT_TOKEN_EXTRA]: enrollmentTokenValue,
+  };
+
+  return payload;
 }
 
 async function getEnvironmentContext(environmentId: string) {
@@ -54,6 +85,19 @@ async function getEnvironmentContext(environmentId: string) {
      JOIN workspaces w ON w.id = e.workspace_id
      WHERE e.id = $1`,
     [environmentId]
+  );
+}
+
+async function getActiveReusableEnrollmentToken(tokenId: string, environmentId: string) {
+  return queryOne<{ id: string; amapi_value: string; group_id: string | null }>(
+    `SELECT id, amapi_value, group_id
+     FROM enrollment_tokens
+     WHERE id = $1 AND environment_id = $2
+       AND one_time_use = false
+       AND amapi_value IS NOT NULL
+       AND expires_at IS NOT NULL
+       AND expires_at > now()`,
+    [tokenId, environmentId]
   );
 }
 
@@ -80,11 +124,11 @@ async function createEnrollmentTokenForZeroTouch(opts: {
     if (!group) throw new Error('Group not found in this environment');
   }
 
-  const expirationTimestamp: string | null = null;
   const allowPersonalUsage = normalizeAllowPersonalUsage(opts.allowPersonalUsage);
 
   const amapiBody: Record<string, unknown> = {
     oneTimeOnly: false,
+    duration: ZERO_TOUCH_ENROLLMENT_TOKEN_DURATION,
   };
   // AMAPI rejects PERSONAL_USAGE_UNSPECIFIED when explicitly provided; omit the field for default behavior.
   if (allowPersonalUsage !== 'PERSONAL_USAGE_UNSPECIFIED') {
@@ -106,6 +150,11 @@ async function createEnrollmentTokenForZeroTouch(opts: {
       resourceType: 'general',
     }
   );
+
+  if (!amapiToken.expirationTimestamp || Number.isNaN(Date.parse(amapiToken.expirationTimestamp))) {
+    throw new Error('AMAPI did not return a valid enrollment token expiration timestamp');
+  }
+  const expirationTimestamp = amapiToken.expirationTimestamp;
 
   const mergedQrData = applyProvisioningExtrasToQrPayload(amapiToken.qrCode || null, opts.provisioningExtras ?? null);
   const tokenId = randomUUID();
@@ -139,7 +188,7 @@ async function createEnrollmentTokenForZeroTouch(opts: {
     details: {
       group_id: normalizedGroupId,
       one_time_use: false,
-      expiry_days: null,
+      expiration_timestamp: expirationTimestamp,
     },
     ip_address: getClientIp(opts.request),
   });
@@ -188,7 +237,10 @@ export default async (request: Request, _context: Context) => {
          FROM enrollment_tokens et
          LEFT JOIN groups g ON g.id = et.group_id
          WHERE et.environment_id = $1
-           AND (et.expires_at IS NULL OR et.expires_at > now())
+           AND et.one_time_use = false
+           AND et.amapi_value IS NOT NULL
+           AND et.expires_at IS NOT NULL
+           AND et.expires_at > now()
          ORDER BY et.created_at DESC`,
         [environmentId]
       );
@@ -231,6 +283,14 @@ export default async (request: Request, _context: Context) => {
     await requireEnvironmentResourcePermission(auth, body.environment_id, 'environment', 'manage_settings');
 
     if (body.action === 'create_iframe_token') {
+      if (!body.token_id) return errorResponse('token_id is required', 400);
+
+      const existingToken = await getActiveReusableEnrollmentToken(body.token_id, body.environment_id);
+      if (!existingToken) {
+        return errorResponse('Enrollment token not found, expired, or unsuitable for zero-touch', 404);
+      }
+
+      const dpcExtras = buildAndroidDevicePolicyDpcExtras(existingToken.amapi_value, null, {});
       const webToken = await amapiCall<{ value: string }>(
         `${env.enterprise_name}/webTokens`,
         env.workspace_id,
@@ -252,12 +312,21 @@ export default async (request: Request, _context: Context) => {
         action: 'environment.zero.touch.iframe.token.created',
         resource_type: 'environment',
         resource_id: body.environment_id,
+        details: {
+          token_id: existingToken.id,
+          group_id: existingToken.group_id,
+        },
         ip_address: getClientIp(request),
       });
 
+      const iframeUrl = new URL('https://enterprise.google.com/android/zero-touch/embedded/companyhome');
+      iframeUrl.searchParams.set('token', webToken.value);
+      iframeUrl.searchParams.set('dpcId', ANDROID_DEVICE_POLICY_DPC_ID);
+      iframeUrl.searchParams.set('dpcExtras', JSON.stringify(dpcExtras));
+
       return jsonResponse({
         iframe_token: webToken.value,
-        iframe_url: `https://enterprise.google.com/android/zero-touch/embedded/companyhome?token=${encodeURIComponent(webToken.value)}&dpcId=com.google.android.apps.work.clouddpc`,
+        iframe_url: iframeUrl.toString(),
       });
     }
 
@@ -286,14 +355,10 @@ export default async (request: Request, _context: Context) => {
       let createdTokenId: string | null = null;
 
       if (body.token_id) {
-        const existingToken = await queryOne<{ id: string; amapi_value: string | null; group_id: string | null }>(
-          `SELECT id, amapi_value, group_id
-           FROM enrollment_tokens
-           WHERE id = $1 AND environment_id = $2
-             AND (expires_at IS NULL OR expires_at > now())`,
-          [body.token_id, body.environment_id]
-        );
-        if (!existingToken) return errorResponse('Enrollment token not found or expired', 404);
+        const existingToken = await getActiveReusableEnrollmentToken(body.token_id, body.environment_id);
+        if (!existingToken) {
+          return errorResponse('Enrollment token not found, expired, or unsuitable for zero-touch', 404);
+        }
         enrollmentTokenValue = existingToken.amapi_value;
         resolvedGroupId = existingToken.group_id;
       } else {
@@ -319,25 +384,9 @@ export default async (request: Request, _context: Context) => {
         : {};
       const sensitiveError = ensureNonSensitiveExtras(customExtras);
       if (sensitiveError) return errorResponse(sensitiveError, 400);
+      if (!enrollmentTokenValue) return errorResponse('Enrollment token value is unavailable', 409);
 
-      const payload: Record<string, unknown> = {
-        ...customExtras,
-      };
-
-      if (enrollmentTokenValue) {
-        payload['android.app.extra.PROVISIONING_ENROLLMENT_TOKEN'] = enrollmentTokenValue;
-      }
-
-      if (extras) {
-        const syntheticQr = applyProvisioningExtrasToQrPayload('{}', extras);
-        if (syntheticQr) {
-          try {
-            Object.assign(payload, JSON.parse(syntheticQr));
-          } catch {
-            // Ignore malformed synthetic payload.
-          }
-        }
-      }
+      const payload = buildAndroidDevicePolicyDpcExtras(enrollmentTokenValue, extras, customExtras);
 
       await logAudit({
         environment_id: body.environment_id,

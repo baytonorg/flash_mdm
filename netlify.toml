@@ -64,6 +64,11 @@
   from = "/api/auth/session"
   to = "/.netlify/functions/auth-session"
   status = 200
+
+[[redirects]]
+  from = "/api/auth/profile"
+  to = "/.netlify/functions/auth-profile"
+  status = 200
 [[redirects]]
   from = "/api/auth/magic-link-start"
   to = "/.netlify/functions/auth-magic-link-start"

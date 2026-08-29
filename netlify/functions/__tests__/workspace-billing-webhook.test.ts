@@ -56,6 +56,17 @@ import handler from '../workspace-billing-webhook.ts';
 
 const WORKSPACE_ID = '123e4567-e89b-12d3-a456-426614174000';
 
+function makeWorkspaceWebhookRequest(body: string): Request {
+  return new Request(`http://localhost/api/workspace-billing/webhook?workspace_id=${WORKSPACE_ID}`, {
+    method: 'POST',
+    headers: {
+      'stripe-signature': 'sig_test',
+      'content-type': 'application/json',
+    },
+    body,
+  });
+}
+
 beforeEach(() => {
   mockClientQuery.mockReset();
   mockTransaction.mockReset();
@@ -159,6 +170,169 @@ describe('workspace-billing-webhook', () => {
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ received: true, duplicate: true });
     expect(mockLogAudit).not.toHaveBeenCalled();
+  });
+
+  it('claims, grants, and completes an event in one transaction', async () => {
+    mockConstructEvent.mockReturnValue({
+      id: 'evt_atomic_workspace',
+      type: 'checkout.session.completed',
+      data: {
+        object: {
+          id: 'cs_atomic_workspace',
+          metadata: {
+            workspace_id: WORKSPACE_ID,
+            environment_id: '223e4567-e89b-12d3-a456-426614174000',
+          },
+        },
+      },
+    });
+    mockClientQuery
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'billing_event_1' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ workspace_id: WORKSPACE_ID }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] });
+
+    const res = await handler(
+      makeWorkspaceWebhookRequest('{"id":"evt_atomic_workspace"}'),
+      {} as never
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockTransaction).toHaveBeenCalledOnce();
+    const sql = mockClientQuery.mock.calls.map(([statement]) => String(statement));
+    expect(sql[0]).toContain('ON CONFLICT (source, event_id) DO UPDATE');
+    expect(sql[0]).toContain('WHERE workspace_billing_events.processed_at IS NULL');
+    expect(sql[0]).toContain('RETURNING id');
+    expect(sql[2]).toContain('INSERT INTO environment_entitlements');
+    expect(sql[3]).toContain('SET processed_at = now()');
+  });
+
+  it('retries the same checkout event after entitlement processing fails', async () => {
+    mockConstructEvent.mockReturnValue({
+      id: 'evt_workspace_retry',
+      type: 'checkout.session.completed',
+      data: {
+        object: {
+          id: 'cs_workspace_retry',
+          metadata: {
+            workspace_id: WORKSPACE_ID,
+            environment_id: '223e4567-e89b-12d3-a456-426614174000',
+          },
+        },
+      },
+    });
+    mockClientQuery
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'billing_event_1' }] })
+      .mockRejectedValueOnce(new Error('temporary entitlement failure'))
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'billing_event_1' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ workspace_id: WORKSPACE_ID }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] });
+
+    const failed = await handler(
+      makeWorkspaceWebhookRequest('{"id":"evt_workspace_retry"}'),
+      {} as never
+    );
+    const retried = await handler(
+      makeWorkspaceWebhookRequest('{"id":"evt_workspace_retry"}'),
+      {} as never
+    );
+
+    expect(failed.status).toBe(500);
+    expect(retried.status).toBe(200);
+    const sql = mockClientQuery.mock.calls.map(([statement]) => String(statement));
+    expect(sql.filter((statement) => statement.includes('INSERT INTO workspace_billing_events'))).toHaveLength(2);
+    expect(sql.filter((statement) => statement.includes('INSERT INTO environment_entitlements'))).toHaveLength(1);
+    expect(sql.filter((statement) => statement.includes('SET processed_at = now()'))).toHaveLength(1);
+  });
+
+  it('retries invoice.paid after Stripe subscription lookup fails', async () => {
+    mockConstructEvent.mockReturnValue({
+      id: 'evt_workspace_invoice_retry',
+      type: 'invoice.paid',
+      data: {
+        object: {
+          id: 'in_workspace_retry',
+          subscription: 'sub_workspace_retry',
+          parent: {
+            subscription_details: { metadata: { workspace_id: WORKSPACE_ID } },
+          },
+        },
+      },
+    });
+    mockSubscriptionsRetrieve
+      .mockRejectedValueOnce(new Error('temporary Stripe failure'))
+      .mockResolvedValueOnce({
+        metadata: {
+          environment_id: '223e4567-e89b-12d3-a456-426614174000',
+          seat_count: '4',
+          duration_months: '1',
+        },
+      });
+    mockClientQuery
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'billing_event_1' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'billing_event_1' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ workspace_id: WORKSPACE_ID }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] });
+
+    const failed = await handler(
+      makeWorkspaceWebhookRequest('{"id":"evt_workspace_invoice_retry"}'),
+      {} as never
+    );
+    const retried = await handler(
+      makeWorkspaceWebhookRequest('{"id":"evt_workspace_invoice_retry"}'),
+      {} as never
+    );
+
+    expect(failed.status).toBe(500);
+    expect(retried.status).toBe(200);
+    expect(mockSubscriptionsRetrieve).toHaveBeenCalledTimes(2);
+    expect(
+      mockClientQuery.mock.calls.filter(([sql]) => String(sql).includes('INSERT INTO environment_entitlements'))
+    ).toHaveLength(1);
+  });
+
+  it('acknowledges committed billing state when post-commit notification fails', async () => {
+    mockConstructEvent.mockReturnValue({
+      id: 'evt_workspace_post_commit',
+      type: 'invoice.paid',
+      data: {
+        object: {
+          id: 'in_workspace_post_commit',
+          subscription: 'sub_workspace_post_commit',
+          parent: {
+            subscription_details: { metadata: { workspace_id: WORKSPACE_ID } },
+          },
+        },
+      },
+    });
+    mockSubscriptionsRetrieve.mockResolvedValueOnce({
+      metadata: {
+        environment_id: '223e4567-e89b-12d3-a456-426614174000',
+        seat_count: '3',
+        duration_months: '1',
+      },
+    });
+    mockGetWorkspaceScopeNames.mockRejectedValueOnce(new Error('temporary notification failure'));
+    mockClientQuery
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'billing_event_1' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ workspace_id: WORKSPACE_ID }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] });
+
+    const res = await handler(
+      makeWorkspaceWebhookRequest('{"id":"evt_workspace_post_commit"}'),
+      {} as never
+    );
+
+    expect(res.status).toBe(200);
+    expect(
+      mockClientQuery.mock.calls.filter(([sql]) => String(sql).includes('INSERT INTO environment_entitlements'))
+    ).toHaveLength(1);
+    expect(
+      mockClientQuery.mock.calls.filter(([sql]) => String(sql).includes('SET processed_at = now()'))
+    ).toHaveLength(1);
   });
 
   it('creates environment entitlement on checkout.session.completed', async () => {

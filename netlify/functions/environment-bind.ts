@@ -1,5 +1,5 @@
 import type { Context } from '@netlify/functions';
-import { query, queryOne, execute } from './_lib/db.js';
+import { query, queryOne, execute, transaction } from './_lib/db.js';
 import { requireAuth } from './_lib/auth.js';
 import { requireEnvironmentResourcePermission } from './_lib/rbac.js';
 import { amapiCall, getAmapiErrorHttpStatus } from './_lib/amapi.js';
@@ -7,7 +7,12 @@ import { logAudit } from './_lib/audit.js';
 import { jsonResponse, errorResponse, parseJsonBody, getClientIp } from './_lib/helpers.js';
 import { BRAND } from './_lib/brand.js';
 import { syncPolicyDerivativesForPolicy } from './_lib/policy-derivatives.js';
+import { preparePolicyBaseForDerivativeGeneration } from './_lib/policy-merge.js';
 import { syncSigninDetailsToAmapi } from './signin-config.js';
+import {
+  resolveAmapiDeviceImei,
+  type AmapiTelephonyInfo,
+} from './_lib/amapi-device-network.js';
 
 const BOOTSTRAP_DEVICE_PAGE_SIZE = 100;
 const BOOTSTRAP_DEVICE_MAX = 500; // keep attach requests bounded; full reconcile can catch up later
@@ -29,9 +34,7 @@ interface AmapiBootstrapDevice {
     telephonyInfo?: Array<{
       imei?: string;
     }>;
-    telephonyInfos?: Array<{
-      imei?: string;
-    }>;
+    telephonyInfos?: AmapiTelephonyInfo[];
   };
   state?: string;
   ownership?: string;
@@ -56,7 +59,7 @@ interface AmapiBootstrapDeviceListResponse {
  * Step 2: POST /api/environments/bind with { environment_id, enterprise_token }
  *   -> POST enterprises?projectId=...&signupUrlName=...&enterpriseToken=... -> creates enterprise
  */
-export default async (request: Request, context: Context) => {
+export default async (request: Request, _context: Context) => {
   if (request.method !== 'POST') {
     return errorResponse('Method not allowed', 405);
   }
@@ -514,9 +517,9 @@ async function pushAllPoliciesToAmapi(input: {
   let failed = 0;
   for (const policy of policies) {
     try {
-      // Strip deployment-managed fields — the generator re-applies them from DB
+      // Strip deployment-managed fields; preserve authored connectivity controls.
       const raw = (policy.config ?? {}) as Record<string, unknown>;
-      const { openNetworkConfiguration: _onc, deviceConnectivityManagement: _dcm, applications: _apps, ...cleanBase } = raw;
+      const cleanBase = preparePolicyBaseForDerivativeGeneration(raw);
 
       await syncPolicyDerivativesForPolicy({
         policyId: policy.id,
@@ -580,11 +583,7 @@ async function bootstrapDevicesForAttachedEnterprise(input: {
       const hardwareInfo = device.hardwareInfo ?? {};
       const softwareInfo = device.softwareInfo ?? {};
       const networkInfo = device.networkInfo ?? {};
-      const normalizedImei =
-        networkInfo.imei ??
-        networkInfo.telephonyInfos?.[0]?.imei ??
-        networkInfo.telephonyInfo?.[0]?.imei ??
-        null;
+      const normalizedImei = resolveAmapiDeviceImei(networkInfo);
 
       await execute(
         `INSERT INTO devices (
@@ -642,6 +641,24 @@ async function bootstrapDevicesForAttachedEnterprise(input: {
     }
   } while (pageToken);
 
+  // Assign ungrouped devices to the environment's root group so they are
+  // visible when the UI auto-selects the only group.
+  if (importedDevices > 0) {
+    const rootGroup = await queryOne<{ id: string }>(
+      `SELECT id FROM groups
+       WHERE environment_id = $1 AND parent_group_id IS NULL
+       ORDER BY created_at ASC LIMIT 1`,
+      [input.environmentId]
+    );
+    if (rootGroup) {
+      await execute(
+        `UPDATE devices SET group_id = $1, updated_at = now()
+         WHERE environment_id = $2 AND group_id IS NULL AND deleted_at IS NULL`,
+        [rootGroup.id, input.environmentId]
+      );
+    }
+  }
+
   return { imported_devices: importedDevices, truncated };
 }
 
@@ -651,47 +668,41 @@ async function bootstrapDevicesForAttachedEnterprise(input: {
  * can be rebound to a new enterprise cleanly.
  */
 async function cleanupEnterpriseReferences(environmentId: string): Promise<void> {
-  // 1. Clear environment enterprise reference
-  await execute(
-    `UPDATE environments
-     SET enterprise_name = NULL, enterprise_display_name = NULL,
-         signup_url_name = NULL, updated_at = now()
-     WHERE id = $1`,
-    [environmentId]
-  );
+  await transaction(async (client) => {
+    await client.query(
+      `UPDATE environments
+       SET enterprise_name = NULL, enterprise_display_name = NULL,
+           signup_url_name = NULL, updated_at = now()
+       WHERE id = $1`,
+      [environmentId]
+    );
 
-  // 2. Reset all policies to draft, clear AMAPI names
-  await execute(
-    `UPDATE policies SET amapi_name = NULL, status = 'draft', updated_at = now()
-     WHERE environment_id = $1`,
-    [environmentId]
-  );
+    await client.query(
+      `UPDATE policies SET amapi_name = NULL, status = 'draft', updated_at = now()
+       WHERE environment_id = $1`,
+      [environmentId]
+    );
 
-  // 3. Delete all policy derivatives (they reference old enterprise)
-  await execute(
-    'DELETE FROM policy_derivatives WHERE environment_id = $1',
-    [environmentId]
-  );
+    // Derivatives belong to the old enterprise. Assignment rows are local intent
+    // and must survive so rebinding can recreate the same topology.
+    await client.query(
+      'DELETE FROM policy_derivatives WHERE environment_id = $1',
+      [environmentId]
+    );
 
-  // 3b. Clear policy_assignments that reference policies in this environment
-  await execute(
-    `DELETE FROM policy_assignments
-     WHERE policy_id IN (SELECT id FROM policies WHERE environment_id = $1)`,
-    [environmentId]
-  );
+    await client.query(
+      `UPDATE enrollment_tokens
+       SET amapi_name = NULL, amapi_value = NULL, qr_data = NULL, updated_at = now()
+       WHERE environment_id = $1`,
+      [environmentId]
+    );
 
-  // 4. Invalidate enrollment tokens (AMAPI refs no longer valid)
-  await execute(
-    `UPDATE enrollment_tokens
-     SET amapi_name = NULL, amapi_value = NULL, qr_data = NULL, updated_at = now()
-     WHERE environment_id = $1`,
-    [environmentId]
-  );
-
-  // 5. Clear device policy sync state
-  await execute(
-    `UPDATE devices SET last_policy_sync_name = NULL, policy_id = NULL, updated_at = now()
-     WHERE environment_id = $1`,
-    [environmentId]
-  );
+    // Keep policy_id as the legacy direct-assignment fallback. Only the remote
+    // synchronization marker is invalid after detaching the enterprise.
+    await client.query(
+      `UPDATE devices SET last_policy_sync_name = NULL, updated_at = now()
+       WHERE environment_id = $1`,
+      [environmentId]
+    );
+  });
 }

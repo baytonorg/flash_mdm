@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useContextStore } from '@/stores/context';
 import { useAuditLog, type AuditEntry } from '@/api/queries/audit';
 import DataTable, { type ColumnDef } from '@/components/common/DataTable';
@@ -66,17 +66,12 @@ export default function AuditLog() {
     environment_id: environmentId,
     page,
     per_page: perPage,
+    action: actionFilter || undefined,
   });
 
   const entries = data?.entries ?? [];
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / perPage));
-
-  // Client-side filter on action type (API might not support it)
-  const filteredEntries = useMemo(() => {
-    if (!actionFilter) return entries;
-    return entries.filter((entry) => entry.action === actionFilter);
-  }, [entries, actionFilter]);
 
   const columns: ColumnDef<AuditEntry>[] = [
     {
@@ -172,7 +167,7 @@ export default function AuditLog() {
 
       <DataTable<AuditEntry>
         columns={columns}
-        data={filteredEntries}
+        data={entries}
         loading={isLoading}
         emptyMessage="No audit entries found."
       />
@@ -189,7 +184,7 @@ export default function AuditLog() {
               setPerPage(pp);
               setPage(1);
             }}
-            total={actionFilter ? filteredEntries.length : total}
+            total={total}
           />
         </div>
       )}

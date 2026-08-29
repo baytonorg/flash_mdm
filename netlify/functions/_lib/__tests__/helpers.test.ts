@@ -6,6 +6,7 @@ import {
   parseJsonBody,
   getSearchParams,
   assertSameOriginRequest,
+  getPublicOrigin,
   isValidUuid,
 } from '../helpers.js';
 
@@ -74,6 +75,36 @@ describe('errorResponse', () => {
   it('has application/json content-type', () => {
     const res = errorResponse('err');
     expect(res.headers.get('Content-Type')).toBe('application/json');
+  });
+});
+
+describe('getPublicOrigin', () => {
+  it('uses the configured deployment URL behind an internal reverse proxy', () => {
+    const previous = process.env.URL;
+    const previousRuntime = process.env.FLASH_RUNTIME;
+    process.env.URL = 'https://flash.example.test/some/path';
+    process.env.FLASH_RUNTIME = 'vps';
+    try {
+      expect(getPublicOrigin(new Request('http://localhost:3000/api/test'))).toBe('https://flash.example.test');
+    } finally {
+      if (previous === undefined) delete process.env.URL;
+      else process.env.URL = previous;
+      if (previousRuntime === undefined) delete process.env.FLASH_RUNTIME;
+      else process.env.FLASH_RUNTIME = previousRuntime;
+    }
+  });
+
+  it('falls back to the request origin for Netlify-compatible local development', () => {
+    const previous = process.env.URL;
+    const previousRuntime = process.env.FLASH_RUNTIME;
+    delete process.env.URL;
+    delete process.env.FLASH_RUNTIME;
+    try {
+      expect(getPublicOrigin(new Request('http://localhost:8888/api/test'))).toBe('http://localhost:8888');
+    } finally {
+      if (previous !== undefined) process.env.URL = previous;
+      if (previousRuntime !== undefined) process.env.FLASH_RUNTIME = previousRuntime;
+    }
   });
 });
 

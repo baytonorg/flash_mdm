@@ -59,7 +59,7 @@ describe('app-feedback', () => {
       feedback_key: 'policy_state',
       severity: 'ERROR',
       message: 'Failed',
-      data_json: {},
+      data_json: '{"reason":"policy rejected"}',
       first_reported_at: '2026-03-01T00:00:00.000Z',
       last_reported_at: '2026-03-02T00:00:00.000Z',
       last_update_time: '2026-03-02T00:00:00.000Z',

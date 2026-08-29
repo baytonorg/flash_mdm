@@ -48,24 +48,33 @@ vi.mock('../_lib/webhook-ssrf.js', async (importOriginal) => {
 
 import { requireInternalCaller } from '../_lib/internal-auth.js';
 import { queryOne, execute } from '../_lib/db.js';
+import { amapiCall } from '../_lib/amapi.js';
+import { buildAmapiCommandPayload } from '../_lib/amapi-command.js';
 import { logAudit } from '../_lib/audit.js';
 import { sendEmail } from '../_lib/resend.js';
+import { assignPolicyToDeviceWithDerivative } from '../_lib/policy-derivatives.js';
 import { validateResolvedWebhookUrlForOutbound } from '../_lib/webhook-ssrf.js';
 import handler from '../workflow-evaluate-background.ts';
 
 const mockRequireInternalCaller = vi.mocked(requireInternalCaller);
 const mockQueryOne = vi.mocked(queryOne);
 const mockExecute = vi.mocked(execute);
+const mockAmapiCall = vi.mocked(amapiCall);
+const mockBuildAmapiCommandPayload = vi.mocked(buildAmapiCommandPayload);
 const mockLogAudit = vi.mocked(logAudit);
 const mockSendEmail = vi.mocked(sendEmail);
+const mockAssignPolicyToDeviceWithDerivative = vi.mocked(assignPolicyToDeviceWithDerivative);
 const mockValidateResolvedWebhookUrlForOutbound = vi.mocked(validateResolvedWebhookUrlForOutbound);
 
 beforeEach(() => {
   mockRequireInternalCaller.mockReset();
   mockQueryOne.mockReset();
   mockExecute.mockReset();
+  mockAmapiCall.mockReset();
+  mockBuildAmapiCommandPayload.mockReset();
   mockLogAudit.mockReset();
   mockSendEmail.mockReset();
+  mockAssignPolicyToDeviceWithDerivative.mockReset();
   mockValidateResolvedWebhookUrlForOutbound.mockReset();
 
   mockExecute.mockResolvedValue({ rowCount: 1 });
@@ -73,6 +82,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -384,5 +394,126 @@ describe('workflow-evaluate-background — security', () => {
     );
 
     consoleLogSpy.mockRestore();
+  });
+
+  it('records non-2xx webhook responses as failed executions', async () => {
+    mockRequireInternalCaller.mockImplementation(() => {});
+    mockValidateResolvedWebhookUrlForOutbound.mockResolvedValue({
+      ok: true,
+      url: 'https://hooks.example.com/inbound',
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('failed', { status: 503 })));
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    mockQueryOne
+      .mockResolvedValueOnce({
+        id: 'wf1', environment_id: 'env1', name: 'Webhook Workflow', enabled: true,
+        trigger_type: 'device.state_changed', trigger_config: {}, conditions: [],
+        action_type: 'notification.webhook',
+        action_config: { url: 'https://hooks.example.com/inbound' },
+        scope_type: 'environment', scope_id: null,
+      } as never)
+      .mockResolvedValueOnce({
+        id: 'dev1', environment_id: 'env1', amapi_name: 'enterprises/test/devices/dev1',
+        serial_number: 'SN123', manufacturer: 'Google', model: 'Pixel', os_version: '14',
+        state: 'ACTIVE', ownership: 'COMPANY_OWNED', policy_compliant: true,
+        group_id: null, snapshot: null,
+      } as never)
+      .mockResolvedValueOnce({
+        workspace_id: 'ws1', enterprise_name: 'enterprises/test', gcp_project_id: 'proj-1',
+      } as never);
+
+    await handler(makeRequest({ workflow_id: 'wf1', device_id: 'dev1' }), {} as never);
+
+    const statusUpdate = mockExecute.mock.calls.find(([sql, params]) =>
+      String(sql).includes('UPDATE workflow_executions SET status = $2') && params?.[1] === 'failed'
+    );
+    expect(statusUpdate).toBeDefined();
+    expect(JSON.parse(String(statusUpdate?.[1]?.[2]))).toMatchObject({
+      success: false,
+      status: 503,
+      error: 'Webhook returned HTTP 503',
+    });
+    expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'workflow.execution.failed',
+    }));
+  });
+
+  it('does not commit local policy state when AMAPI assignment fails', async () => {
+    mockRequireInternalCaller.mockImplementation(() => {});
+    mockAssignPolicyToDeviceWithDerivative.mockRejectedValue(new Error('AMAPI unavailable'));
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    mockQueryOne
+      .mockResolvedValueOnce({
+        id: 'wf1', environment_id: 'env1', name: 'Assign Policy', enabled: true,
+        trigger_type: 'device.state_changed', trigger_config: {}, conditions: [],
+        action_type: 'device.assign_policy', action_config: { policy_id: 'policy-new' },
+        scope_type: 'environment', scope_id: null,
+      } as never)
+      .mockResolvedValueOnce({
+        id: 'dev1', environment_id: 'env1', amapi_name: 'enterprises/test/devices/dev1',
+        serial_number: 'SN123', manufacturer: 'Google', model: 'Pixel', os_version: '14',
+        state: 'ACTIVE', ownership: 'COMPANY_OWNED', policy_compliant: true,
+        group_id: null, snapshot: null,
+      } as never)
+      .mockResolvedValueOnce({
+        workspace_id: 'ws1', enterprise_name: 'enterprises/test', gcp_project_id: 'proj-1',
+      } as never);
+
+    await handler(makeRequest({ workflow_id: 'wf1', device_id: 'dev1' }), {} as never);
+
+    expect(mockExecute.mock.calls.some(([sql]) =>
+      String(sql).includes('UPDATE devices SET policy_id = $1')
+    )).toBe(false);
+    expect(mockExecute).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE workflow_executions SET status = $2'),
+      expect.arrayContaining(['failed'])
+    );
+    expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'workflow.execution.failed',
+    }));
+  });
+
+  it('rejects stale unknown workflow commands and records a failed execution without calling AMAPI', async () => {
+    mockRequireInternalCaller.mockImplementation(() => {});
+    mockBuildAmapiCommandPayload.mockImplementation(() => {
+      throw new Error('Unsupported command type: FUTURE_COMMAND');
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    mockQueryOne
+      .mockResolvedValueOnce({
+        id: 'wf1', environment_id: 'env1', name: 'Stale command', enabled: true,
+        trigger_type: 'device.state_changed', trigger_config: {}, conditions: [],
+        action_type: 'device.command',
+        action_config: { command_type: 'FUTURE_COMMAND', command_data: {} },
+        scope_type: 'environment', scope_id: null,
+      } as never)
+      .mockResolvedValueOnce({
+        id: 'dev1', environment_id: 'env1', amapi_name: 'enterprises/test/devices/dev1',
+        serial_number: 'SN123', manufacturer: 'Google', model: 'Pixel', os_version: '14',
+        state: 'ACTIVE', ownership: 'COMPANY_OWNED', policy_compliant: true,
+        group_id: null, snapshot: null,
+      } as never)
+      .mockResolvedValueOnce({
+        workspace_id: 'ws1', enterprise_name: 'enterprises/test', gcp_project_id: 'proj-1',
+      } as never);
+
+    await handler(makeRequest({ workflow_id: 'wf1', device_id: 'dev1' }), {} as never);
+
+    expect(mockBuildAmapiCommandPayload).toHaveBeenCalledWith('FUTURE_COMMAND', {});
+    expect(mockAmapiCall).not.toHaveBeenCalled();
+    const failedUpdate = mockExecute.mock.calls.find(([sql]) =>
+      String(sql).includes("UPDATE workflow_executions SET status = 'failed'")
+    );
+    expect(failedUpdate).toBeDefined();
+    expect(JSON.parse(String(failedUpdate?.[1]?.[1]))).toEqual({
+      error: 'Unsupported command type: FUTURE_COMMAND',
+    });
+    expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'workflow.execution.failed',
+    }));
   });
 });
