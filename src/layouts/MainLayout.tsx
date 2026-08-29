@@ -35,6 +35,23 @@ const navItems = [
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];
 
+function BrandMark({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className={`flex items-center ${compact ? 'justify-center' : 'gap-2.5'}`}>
+      <img
+        src="/favicon.svg"
+        alt="Flash logo"
+        className={compact ? 'h-7 w-7' : 'h-7 w-7 rounded-sm'}
+      />
+      {!compact && (
+        <span className="text-lg font-semibold text-gray-900">
+          {BRAND.shortName}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export default function MainLayout() {
   const { user, logout, fetchSession } = useAuthStore();
   const { fetchWorkspaces, activeWorkspace } = useContextStore();
@@ -126,21 +143,6 @@ export default function MainLayout() {
       setEndingImpersonation(false);
     }
   };
-
-  const BrandMark = ({ compact = false }: { compact?: boolean }) => (
-    <div className={`flex items-center ${compact ? 'justify-center' : 'gap-2.5'}`}>
-      <img
-        src="/favicon.svg"
-        alt="Flash logo"
-        className={compact ? 'h-7 w-7' : 'h-7 w-7 rounded-sm'}
-      />
-      {!compact && (
-        <span className="text-lg font-semibold text-gray-900">
-          {BRAND.shortName}
-        </span>
-      )}
-    </div>
-  );
 
   return (
     <div className="min-h-screen flex">

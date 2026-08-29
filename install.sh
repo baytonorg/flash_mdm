@@ -578,6 +578,11 @@ if [[ -n "${FLASH_RELEASE_REF:-}" ]]; then
 fi
 sudo chown -R "$INSTALL_USER:$INSTALL_GROUP" "$RELEASE_DIR"
 cd "$RELEASE_DIR"
+if [[ $EUID -eq 0 ]]; then
+  RELEASE_COMMIT="$(sudo -u "$INSTALL_USER" git -C "$RELEASE_DIR" rev-parse HEAD)"
+else
+  RELEASE_COMMIT="$(git -C "$RELEASE_DIR" rev-parse HEAD)"
+fi
 success "Candidate source ready at $RELEASE_DIR"
 
 # ── 4. Generate secrets & write .env ────────────────────────────────────────
@@ -664,6 +669,7 @@ import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 
 // ── Handler imports ─────────────────────────────────────────────────────────
+import health from './netlify/functions/health.js';
 import authConfig from './netlify/functions/auth-config.js';
 import authLogin from './netlify/functions/auth-login.js';
 import authLogout from './netlify/functions/auth-logout.js';
@@ -780,6 +786,9 @@ const h = (handler: any) => async (c: any) => {
 };
 
 const app = new Hono();
+
+// ── Health ──────────────────────────────────────────────────────────────────
+app.all('/api/health', h(health));
 
 // ── Auth ────────────────────────────────────────────────────────────────────
 app.all('/api/auth/config', h(authConfig));
@@ -1108,6 +1117,7 @@ RestartSec=5
 Environment=NODE_ENV=production
 Environment=FLASH_RUNTIME=vps
 Environment=FLASH_INTERNAL_ORIGIN=http://127.0.0.1:3000
+Environment=FLASH_RELEASE_COMMIT=${RELEASE_COMMIT}
 EnvironmentFile=${ENV_FILE}
 
 [Install]
@@ -1132,6 +1142,7 @@ TimeoutStopSec=20
 Environment=NODE_ENV=production
 Environment=FLASH_RUNTIME=vps
 Environment=FLASH_INTERNAL_ORIGIN=http://127.0.0.1:3000
+Environment=FLASH_RELEASE_COMMIT=${RELEASE_COMMIT}
 EnvironmentFile=${ENV_FILE}
 
 [Install]

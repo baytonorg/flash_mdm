@@ -43,6 +43,12 @@
     Vary = "Origin"
 
 # API routes -> Netlify Functions
+# Health
+[[redirects]]
+  from = "/api/health"
+  to = "/.netlify/functions/health"
+  status = 200
+
 # Auth (explicit routes only)
 [[redirects]]
   from = "/api/auth/config"

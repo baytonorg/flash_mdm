@@ -30,6 +30,9 @@ check "public URL returns HTML" \
 check "public auth config is reachable" \
   bash -c "curl -fsS --max-time 20 '$PUBLIC_URL/api/auth/config' | grep -q 'invite_only_registration'"
 
+check "public health endpoint reports database readiness" \
+  bash -c "curl -fsS --max-time 20 '$PUBLIC_URL/api/health' | node -e 'let body=\"\"; process.stdin.on(\"data\", c => body += c).on(\"end\", () => { const value = JSON.parse(body); process.exit(value.status === \"ok\" && value.database === \"ok\" ? 0 : 1); })'"
+
 check "Caddy container is active" \
   "${SSH[@]}" "sudo lxc exec '$CADDY_CONTAINER' -- systemctl is-active --quiet caddy"
 
@@ -44,6 +47,10 @@ check "Flash service is active" \
 
 check "Flash durable queue worker is active" \
   "${SSH[@]}" "sudo lxc exec '$APP_CONTAINER' -- systemctl is-active --quiet flashmdm-worker"
+
+DEPLOYED_COMMIT=$("${SSH[@]}" "sudo lxc exec '$APP_CONTAINER' -- git -c safe.directory='$APP_DIR/current' -C '$APP_DIR/current' rev-parse HEAD")
+check "public health version matches the active release" \
+  bash -c "curl -fsS --max-time 20 '$PUBLIC_URL/api/health' | node -e 'let body=\"\"; process.stdin.on(\"data\", c => body += c).on(\"end\", () => process.exit(JSON.parse(body).version === process.argv[1] ? 0 : 1))' '$DEPLOYED_COMMIT'"
 
 check "PostgreSQL service is active" \
   "${SSH[@]}" "sudo lxc exec '$APP_CONTAINER' -- systemctl is-active --quiet postgresql"
