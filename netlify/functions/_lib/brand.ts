@@ -5,8 +5,8 @@
 export const BRAND = {
   name: 'Flash MDM',
   shortName: 'Flash',
-  domain: 'flash-mdm.netlify.app',
-  emailFrom: `Flash MDM <noreply@flash-mdm.netlify.app>`,
+  domain: 'flash-mdm.bayton.org',
+  emailFrom: `Flash MDM <noreply@flash-mdm.bayton.org>`,
   totpIssuer: 'FlashMDM',
   defaultEnterpriseName: 'Flash MDM Enterprise',
 } as const;

@@ -10,6 +10,8 @@
 #    export FLASH_DOMAIN=mdm.example.com
 #    export FLASH_DB_PASS=supersecret
 #    export FLASH_REPO_URL=https://github.com/baytonorg/flash_mdm.git
+#    export FLASH_REPO_SSH_KEY_PATH=/path/to/read-only-deploy-key
+#    export FLASH_AUTO_DEPLOY_WEBHOOK_SECRET=generated-secret
 #    bash install.sh
 #
 #  All FLASH_* env vars are optional overrides; the script will skip
@@ -160,13 +162,24 @@ migration_response_ok() {
 activate_release() {
   local release_dir="$1" current_link="$2"
   local next_link="${current_link}.next"
-  node - "$release_dir" "$current_link" "$next_link" <<'NODE'
+  sudo node - "$release_dir" "$current_link" "$next_link" <<'NODE'
 const fs = require('fs');
 const [releaseDir, currentLink, nextLink] = process.argv.slice(2);
 try { fs.unlinkSync(nextLink); } catch (err) { if (err.code !== 'ENOENT') throw err; }
 fs.symlinkSync(releaseDir, nextLink);
 fs.renameSync(nextLink, currentLink);
 NODE
+}
+
+is_private_ipv4() {
+  local address="$1" a b c d
+  [[ "$address" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || return 1
+  IFS=. read -r a b c d <<< "$address"
+  (( 10#$a <= 255 && 10#$b <= 255 && 10#$c <= 255 && 10#$d <= 255 )) || return 1
+  (( 10#$a == 10 )) && return 0
+  (( 10#$a == 192 && 10#$b == 168 )) && return 0
+  (( 10#$a == 172 && 10#$b >= 16 && 10#$b <= 31 )) && return 0
+  return 1
 }
 
 validate_database_identifier() {
@@ -213,7 +226,15 @@ cat << 'BANNER'
 BANNER
 
 # ── Pre-flight checks ───────────────────────────────────────────────────────
-[[ $EUID -eq 0 ]] && fail "Do not run as root. The script will use sudo when needed."
+if [[ $EUID -eq 0 ]]; then
+  [[ "${FLASH_ALLOW_ROOT_INSTALL:-}" == "true" ]] || fail "Do not run as root. The script will use sudo when needed."
+  INSTALL_USER="${FLASH_INSTALL_RUN_AS_USER:-}"
+  [[ -n "$INSTALL_USER" ]] || fail "FLASH_INSTALL_RUN_AS_USER is required for controlled root installation"
+  id "$INSTALL_USER" > /dev/null 2>&1 || fail "Configured installation user does not exist: $INSTALL_USER"
+else
+  INSTALL_USER="$USER"
+fi
+INSTALL_GROUP="$(id -gn "$INSTALL_USER")"
 command -v sudo >/dev/null || fail "sudo is required but not found."
 
 info "Detecting OS..."
@@ -343,6 +364,55 @@ fi
 
 REPO_URL=""
 ask "Git repository URL" "https://github.com/baytonorg/flash_mdm.git" REPO_URL
+
+AUTO_DEPLOY="${FLASH_AUTO_DEPLOY:-}"
+AUTO_DEPLOY_WEBHOOK_PORT="${FLASH_AUTO_DEPLOY_WEBHOOK_PORT:-3101}"
+if [[ "$AUTO_DEPLOY" == "true" ]]; then
+  [[ -n "${FLASH_AUTO_DEPLOY_WEBHOOK_SECRET:-}" ]] || fail "FLASH_AUTO_DEPLOY_WEBHOOK_SECRET is required when automatic deployment is enabled"
+  [[ -n "${FLASH_AUTO_DEPLOY_WEBHOOK_REPOSITORY:-}" ]] || fail "FLASH_AUTO_DEPLOY_WEBHOOK_REPOSITORY is required when automatic deployment is enabled"
+  [[ "$AUTO_DEPLOY_WEBHOOK_PORT" =~ ^[1-9][0-9]{0,4}$ ]] || fail "FLASH_AUTO_DEPLOY_WEBHOOK_PORT must be a valid TCP port"
+  (( 10#$AUTO_DEPLOY_WEBHOOK_PORT <= 65535 )) || fail "FLASH_AUTO_DEPLOY_WEBHOOK_PORT must be between 1 and 65535"
+  if [[ "$USE_EXTERNAL_CADDY" == "true" ]]; then
+    is_private_ipv4 "${FLASH_AUTO_DEPLOY_WEBHOOK_BIND_ADDRESS:-}" \
+      || fail "FLASH_AUTO_DEPLOY_WEBHOOK_BIND_ADDRESS must be an RFC1918 IPv4 address when FLASH_EXTERNAL_CADDY=true"
+  fi
+fi
+
+# A deploy key is optional: public repositories can clone over HTTPS, while private
+# repositories can provide a path (or base64-encoded key) without putting it in .env.
+REPO_SSH_KEY_PATH="${FLASH_REPO_SSH_KEY_PATH:-${FLASH_AUTO_DEPLOY_REPO_SSH_KEY_PATH:-}}"
+REPO_SSH_KEY_B64="${FLASH_REPO_SSH_PRIVATE_KEY_B64:-${FLASH_AUTO_DEPLOY_REPO_SSH_PRIVATE_KEY_B64:-}}"
+REPO_SSH_KNOWN_HOSTS_PATH="${FLASH_REPO_SSH_KNOWN_HOSTS_PATH:-${FLASH_AUTO_DEPLOY_REPO_SSH_KNOWN_HOSTS_PATH:-}}"
+REPO_SSH_KNOWN_HOSTS_B64="${FLASH_REPO_SSH_KNOWN_HOSTS_B64:-${FLASH_AUTO_DEPLOY_REPO_SSH_KNOWN_HOSTS_B64:-}}"
+if [[ -n "$REPO_SSH_KEY_B64" ]]; then
+  if [[ -z "$REPO_SSH_KEY_PATH" ]]; then
+    REPO_SSH_KEY_PATH="$INSTALL_DIR/data/deploy/repository-deploy.key"
+  fi
+  sudo install -d -m 700 -o "$INSTALL_USER" -g "$INSTALL_GROUP" "$(dirname "$REPO_SSH_KEY_PATH")"
+  printf '%s' "$REPO_SSH_KEY_B64" | base64 --decode | sudo tee "$REPO_SSH_KEY_PATH" > /dev/null
+  sudo chown "$INSTALL_USER:$INSTALL_GROUP" "$REPO_SSH_KEY_PATH"
+  sudo chmod 600 "$REPO_SSH_KEY_PATH"
+  success "Repository deploy key installed at $REPO_SSH_KEY_PATH"
+fi
+if [[ -n "$REPO_SSH_KNOWN_HOSTS_B64" ]]; then
+  if [[ -z "$REPO_SSH_KNOWN_HOSTS_PATH" ]]; then
+    REPO_SSH_KNOWN_HOSTS_PATH="$INSTALL_DIR/data/deploy/repository-known_hosts"
+  fi
+  sudo install -d -m 700 -o "$INSTALL_USER" -g "$INSTALL_GROUP" "$(dirname "$REPO_SSH_KNOWN_HOSTS_PATH")"
+  printf '%s' "$REPO_SSH_KNOWN_HOSTS_B64" | base64 --decode | sudo tee "$REPO_SSH_KNOWN_HOSTS_PATH" > /dev/null
+  sudo chown "$INSTALL_USER:$INSTALL_GROUP" "$REPO_SSH_KNOWN_HOSTS_PATH"
+  sudo chmod 600 "$REPO_SSH_KNOWN_HOSTS_PATH"
+fi
+if [[ -n "$REPO_SSH_KEY_PATH" ]]; then
+  [[ -r "$REPO_SSH_KEY_PATH" ]] || fail "Repository deploy key is not readable: $REPO_SSH_KEY_PATH"
+fi
+if [[ "$REPO_URL" == git@* || "$REPO_URL" == ssh://* ]]; then
+  [[ -n "$REPO_SSH_KEY_PATH" ]] || fail "A repository SSH key is required for an SSH repository URL"
+  [[ -n "$REPO_SSH_KNOWN_HOSTS_PATH" && -r "$REPO_SSH_KNOWN_HOSTS_PATH" ]] || fail "A verified repository known_hosts file is required for an SSH repository URL"
+  export GIT_SSH_COMMAND="ssh -i $REPO_SSH_KEY_PATH -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$REPO_SSH_KNOWN_HOSTS_PATH"
+  export GIT_TERMINAL_PROMPT=0
+fi
+git ls-remote "$REPO_URL" > /dev/null || fail "Repository access preflight failed"
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo
@@ -488,12 +558,25 @@ elif [[ -d "$INSTALL_DIR/.git" ]]; then
 fi
 
 info "Cloning candidate release to $RELEASE_DIR..."
-sudo mkdir -p "$RELEASES_DIR"
-sudo chown "$USER:$USER" "$INSTALL_DIR" "$RELEASES_DIR"
-git clone "$REPO_URL" "$RELEASE_DIR"
-if [[ -n "${FLASH_RELEASE_REF:-}" ]]; then
-  git -C "$RELEASE_DIR" checkout --detach "$FLASH_RELEASE_REF"
+sudo install -d -o root -g root -m 755 "$INSTALL_DIR"
+sudo install -d -o "$INSTALL_USER" -g "$INSTALL_GROUP" -m 755 "$RELEASES_DIR"
+sudo install -d -o "$INSTALL_USER" -g "$INSTALL_GROUP" -m 700 "$INSTALL_DIR/data"
+if [[ $EUID -eq 0 ]]; then
+  sudo -u "$INSTALL_USER" env \
+    GIT_TERMINAL_PROMPT="${GIT_TERMINAL_PROMPT:-0}" \
+    GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-}" \
+    git clone "$REPO_URL" "$RELEASE_DIR"
+else
+  git clone "$REPO_URL" "$RELEASE_DIR"
 fi
+if [[ -n "${FLASH_RELEASE_REF:-}" ]]; then
+  if [[ $EUID -eq 0 ]]; then
+    sudo -u "$INSTALL_USER" git -C "$RELEASE_DIR" checkout --detach "$FLASH_RELEASE_REF"
+  else
+    git -C "$RELEASE_DIR" checkout --detach "$FLASH_RELEASE_REF"
+  fi
+fi
+sudo chown -R "$INSTALL_USER:$INSTALL_GROUP" "$RELEASE_DIR"
 cd "$RELEASE_DIR"
 success "Candidate source ready at $RELEASE_DIR"
 
@@ -507,6 +590,7 @@ if [[ "$IS_UPGRADE" == "true" ]]; then
     || fail "Existing environment does not contain a readable MIGRATION_SECRET"
   success "Existing .env preserved byte-for-byte"
 else
+  sudo install -o "$INSTALL_USER" -g "$INSTALL_GROUP" -m 600 /dev/null "$ENV_FILE"
   ENCRYPTION_KEY=$(gen_hex 32)
   MIGRATION_SECRET=$(gen_hex 16)
   INTERNAL_SECRET=$(gen_hex 16)
@@ -950,6 +1034,14 @@ WORKEREOF
 success "worker.ts generated with queue and deployment drains"
 
 # ── 7. Configure Caddy ──────────────────────────────────────────────────────
+AUTO_DEPLOY_CADDY_HANDLE=""
+if [[ "$AUTO_DEPLOY" == "true" ]]; then
+  AUTO_DEPLOY_CADDY_HANDLE="handle /api/deploy/webhook {
+        reverse_proxy localhost:${AUTO_DEPLOY_WEBHOOK_PORT}
+    }
+
+    "
+fi
 if [[ "$USE_EXTERNAL_CADDY" == "true" ]]; then
   info "Skipping container Caddy configuration; external proxy owns TLS and static routing"
 else
@@ -959,7 +1051,7 @@ else
 
   sudo tee /etc/caddy/Caddyfile > /dev/null <<CADDYEOF
 ${DOMAIN} {
-    handle /api/* {
+    ${AUTO_DEPLOY_CADDY_HANDLE}handle /api/* {
         reverse_proxy localhost:3000
     }
 
@@ -1008,7 +1100,7 @@ Wants=postgresql.service
 
 [Service]
 Type=simple
-User=${USER}
+User=${INSTALL_USER}
 WorkingDirectory=${CURRENT_LINK}
 ExecStart=${TSX_BIN} server.ts
 Restart=on-failure
@@ -1030,7 +1122,7 @@ Wants=postgresql.service
 
 [Service]
 Type=simple
-User=${USER}
+User=${INSTALL_USER}
 WorkingDirectory=${CURRENT_LINK}
 ExecStart=${TSX_BIN} worker.ts
 Restart=always
@@ -1055,6 +1147,11 @@ success "flashmdm.service and flashmdm-worker.service created and enabled"
 echo
 printf "${BOLD}${CYAN}── Step 9/9: Start & migrate ──────────────────────────────${NC}\n"
 echo
+
+# Runtime users only need to read a release. Making it immutable before the
+# switch prevents a local deployment user from changing a root-triggered helper.
+sudo chown -hR root:root "$RELEASE_DIR"
+sudo chmod -R a-w "$RELEASE_DIR"
 
 info "Activating candidate release..."
 sudo systemctl stop flashmdm-worker 2>/dev/null || true
@@ -1132,8 +1229,7 @@ fi
 sudo systemctl enable --now cron
 
 CRON_LOCK_DIR="$INSTALL_DIR/data/cron"
-mkdir -p "$CRON_LOCK_DIR"
-chmod 700 "$CRON_LOCK_DIR"
+install -d -m 700 "$CRON_LOCK_DIR"
 
 CRON_BLOCK="# Flash MDM scheduled functions
 */5 * * * * FLASH_CRON_LOCK_DIR=${CRON_LOCK_DIR} /bin/bash ${CURRENT_LINK}/scripts/run-vps-scheduled.sh workflow-cron-scheduled
@@ -1143,10 +1239,124 @@ CRON_BLOCK="# Flash MDM scheduled functions
 0 3 * * * FLASH_CRON_LOCK_DIR=${CRON_LOCK_DIR} /bin/bash ${CURRENT_LINK}/scripts/run-vps-scheduled.sh cleanup-scheduled"
 
 # Add cron jobs if not already present
-existing_crontab=$(crontab -l 2>/dev/null || true)
+CRONTAB=(crontab)
+if [[ $EUID -eq 0 ]]; then
+  CRONTAB=(crontab -u "$INSTALL_USER")
+fi
+existing_crontab=$("${CRONTAB[@]}" -l 2>/dev/null || true)
 filtered_crontab=$(printf '%s\n' "$existing_crontab" | sed '/# Flash MDM scheduled functions/,/^0 3 \* \* \*/d')
-printf '%s\n\n%s\n' "$filtered_crontab" "$CRON_BLOCK" | crontab -
+printf '%s\n\n%s\n' "$filtered_crontab" "$CRON_BLOCK" | "${CRONTAB[@]}" -
 success "Cron jobs installed with overlap protection, timeouts, and retained failure logs"
+
+# ── Optional webhook-driven deployment ──────────────────────────────────────
+# This is deliberately opt-in. Enabling it trusts the configured repository to
+# run the installer with the local operator's deployment privileges.
+if [[ "$AUTO_DEPLOY" == "true" ]]; then
+  AUTO_DEPLOY_USER="${FLASH_AUTO_DEPLOY_USER:-$INSTALL_USER}"
+  AUTO_DEPLOY_REPO_URL="${FLASH_AUTO_DEPLOY_REPO_URL:-$REPO_URL}"
+  AUTO_DEPLOY_REPO_REF="${FLASH_AUTO_DEPLOY_REPO_REF:-main}"
+  AUTO_DEPLOY_KEY_PATH="${FLASH_AUTO_DEPLOY_REPO_SSH_KEY_PATH:-$REPO_SSH_KEY_PATH}"
+  AUTO_DEPLOY_KNOWN_HOSTS_PATH="${FLASH_AUTO_DEPLOY_REPO_SSH_KNOWN_HOSTS_PATH:-$REPO_SSH_KNOWN_HOSTS_PATH}"
+  AUTO_DEPLOY_WEBHOOK_BIND_ADDRESS="${FLASH_AUTO_DEPLOY_WEBHOOK_BIND_ADDRESS:-127.0.0.1}"
+  AUTO_DEPLOY_WEBHOOK_SECRET="$FLASH_AUTO_DEPLOY_WEBHOOK_SECRET"
+  AUTO_DEPLOY_WEBHOOK_REPOSITORY="$FLASH_AUTO_DEPLOY_WEBHOOK_REPOSITORY"
+
+  id "$AUTO_DEPLOY_USER" > /dev/null 2>&1 || fail "Automatic deploy user does not exist: $AUTO_DEPLOY_USER"
+  AUTO_DEPLOY_GROUP="$(id -gn "$AUTO_DEPLOY_USER")"
+  [[ -n "$AUTO_DEPLOY_REPO_URL" ]] || fail "FLASH_AUTO_DEPLOY_REPO_URL or FLASH_REPO_URL is required"
+  if [[ "$AUTO_DEPLOY_REPO_URL" == git@* || "$AUTO_DEPLOY_REPO_URL" == ssh://* ]]; then
+    [[ -n "$AUTO_DEPLOY_KEY_PATH" ]] || fail "A repository SSH key is required for an SSH repository URL"
+    [[ -r "$AUTO_DEPLOY_KEY_PATH" ]] || fail "Automatic deploy key is not readable: $AUTO_DEPLOY_KEY_PATH"
+    [[ -n "$AUTO_DEPLOY_KNOWN_HOSTS_PATH" && -r "$AUTO_DEPLOY_KNOWN_HOSTS_PATH" ]] || fail "A verified repository known_hosts file is required for an SSH repository URL"
+  fi
+  AUTO_DEPLOY_GIT_ENV=(env GIT_TERMINAL_PROMPT=0)
+  if [[ "$AUTO_DEPLOY_REPO_URL" == git@* || "$AUTO_DEPLOY_REPO_URL" == ssh://* ]]; then
+    AUTO_DEPLOY_GIT_ENV+=("GIT_SSH_COMMAND=ssh -i $AUTO_DEPLOY_KEY_PATH -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$AUTO_DEPLOY_KNOWN_HOSTS_PATH")
+  fi
+  if [[ $EUID -eq 0 ]]; then
+    sudo -u "$AUTO_DEPLOY_USER" "${AUTO_DEPLOY_GIT_ENV[@]}" git ls-remote "$AUTO_DEPLOY_REPO_URL" "$AUTO_DEPLOY_REPO_REF" > /dev/null \
+      || fail "Automatic deployment repository access preflight failed"
+  else
+    "${AUTO_DEPLOY_GIT_ENV[@]}" git ls-remote "$AUTO_DEPLOY_REPO_URL" "$AUTO_DEPLOY_REPO_REF" > /dev/null \
+      || fail "Automatic deployment repository access preflight failed"
+  fi
+
+  sudo install -d -o root -g "$AUTO_DEPLOY_GROUP" -m 750 /etc/flash-mdm
+  sudo chown root:"$AUTO_DEPLOY_GROUP" /etc/flash-mdm
+  sudo chmod 750 /etc/flash-mdm
+  sudo tee /etc/flash-mdm/auto-deploy.env > /dev/null <<AUTOENV
+FLASH_AUTO_DEPLOY_USER=$(env_value "$AUTO_DEPLOY_USER")
+FLASH_AUTO_DEPLOY_REPO_URL=$(env_value "$AUTO_DEPLOY_REPO_URL")
+FLASH_AUTO_DEPLOY_REPO_REF=$(env_value "$AUTO_DEPLOY_REPO_REF")
+FLASH_AUTO_DEPLOY_REPO_SSH_KEY_PATH=$(env_value "$AUTO_DEPLOY_KEY_PATH")
+FLASH_AUTO_DEPLOY_REPO_SSH_KNOWN_HOSTS_PATH=$(env_value "$AUTO_DEPLOY_KNOWN_HOSTS_PATH")
+FLASH_AUTO_DEPLOY_WEBHOOK_BIND_ADDRESS=$(env_value "$AUTO_DEPLOY_WEBHOOK_BIND_ADDRESS")
+FLASH_AUTO_DEPLOY_DOMAIN=$(env_value "$DOMAIN")
+FLASH_AUTO_DEPLOY_INSTALL_DIR=$(env_value "$INSTALL_DIR")
+FLASH_AUTO_DEPLOY_EXTERNAL_CADDY=$(env_value "$USE_EXTERNAL_CADDY")
+FLASH_AUTO_DEPLOY_WEBHOOK_SECRET=$(env_value "$AUTO_DEPLOY_WEBHOOK_SECRET")
+FLASH_AUTO_DEPLOY_WEBHOOK_REPOSITORY=$(env_value "$AUTO_DEPLOY_WEBHOOK_REPOSITORY")
+FLASH_AUTO_DEPLOY_WEBHOOK_PORT=$(env_value "$AUTO_DEPLOY_WEBHOOK_PORT")
+AUTOENV
+  sudo chown root:"$AUTO_DEPLOY_GROUP" /etc/flash-mdm/auto-deploy.env
+  sudo chmod 640 /etc/flash-mdm/auto-deploy.env
+  sudo install -D -o root -g root -m 0755 "$RELEASE_DIR/scripts/vps-auto-deploy.sh" /usr/local/libexec/flashmdm-auto-deploy
+  sudo install -D -o root -g root -m 0755 "$RELEASE_DIR/scripts/vps-auto-deploy-launcher.sh" /usr/local/libexec/flashmdm-auto-deploy-launcher
+  sudo tee /etc/sudoers.d/flashmdm-auto-deploy-webhook > /dev/null <<SUDOERSEOF
+${AUTO_DEPLOY_USER} ALL=(root) NOPASSWD: /usr/local/libexec/flashmdm-auto-deploy-launcher *
+SUDOERSEOF
+  sudo chmod 440 /etc/sudoers.d/flashmdm-auto-deploy-webhook
+  sudo visudo -cf /etc/sudoers.d/flashmdm-auto-deploy-webhook > /dev/null || fail "Generated automatic deployment sudo policy is invalid"
+
+  sudo tee /etc/systemd/system/flashmdm-auto-deploy@.service > /dev/null <<UNITEOF
+[Unit]
+Description=Flash MDM webhook-triggered release for commit %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/flashmdm-auto-deploy %i
+TimeoutStartSec=30min
+UNITEOF
+  sudo tee /etc/systemd/system/flashmdm-auto-deploy-webhook.service > /dev/null <<UNITEOF
+[Unit]
+Description=Flash MDM deployment webhook listener
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${AUTO_DEPLOY_USER}
+Group=${AUTO_DEPLOY_GROUP}
+ExecStart=/usr/bin/node ${CURRENT_LINK}/scripts/vps-auto-deploy-webhook.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=15
+TimeoutStopSec=10
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
+UNITEOF
+  sudo systemctl daemon-reload
+  sudo systemctl enable flashmdm-auto-deploy-webhook.service
+  sudo systemctl restart flashmdm-auto-deploy-webhook.service
+  success "Webhook deployment enabled for $AUTO_DEPLOY_REPO_URL ($AUTO_DEPLOY_REPO_REF) on $AUTO_DEPLOY_WEBHOOK_BIND_ADDRESS:$AUTO_DEPLOY_WEBHOOK_PORT"
+elif [[ "$AUTO_DEPLOY" == "false" ]]; then
+  sudo systemctl disable --now flashmdm-auto-deploy-webhook.service 2>/dev/null || true
+  sudo rm -f /etc/systemd/system/flashmdm-auto-deploy-webhook.service /etc/systemd/system/flashmdm-auto-deploy.service /etc/systemd/system/flashmdm-auto-deploy@.service /etc/flash-mdm/auto-deploy.env /etc/sudoers.d/flashmdm-auto-deploy-webhook /usr/local/libexec/flashmdm-auto-deploy /usr/local/libexec/flashmdm-auto-deploy-launcher
+  sudo systemctl daemon-reload
+  success "Webhook deployment disabled"
+fi
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 echo

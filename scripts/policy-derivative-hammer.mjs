@@ -6,7 +6,7 @@ import pg from 'pg';
 function parseArgs(argv) {
   const out = {
     apiKey: process.env.FLASH_API_KEY ?? '',
-    baseUrl: process.env.FLASH_BASE_URL ?? 'https://flash-mdm.netlify.app',
+    baseUrl: process.env.FLASH_BASE_URL ?? 'https://flash-mdm.bayton.org',
     iterations: Number(process.env.HAMMER_ITERATIONS ?? 3),
     convergeMs: Number(process.env.HAMMER_CONVERGE_MS ?? 20000),
     pollMs: Number(process.env.HAMMER_POLL_MS ?? 2000),

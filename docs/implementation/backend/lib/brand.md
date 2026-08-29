@@ -6,7 +6,7 @@
 
 | Name | Type | Description |
 |------|------|-------------|
-| `BRAND` | `{ name: 'Flash MDM'; shortName: 'Flash'; domain: 'flash-mdm.netlify.app'; emailFrom: string; totpIssuer: 'FlashMDM'; defaultEnterpriseName: 'Flash MDM Enterprise' }` | Read-only object containing all product branding strings (full name, short name, domain, email sender, TOTP issuer, default enterprise display name) |
+| `BRAND` | `{ name: 'Flash MDM'; shortName: 'Flash'; domain: 'flash-mdm.bayton.org'; emailFrom: string; totpIssuer: 'FlashMDM'; defaultEnterpriseName: 'Flash MDM Enterprise' }` | Read-only object containing all product branding strings (full name, short name, domain, email sender, TOTP issuer, default enterprise display name) |
 
 ## Key Logic
 

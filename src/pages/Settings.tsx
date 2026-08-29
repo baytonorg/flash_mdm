@@ -2356,7 +2356,7 @@ function ApiTab() {
         <div className="mt-3 rounded-lg border border-blue-200 bg-white px-3 py-2">
           <p className="text-xs text-blue-900 font-medium mb-1">Example</p>
           <code className="block text-xs text-blue-900 break-all">
-            curl -H "Authorization: Bearer flash_workspace_..." https://flash-mdm.netlify.app/api/devices/list?environment_id=&lt;env_id&gt;
+            curl -H "Authorization: Bearer flash_workspace_..." https://flash-mdm.bayton.org/api/devices/list?environment_id=&lt;env_id&gt;
           </code>
         </div>
         <div className="mt-3 rounded-lg border border-blue-200 bg-white px-3 py-3">

@@ -37,6 +37,8 @@ This documentation is written to help:
 - [Deployment overview](./deployment/overview.md)
 - [Environments (dev/staging/prod)](./deployment/environments.md)
 - [Database](./deployment/database.md)
+- [LXD Postgres for Netlify](./deployment/lxd-postgres-netlify.md)
+- [VPS webhook deployment](./deployment/vps-auto-deploy.md)
 - [Netlify (functions, routing, headers)](./deployment/netlify.md)
 - [Migrations & rollbacks](./deployment/migrations-and-rollbacks.md)
 - [Netlify deployment (step-by-step)](./deployment/netlify-step-by-step.md)

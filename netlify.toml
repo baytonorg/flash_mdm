@@ -36,7 +36,7 @@
 [[headers]]
   for = "/api/*"
   [headers.values]
-    Access-Control-Allow-Origin = "https://flash-mdm.netlify.app"
+    Access-Control-Allow-Origin = "https://flash-mdm.bayton.org"
     Access-Control-Allow-Credentials = "true"
     Access-Control-Allow-Headers = "Content-Type, X-Requested-With, Authorization, X-API-Key"
     Access-Control-Allow-Methods = "GET, POST, PUT, PATCH, DELETE, OPTIONS"

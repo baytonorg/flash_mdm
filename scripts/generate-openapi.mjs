@@ -600,7 +600,7 @@ const spec = {
     description: 'Route-complete OpenAPI specification generated from Netlify route mappings and handler sources. Endpoint request/response schemas are generic for legacy handlers unless explicitly documented.',
   },
   servers: [
-    { url: 'https://flash-mdm.netlify.app' },
+    { url: 'https://flash-mdm.bayton.org' },
     { url: 'http://localhost:8888', description: 'Netlify Dev' },
   ],
   security: [

@@ -7,7 +7,7 @@
   },
   "servers": [
     {
-      "url": "https://flash-mdm.netlify.app"
+      "url": "https://flash-mdm.bayton.org"
     },
     {
       "url": "http://localhost:8888",

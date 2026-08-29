@@ -53,7 +53,7 @@ import {
 } from '../_lib/rbac.js';
 import { generateToken } from '../_lib/crypto.js';
 import { logAudit } from '../_lib/audit.js';
-import { sendEmail } from '../_lib/resend.js';
+import { inviteEmail, sendEmail } from '../_lib/resend.js';
 import handler from '../workspace-invite.ts';
 
 const mockQueryOne = vi.mocked(queryOne);
@@ -71,10 +71,11 @@ const mockGetGroupRole = vi.mocked(getGroupRole);
 const mockGetGroupRoleForAuth = vi.mocked(getGroupRoleForAuth);
 const mockGenerateToken = vi.mocked(generateToken);
 const mockLogAudit = vi.mocked(logAudit);
+const mockInviteEmail = vi.mocked(inviteEmail);
 const mockSendEmail = vi.mocked(sendEmail);
 
-function makeInviteRequest(body: Record<string, unknown>): Request {
-  return new Request('http://localhost/api/workspaces/invite', {
+function makeInviteRequest(body: Record<string, unknown>, origin = 'http://localhost'): Request {
+  return new Request(`${origin}/api/workspaces/invite`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -105,6 +106,7 @@ beforeEach(() => {
   mockGetGroupRoleForAuth.mockReset();
   mockGenerateToken.mockReset();
   mockLogAudit.mockReset();
+  mockInviteEmail.mockClear();
   mockSendEmail.mockReset();
 
   mockRequireWorkspaceRole.mockResolvedValue('admin' as never);
@@ -274,6 +276,35 @@ describe('workspace invite acceptance hardening', () => {
     const insertCall = mockExecute.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO user_invites'));
     expect(insertCall?.[1]).toEqual(expect.arrayContaining([null, 'msp-owner@example.com', 'owner']));
     expect(mockSendEmail).toHaveBeenCalledOnce();
+  });
+
+  it('uses the current public origin when composing an invitation URL', async () => {
+    mockRequireAuth.mockResolvedValue({
+      sessionId: 'sess_sa',
+      user: {
+        id: 'user_sa',
+        email: 'sa@example.com',
+        first_name: 'Super',
+        last_name: 'Admin',
+        is_superadmin: true,
+      },
+    } as never);
+    mockQueryOne.mockResolvedValueOnce(null as never);
+
+    const res = await handler(
+      makeInviteRequest({
+        email: 'new-owner@example.com',
+        invite_type: 'platform_access',
+      }, 'https://flash-mdm.bayton.org'),
+      {} as never
+    );
+
+    expect(res.status).toBe(201);
+    expect(mockInviteEmail).toHaveBeenCalledWith(
+      'https://flash-mdm.bayton.org/invite/invite_token',
+      'Flash MDM platform',
+      'Super Admin'
+    );
   });
 
   it('allows a scoped environment admin invite without workspace-wide access', async () => {

@@ -14,6 +14,6 @@
 - `name`: `'Flash MDM'` -- full product name.
 - `shortName`: `'Flash'` -- abbreviated name.
 - `tagline`: `'Android Device Management'`.
-- `domain`: `'flash-mdm.netlify.app'`.
-- `emailFrom`: `'Flash MDM <noreply@flash-mdm.netlify.app>'` -- sender address for transactional emails.
+- `domain`: `'flash-mdm.bayton.org'`.
+- `emailFrom`: `'Flash MDM <noreply@flash-mdm.bayton.org>'` -- sender address for transactional emails.
 - `totpIssuer`: `'FlashMDM'` -- used in TOTP QR code generation.
