@@ -158,4 +158,71 @@ describe('superadmin-billing manual grants', () => {
       )
     ).toBe(true);
   });
+
+  it('cancels a pending invoice transactionally and records the transition', async () => {
+    const clientQuery = vi.fn()
+      .mockResolvedValueOnce({ rows: [{ id: WORKSPACE_ID, workspace_id: WORKSPACE_ID, status: 'pending' }] })
+      .mockResolvedValueOnce({ rowCount: 1 });
+    mockTransaction.mockImplementationOnce(async (callback) => callback({ query: clientQuery }));
+
+    const res = await handler(
+      new Request(`http://localhost/api/superadmin/billing/invoices/${WORKSPACE_ID}/cancel`, { method: 'POST' }),
+      {} as never
+    );
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ message: 'Invoice cancelled', status: 'cancelled' });
+    expect(clientQuery.mock.calls[1][0]).toContain("SET status = 'cancelled'");
+    expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'superadmin.billing.invoice.cancelled',
+      resource_id: WORKSPACE_ID,
+      details: { previous_status: 'pending', status: 'cancelled' },
+    }));
+  });
+
+  it('treats repeated invoice cancellation as idempotent', async () => {
+    const clientQuery = vi.fn()
+      .mockResolvedValueOnce({ rows: [{ id: WORKSPACE_ID, workspace_id: WORKSPACE_ID, status: 'cancelled' }] });
+    mockTransaction.mockImplementationOnce(async (callback) => callback({ query: clientQuery }));
+
+    const res = await handler(
+      new Request(`http://localhost/api/superadmin/billing/invoices/${WORKSPACE_ID}/cancel`, { method: 'POST' }),
+      {} as never
+    );
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ message: 'Invoice already cancelled', status: 'cancelled' });
+    expect(clientQuery).toHaveBeenCalledTimes(1);
+    expect(mockLogAudit).not.toHaveBeenCalled();
+  });
+
+  it('rejects cancelling a paid invoice', async () => {
+    const clientQuery = vi.fn()
+      .mockResolvedValueOnce({ rows: [{ id: WORKSPACE_ID, workspace_id: WORKSPACE_ID, status: 'paid' }] });
+    mockTransaction.mockImplementationOnce(async (callback) => callback({ query: clientQuery }));
+
+    const res = await handler(
+      new Request(`http://localhost/api/superadmin/billing/invoices/${WORKSPACE_ID}/cancel`, { method: 'POST' }),
+      {} as never
+    );
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toEqual({ error: 'Cannot cancel a paid invoice' });
+  });
+
+  it('rejects marking a cancelled invoice as paid', async () => {
+    const clientQuery = vi.fn()
+      .mockResolvedValueOnce({
+        rows: [{ id: WORKSPACE_ID, workspace_id: WORKSPACE_ID, status: 'cancelled', currency: 'gbp' }],
+      });
+    mockTransaction.mockImplementationOnce(async (callback) => callback({ query: clientQuery }));
+
+    const res = await handler(
+      new Request(`http://localhost/api/superadmin/billing/invoices/${WORKSPACE_ID}/mark-paid`, { method: 'POST' }),
+      {} as never
+    );
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toEqual({ error: 'Cannot mark a cancelled invoice as paid' });
+  });
 });

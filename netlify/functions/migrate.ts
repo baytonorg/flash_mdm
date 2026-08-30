@@ -1809,6 +1809,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_certs_env_active_fingerprint_unique
   WHERE deleted_at IS NULL AND validated_at IS NOT NULL;
 `,
   },
+  {
+    name: '056_magic_links_email_text',
+    sql: `
+ALTER TABLE magic_links
+  ALTER COLUMN email TYPE TEXT;
+`,
+  },
 ];
 
 export default async function handler(request: Request, _context: Context) {

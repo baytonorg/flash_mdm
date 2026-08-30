@@ -250,7 +250,7 @@ interface SuperadminBillingInvoice {
   workspace_id: string;
   workspace_name: string;
   invoice_type: string;
-  status: string;
+  status: 'pending' | 'paid' | 'cancelled';
   subtotal_cents: number;
   currency: string;
   due_at: string | null;
@@ -1024,6 +1024,8 @@ export function SuperadminWorkspaces() {
   const [workspaceInheritFreeTier, setWorkspaceInheritFreeTier] = useState(true);
   const [workspaceFreeEnabled, setWorkspaceFreeEnabled] = useState(true);
   const [workspaceFreeSeatLimit, setWorkspaceFreeSeatLimit] = useState(10);
+  const [invoiceToCancel, setInvoiceToCancel] = useState<SuperadminBillingInvoice | null>(null);
+  const [invoiceStatusNow] = useState(() => Date.now());
 
   useEffect(() => {
     if (confirmAction?.action !== 'impersonate') return;
@@ -1130,6 +1132,15 @@ export function SuperadminWorkspaces() {
       queryClient.invalidateQueries({ queryKey: ['superadmin', 'workspace-invoice-queue', selectedId] });
       queryClient.invalidateQueries({ queryKey: ['superadmin', 'workspace-grants', selectedId] });
       queryClient.invalidateQueries({ queryKey: ['superadmin', 'workspace-license-status', selectedId] });
+    },
+  });
+
+  const cancelInvoiceMutation = useMutation({
+    mutationFn: (invoiceId: string) =>
+      apiClient.post<{ message: string; status: 'cancelled' }>(`/api/superadmin/billing/invoices/${invoiceId}/cancel`),
+    onSuccess: () => {
+      setInvoiceToCancel(null);
+      queryClient.invalidateQueries({ queryKey: ['superadmin', 'workspace-invoice-queue', selectedId] });
     },
   });
 
@@ -1497,26 +1508,40 @@ export function SuperadminWorkspaces() {
                     <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
                       {(workspaceInvoiceQueue?.invoices ?? [])
                         .filter((invoice) => invoice.status === 'pending')
-                        .map((invoice) => (
-                          <div key={invoice.id} className="flex items-center justify-between gap-2 rounded border border-gray-200 p-2 text-xs">
+                        .map((invoice) => {
+                          const overdue = !!invoice.due_at && new Date(invoice.due_at).getTime() < invoiceStatusNow;
+                          return (
+                          <div key={invoice.id} className={`flex items-center justify-between gap-2 rounded border p-2 text-xs ${overdue ? 'border-red-200 bg-red-50/50' : 'border-gray-200'}`}>
                             <div className="min-w-0">
-                              <p className="font-medium text-gray-800 truncate">
+                              <p className="flex items-center gap-2 font-medium text-gray-800 truncate">
                                 {(invoice.subtotal_cents / 100).toFixed(2)} {invoice.currency.toUpperCase()}
+                                {overdue && <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-red-700">Overdue</span>}
                               </p>
                               <p className="text-gray-500 truncate">
-                                Due {invoice.due_at ? formatDate(invoice.due_at) : 'N/A'} - {invoice.status}
+                                Due {invoice.due_at ? formatDate(invoice.due_at) : 'N/A'}
                               </p>
                             </div>
-                            <button
-                              type="button"
-                              onClick={() => markInvoicePaidMutation.mutate(invoice.id)}
-                              disabled={markInvoicePaidMutation.isPending}
-                              className="shrink-0 rounded-md bg-green-50 px-2 py-1 font-medium text-green-700 hover:bg-green-100 disabled:opacity-50"
-                            >
-                              Mark paid
-                            </button>
+                            <div className="flex shrink-0 items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => setInvoiceToCancel(invoice)}
+                                disabled={cancelInvoiceMutation.isPending}
+                                className="rounded-md bg-gray-100 px-2 py-1 font-medium text-gray-700 hover:bg-gray-200 disabled:opacity-50"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => markInvoicePaidMutation.mutate(invoice.id)}
+                                disabled={markInvoicePaidMutation.isPending}
+                                className="rounded-md bg-green-50 px-2 py-1 font-medium text-green-700 hover:bg-green-100 disabled:opacity-50"
+                              >
+                                Mark paid
+                              </button>
+                            </div>
                           </div>
-                        ))}
+                          );
+                        })}
                       {(workspaceInvoiceQueue?.invoices ?? []).filter((invoice) => invoice.status === 'pending').length === 0 && (
                         <p className="text-xs text-gray-400">No pending invoices</p>
                       )}
@@ -1905,6 +1930,39 @@ export function SuperadminWorkspaces() {
                 </label>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {invoiceToCancel && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl border border-gray-200 p-6 max-w-md mx-4 shadow-xl">
+            <div className="flex items-start gap-3 mb-4">
+              <AlertTriangle className="w-6 h-6 text-yellow-500 flex-shrink-0 mt-0.5" />
+              <div>
+                <h3 className="font-semibold text-gray-900 mb-1">Cancel invoice?</h3>
+                <p className="text-sm text-gray-600">
+                  This records the pending invoice as cancelled. It will not create a licence grant and remains in invoice history.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setInvoiceToCancel(null)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+              >
+                Keep pending
+              </button>
+              <button
+                type="button"
+                onClick={() => cancelInvoiceMutation.mutate(invoiceToCancel.id)}
+                disabled={cancelInvoiceMutation.isPending}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                {cancelInvoiceMutation.isPending ? 'Cancelling...' : 'Cancel invoice'}
+              </button>
+            </div>
           </div>
         </div>
       )}

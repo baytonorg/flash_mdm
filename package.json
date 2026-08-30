@@ -16,6 +16,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:deploy-webhook": "node --test scripts/__tests__/vps-auto-deploy-webhook.test.mjs",
+    "test:blob-migration": "node --test scripts/__tests__/blob-migration.test.mjs",
+    "maintenance:rekey": "tsx scripts/rekey-encrypted-state.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },

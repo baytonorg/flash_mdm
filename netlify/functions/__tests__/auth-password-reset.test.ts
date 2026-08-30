@@ -9,7 +9,7 @@ vi.mock('../_lib/db.js', () => ({
 vi.mock('../_lib/crypto.js', () => ({
   generateToken: vi.fn(() => 'reset-token'),
   hashToken: vi.fn((token: string) => `hash:${token}`),
-  encrypt: vi.fn(() => 'enc-reset-hash'),
+  encrypt: vi.fn(() => `v1.${'x'.repeat(220)}`),
 }));
 
 vi.mock('../_lib/resend.js', () => ({
@@ -255,6 +255,7 @@ describe('auth-password-reset-complete', () => {
     expect(mockClient.query.mock.calls[1]?.[0]).toContain('SELECT id, totp_enabled FROM users');
     expect(mockClient.query.mock.calls[2]?.[0]).toContain('INSERT INTO magic_links');
     expect(String(mockClient.query.mock.calls[2]?.[1]?.[1])).toContain('password_reset_mfa_pending_v2:user_3:');
+    expect(String(mockClient.query.mock.calls[2]?.[1]?.[1]).length).toBeGreaterThan(255);
     expect(String(mockClient.query.mock.calls[2]?.[1]?.[1])).not.toContain('hashed-reset-password');
     expect(mockEncrypt).toHaveBeenCalledWith('hashed-reset-password', 'password_reset_pending:user_3');
     expect(mockLogAudit).not.toHaveBeenCalled();

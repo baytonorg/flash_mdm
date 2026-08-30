@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
+import { decryptWithKey, encryptWithKey, parseEncryptionKey } from '../_lib/crypto.js';
 
 const repoRoot = resolve(import.meta.dirname, '../../..');
 const installer = join(repoRoot, 'install.sh');
@@ -21,6 +22,33 @@ describe('VPS installer operational safety', () => {
 
     expect(direct.status).toBe(0);
     expect(direct.stdout).toBe('sentinel-$HOME-`date`');
+  });
+
+  it('preserves an upgrade environment byte-for-byte and keeps an encrypted provider canary readable', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'flash-upgrade-env-'));
+    const envFile = join(dir, '.env');
+    const keyText = 'ab'.repeat(32);
+    const before = `DATABASE_URL="postgresql://flash:preserved@localhost/flash_mdm"\nENCRYPTION_MASTER_KEY="${keyText}"\nMIGRATION_SECRET="migration-preserved"\nFLASH_BLOB_DIR="/opt/flash-mdm/data/blobs"\n`;
+    writeFileSync(envFile, before, { mode: 0o600 });
+    const key = parseEncryptionKey(keyText);
+    const providerCanary = encryptWithKey(
+      JSON.stringify({ type: 'service_account', client_email: 'flash@example.test' }),
+      'workspace:provider-canary',
+      key
+    );
+
+    const upgradeRead = spawnSync(
+      'bash',
+      ['-c', 'source "$1"; preserved_upgrade_migration_secret "$2"', '_', installerLib, envFile],
+      { encoding: 'utf8' }
+    );
+
+    expect(upgradeRead.status).toBe(0);
+    expect(upgradeRead.stdout).toBe('migration-preserved');
+    expect(readFileSync(envFile, 'utf8')).toBe(before);
+    expect(JSON.parse(decryptWithKey(providerCanary, 'workspace:provider-canary', key))).toMatchObject({
+      client_email: 'flash@example.test',
+    });
   });
 
   it('accepts only machine-readable migration responses with zero errors', () => {

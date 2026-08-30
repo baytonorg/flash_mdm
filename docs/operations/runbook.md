@@ -50,3 +50,4 @@ See:
 - [Monitoring & logs](./monitoring-and-logs.md)
 - [Incident response](./incident-response.md)
 - [Backup & restore](./backup-and-restore.md)
+- [Encryption master-key rotation](./encryption-key-rotation.md)

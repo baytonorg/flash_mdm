@@ -48,15 +48,16 @@ Use filesystem or volume snapshots when available. When using file-copy tooling,
 
 PostgreSQL export does not include Netlify Blobs. Before switching traffic:
 
-1. Link the Netlify CLI to the production site and inventory every key in the six stores listed above with `netlify blobs:list <store> --json`.
+1. Load `NETLIFY_SITE_ID` and `NETLIFY_API_TOKEN` from the deployment's protected secret storage without echoing them.
 2. Quiesce writes for the final database recovery point, blob inventory, export, and verification. A delta inventory while writes continue is not a completeness boundary.
-3. Export every object by store and key. Preserve the original key and metadata; the local adapter hashes keys internally, so copying downloaded objects directly into `FLASH_BLOB_DIR` is not sufficient.
-4. Import each object through the Flash blob adapter or an importer that uses the same store, key, content, and metadata contract.
-5. Compare per-store object counts and content checksums between Netlify and the VPS.
-6. Exercise representative authenticated downloads and certificate/policy paths before directing production traffic to the VPS.
-7. Retain the Netlify data until the agreed recovery window has passed.
+3. Export every object, key, and metadata value into a new archive: `node scripts/migrate-netlify-blobs.mjs export --archive /absolute/new/archive`. The command enumerates all stores and writes a checksum manifest; it refuses an existing destination.
+4. Copy the completed archive and its database recovery point to the target. Run a non-writing preflight: `node scripts/migrate-netlify-blobs.mjs import --archive /absolute/archive --blob-dir /absolute/flash-blobs`.
+5. Import only into a new absolute blob directory by adding `--execute`. The importer stages the complete tree and renames it into place atomically; any existing destination is refused.
+6. Verify exact key, metadata, size, and SHA-256 parity: `node scripts/migrate-netlify-blobs.mjs verify --archive /absolute/archive --blob-dir /absolute/flash-blobs`.
+7. Exercise representative authenticated downloads and certificate/policy paths before directing production traffic to the VPS.
+8. Retain the Netlify data and the migration archive until the agreed recovery window has passed.
 
-There is currently no repository-provided bulk exporter/importer for this cutover. Treat a manual migration as incomplete until the inventory and checksum comparison is recorded.
+The archive manifest contains store names, object keys, metadata, sizes, and hashes. Protect it as operational data even though it contains no Netlify credentials. Never put tokens in command arguments or archive files.
 
 ## Related
 

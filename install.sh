@@ -591,7 +591,7 @@ printf "${BOLD}${CYAN}── Step 4/9: Environment configuration ─────
 echo
 
 if [[ "$IS_UPGRADE" == "true" ]]; then
-  MIGRATION_SECRET=$(read_env_value "$ENV_FILE" MIGRATION_SECRET) \
+  MIGRATION_SECRET=$(preserved_upgrade_migration_secret "$ENV_FILE") \
     || fail "Existing environment does not contain a readable MIGRATION_SECRET"
   success "Existing .env preserved byte-for-byte"
 else
