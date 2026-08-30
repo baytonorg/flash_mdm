@@ -81,6 +81,7 @@ const historicalMigrationNames = [
   '053_totp_pending_created_at',
   '054_apps_distribution_channel',
   '055_wifi_trusted_ca_certificates',
+  '056_magic_links_email_text',
 ] as const;
 
 function migrationRequest(): Request {
@@ -122,10 +123,10 @@ describe('migration manifest', () => {
       Array.from({ length: manifestIds.length }, (_, index) => String(index + 1).padStart(3, '0'))
     );
     expect(MIGRATIONS.map(({ name }) => name)).toEqual(historicalMigrationNames);
-    expect(MIGRATIONS.at(-1)?.name).toBe('055_wifi_trusted_ca_certificates');
+    expect(MIGRATIONS.at(-1)?.name).toBe('056_magic_links_email_text');
   });
 
-  it('applies migration 055 and records it in the same transaction', async () => {
+  it('applies migration 056 and records it in the same transaction', async () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [], rowCount: 0 })
       .mockResolvedValueOnce({
@@ -141,25 +142,22 @@ describe('migration manifest', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      summary: { total: 55, applied: 1, skipped: 54, errors: 0 },
+      summary: { total: 56, applied: 1, skipped: 55, errors: 0 },
       results: expect.arrayContaining([
-        { name: '055_wifi_trusted_ca_certificates', status: 'applied' },
+        { name: '056_magic_links_email_text', status: 'applied' },
       ]),
     });
     const statements = mockQuery.mock.calls.map(([sql]) => String(sql).trim());
     expect(statements.at(-4)).toBe('BEGIN');
-    expect(statements.at(-3)).toContain('ALTER TABLE certificates');
-    expect(statements.at(-3)).toContain('validated_at TIMESTAMPTZ');
-    expect(statements.at(-3)).toContain('validated_at IS NOT NULL');
-    expect(statements.at(-3)).toContain('idx_certs_env_active_fingerprint_unique');
-    expect(statements.at(-3)).not.toContain('UPDATE certificates');
+    expect(statements.at(-3)).toContain('ALTER TABLE magic_links');
+    expect(statements.at(-3)).toContain('ALTER COLUMN email TYPE TEXT');
     expect(statements.at(-2)).toBe('INSERT INTO _migrations (name) VALUES ($1)');
     expect(statements.at(-1)).toBe('COMMIT');
-    expect(mockQuery.mock.calls.at(-2)?.[1]).toEqual(['055_wifi_trusted_ca_certificates']);
+    expect(mockQuery.mock.calls.at(-2)?.[1]).toEqual(['056_magic_links_email_text']);
     expect(mockEnd).toHaveBeenCalledOnce();
   });
 
-  it('is idempotent when migration 055 is already recorded', async () => {
+  it('is idempotent when migration 056 is already recorded', async () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [], rowCount: 0 })
       .mockResolvedValueOnce({
@@ -171,13 +169,13 @@ describe('migration manifest', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      summary: { total: 55, applied: 0, skipped: 55, errors: 0 },
+      summary: { total: 56, applied: 0, skipped: 56, errors: 0 },
     });
     expect(mockQuery).toHaveBeenCalledTimes(2);
     expect(mockEnd).toHaveBeenCalledOnce();
   });
 
-  it('rolls back and does not record 055 when its SQL fails', async () => {
+  it('rolls back and does not record 056 when its SQL fails', async () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [], rowCount: 0 })
       .mockResolvedValueOnce({
@@ -194,10 +192,10 @@ describe('migration manifest', () => {
     expect({ status: response.status, payload }).toMatchObject({
       status: 500,
       payload: {
-        summary: { total: 55, applied: 0, skipped: 54, errors: 1 },
+        summary: { total: 56, applied: 0, skipped: 55, errors: 1 },
         results: expect.arrayContaining([
           {
-            name: '055_wifi_trusted_ca_certificates',
+            name: '056_magic_links_email_text',
             status: 'error',
             error: 'simulated migration failure',
           },

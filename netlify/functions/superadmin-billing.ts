@@ -23,7 +23,7 @@ const ALLOWED_INVOICE_STATUS_SET = new Set<string>(ALLOWED_INVOICE_STATUSES);
 function getRoute(pathname: string): {
   resource: 'invoices' | 'manual_grant' | 'unknown';
   invoiceId?: string;
-  action?: 'mark_paid';
+  action?: 'mark_paid' | 'cancel';
 } {
   const normalized = pathname
     .replace(/^\/api\/superadmin\/billing\/?/, '')
@@ -33,6 +33,9 @@ function getRoute(pathname: string): {
   if (tail[0] === 'invoices' && tail.length === 1) return { resource: 'invoices' };
   if (tail[0] === 'invoices' && tail.length === 3 && tail[2] === 'mark-paid') {
     return { resource: 'invoices', invoiceId: tail[1], action: 'mark_paid' };
+  }
+  if (tail[0] === 'invoices' && tail.length === 3 && tail[2] === 'cancel') {
+    return { resource: 'invoices', invoiceId: tail[1], action: 'cancel' };
   }
   if (tail[0] === 'grants' && tail[1] === 'manual') return { resource: 'manual_grant' };
   return { resource: 'unknown' };
@@ -205,6 +208,9 @@ export default async function handler(request: Request, _context: Context) {
         const invoice = invoiceResult.rows[0];
         if (!invoice) throw new Response(JSON.stringify({ error: 'Invoice not found' }), { status: 404 });
         if (invoice.status === 'paid') return { invoice, grantsCreated: 0 };
+        if (invoice.status !== 'pending') {
+          throw new Response(JSON.stringify({ error: `Cannot mark a ${invoice.status} invoice as paid` }), { status: 409 });
+        }
         const workspaceLicensing = await getWorkspaceLicensingSettings(invoice.workspace_id);
         if (!workspaceLicensing.effective_licensing_enabled) {
           throw new Response(JSON.stringify({ error: 'Licensing is disabled for this workspace' }), { status: 409 });
@@ -269,6 +275,55 @@ export default async function handler(request: Request, _context: Context) {
       });
 
       return jsonResponse({ message: 'Invoice marked as paid', grants_created: paidResult.grantsCreated });
+    }
+
+    if (request.method === 'POST' && route.resource === 'invoices' && route.action === 'cancel' && route.invoiceId) {
+      if (!isValidUuid(route.invoiceId)) return errorResponse('invoice id must be a valid UUID');
+
+      const cancelResult = await transaction(async (client) => {
+        const invoiceResult = await client.query<{
+          id: string;
+          workspace_id: string;
+          status: string;
+        }>(
+          `SELECT id, workspace_id, status
+           FROM billing_invoices
+           WHERE id = $1
+           FOR UPDATE`,
+          [route.invoiceId]
+        );
+        const invoice = invoiceResult.rows[0];
+        if (!invoice) throw new Response(JSON.stringify({ error: 'Invoice not found' }), { status: 404 });
+        if (invoice.status === 'cancelled') return { invoice, changed: false };
+        if (invoice.status !== 'pending') {
+          throw new Response(JSON.stringify({ error: `Cannot cancel a ${invoice.status} invoice` }), { status: 409 });
+        }
+
+        await client.query(
+          `UPDATE billing_invoices
+           SET status = 'cancelled', updated_at = now()
+           WHERE id = $1`,
+          [route.invoiceId]
+        );
+        return { invoice, changed: true };
+      });
+
+      if (cancelResult.changed) {
+        await logAudit({
+          workspace_id: cancelResult.invoice.workspace_id,
+          user_id: auth.user.id,
+          action: 'superadmin.billing.invoice.cancelled',
+          resource_type: 'invoice',
+          resource_id: route.invoiceId,
+          details: { previous_status: 'pending', status: 'cancelled' },
+          ip_address: getClientIp(request),
+        });
+      }
+
+      return jsonResponse({
+        message: cancelResult.changed ? 'Invoice cancelled' : 'Invoice already cancelled',
+        status: 'cancelled',
+      });
     }
 
     if (request.method === 'POST' && route.resource === 'manual_grant') {

@@ -8,7 +8,7 @@ beforeAll(() => {
   process.env.ENCRYPTION_MASTER_KEY = TEST_KEY;
 });
 
-import { encrypt, decrypt, hashToken, generateToken } from '../crypto.js';
+import { encrypt, decrypt, hashToken, generateToken, parseEncryptionKey } from '../crypto.js';
 
 describe('encrypt and decrypt', () => {
   it('roundtrips a simple string', () => {
@@ -128,5 +128,18 @@ describe('generateToken', () => {
   it('produces unique tokens on each call', () => {
     const tokens = new Set(Array.from({ length: 20 }, () => generateToken()));
     expect(tokens.size).toBe(20);
+  });
+});
+
+describe('parseEncryptionKey', () => {
+  it('accepts exact 32-byte hex and base64 keys', () => {
+    const key = randomBytes(32);
+    expect(parseEncryptionKey(key.toString('hex'))).toEqual(key);
+    expect(parseEncryptionKey(key.toString('base64'))).toEqual(key);
+  });
+
+  it('rejects malformed and incorrectly sized values', () => {
+    expect(() => parseEncryptionKey('not-a-key')).toThrow('32-byte hex or base64');
+    expect(() => parseEncryptionKey(randomBytes(31).toString('base64'))).toThrow('32-byte hex or base64');
   });
 });

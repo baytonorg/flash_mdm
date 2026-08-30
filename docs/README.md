@@ -63,6 +63,7 @@ This documentation is written to help:
 - [Runbook](./operations/runbook.md)
 - [Monitoring & logs](./operations/monitoring-and-logs.md)
 - [Backup & restore](./operations/backup-and-restore.md)
+- [Encryption master-key rotation](./operations/encryption-key-rotation.md)
 - [Incident response basics](./operations/incident-response.md)
 
 ### Reference
