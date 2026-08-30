@@ -39,7 +39,7 @@ describe('VPS installer operational safety', () => {
 
     const upgradeRead = spawnSync(
       'bash',
-      ['-c', 'source "$1"; preserved_upgrade_migration_secret "$2"', '_', installerLib, envFile],
+      ['-c', 'source "$1"; read_env_value "$2" MIGRATION_SECRET', '_', installerLib, envFile],
       { encoding: 'utf8' }
     );
 

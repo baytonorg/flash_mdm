@@ -17,11 +17,6 @@ process.stdout.write(value);
 NODE
 }
 
-preserved_upgrade_migration_secret() {
-  local env_file="$1"
-  read_env_value "$env_file" MIGRATION_SECRET
-}
-
 migration_response_ok() {
   node -e '
     let body = "";
