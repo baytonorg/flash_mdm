@@ -69,6 +69,11 @@ This list is intentionally high-level; details live in code and will be expanded
 - **Concurrency control:** use advisory locks for global reconcile tasks.
 - **Timeouts:** scheduled functions must batch work to avoid runtime timeouts.
 - **Safety:** destructive actions should be guarded by feature flags and dry-run modes.
+- **VPS logging:** the two-second durable-worker poll stays silent when no jobs are
+  available, but retains batch/completion logs whenever work is processed.
+- **VPS shutdown:** `SIGTERM` stops new polls, lets active handlers finish, and
+  closes the shared PostgreSQL pool so planned releases do not wait for idle
+  database handles.
 
 See also:
 

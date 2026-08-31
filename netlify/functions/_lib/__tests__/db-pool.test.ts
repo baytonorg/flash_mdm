@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  end: vi.fn(),
   on: vi.fn(),
   query: vi.fn(),
   Pool: vi.fn(),
@@ -15,10 +16,12 @@ vi.mock('pg', () => ({
 describe('database pool', () => {
   beforeEach(() => {
     vi.resetModules();
+    mocks.end.mockReset().mockResolvedValue(undefined);
     mocks.on.mockReset();
     mocks.query.mockReset().mockResolvedValue({ rows: [{ ok: 1 }] });
     mocks.Pool.mockReset().mockImplementation(function PoolMock() {
       return {
+        end: mocks.end,
         on: mocks.on,
         query: mocks.query,
       };
@@ -39,5 +42,15 @@ describe('database pool', () => {
       'database restarting'
     );
     consoleError.mockRestore();
+  });
+
+  it('closes and clears the active pool during graceful worker shutdown', async () => {
+    const { closeDatabasePool, query } = await import('../db.js');
+
+    await query('SELECT 1');
+    await closeDatabasePool();
+    await closeDatabasePool();
+
+    expect(mocks.end).toHaveBeenCalledTimes(1);
   });
 });

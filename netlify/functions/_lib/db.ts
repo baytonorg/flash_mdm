@@ -26,6 +26,12 @@ function getPool(): InstanceType<typeof Pool> {
   return pool;
 }
 
+export async function closeDatabasePool(): Promise<void> {
+  const activePool = pool;
+  pool = null;
+  if (activePool) await activePool.end();
+}
+
 export async function query<T = Record<string, unknown>>(
   sql: string,
   params: unknown[] = []

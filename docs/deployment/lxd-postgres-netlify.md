@@ -17,9 +17,10 @@ The upgrade path also normalizes ownership of Flash tables and sequences in the
 performed as `postgres`; otherwise later application migrations can fail with
 `must be owner of table`.
 
-The queue worker is stopped as a systemd control group with a 20-second bound
-during release activation. A forced stop is safe because the queue reclaims
-expired worker leases before retrying work.
+The queue worker stops accepting new polls on `SIGTERM`, lets active handlers
+finish, and closes its PostgreSQL pool. Systemd still enforces a 20-second bound
+during release activation. A forced-stop fallback is safe because the queue
+reclaims expired worker leases before retrying work.
 
 ## Recommended shape
 

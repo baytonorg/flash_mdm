@@ -56,6 +56,10 @@
 
 **Retry logic:** Failed jobs increment `attempts` and are retried up to `MAX_ATTEMPTS` (5). Jobs exceeding max attempts are marked `dead`. Successful jobs are marked `completed`.
 
+**Runtime logging:** Netlify invocations retain start and completion logs. The VPS
+durable worker suppresses completion messages for empty polls while retaining
+batch and completion logs for invocations that process work.
+
 **Enrollment lineage reconciliation:** `previousDeviceNames` is processed in a database transaction protected by a per-device advisory lock. If the current AMAPI name already has a local row, that row and all predecessor history are retained. Only when no current row exists is one ranked predecessor renamed to the current name; ranking prefers active rows, then IMEI/serial identity and recency. The upsert records the lineage atomically, and a unique-name race falls back to preserving the winning current row. Historical predecessors referenced by an active successor are not re-imported.
 
 **Policy assignment:** Resolves effective policy through a hierarchy (device assignment > group closure walk > environment assignment) and pushes the appropriate derivative policy to AMAPI. Includes generation hash comparison for change detection and rollback on AMAPI failure.
