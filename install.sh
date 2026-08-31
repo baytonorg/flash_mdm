@@ -990,6 +990,7 @@ cat > "$RELEASE_DIR/worker.ts" << 'WORKEREOF'
 import 'dotenv/config';
 import syncProcessBackground from './netlify/functions/sync-process-background.js';
 import deploymentJobsBackground from './netlify/functions/deployment-jobs-background.js';
+import { closeDatabasePool } from './netlify/functions/_lib/db.js';
 
 const configuredPollMs = Number.parseInt(process.env.FLASH_WORKER_POLL_MS || '2000', 10);
 const pollMs = Number.isFinite(configuredPollMs) ? Math.max(250, configuredPollMs) : 2000;
@@ -1038,6 +1039,7 @@ await Promise.all([
     {} as never
   )),
 ]);
+await closeDatabasePool();
 WORKEREOF
 
 success "worker.ts generated with queue and deployment drains"

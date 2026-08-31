@@ -1933,7 +1933,9 @@ export default async (request: Request, _context: Context) => {
       batchNum++;
     }
 
-    console.log(`Background sync processor completed: ${totalProcessed} jobs across ${batchNum} batch(es)`);
+    if (!isVpsRuntime() || totalProcessed > 0) {
+      console.log(`Background sync processor completed: ${totalProcessed} jobs across ${batchNum} batch(es)`);
+    }
     return Response.json({ status: 'processed', jobs: totalProcessed, batches: batchNum });
   } catch (err) {
     console.error('Background sync processor error:', err);

@@ -150,6 +150,8 @@ describe('VPS server parity', () => {
     expect(worker).toContain("runLoop('deployments'");
     expect(worker).toContain("import syncProcessBackground");
     expect(worker).toContain("import deploymentJobsBackground");
+    expect(worker).toContain("import { closeDatabasePool }");
+    expect(worker).toContain('await closeDatabasePool()');
     expect(installer).toContain('/etc/systemd/system/flashmdm-worker.service');
     expect(installer).toContain('Environment=FLASH_RUNTIME=vps');
     expect(installer).toContain('sudo systemctl restart flashmdm-worker');

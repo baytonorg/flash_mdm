@@ -106,6 +106,57 @@ describe('sync-process-background job queue processing', () => {
     expect(claimSql).toContain("UPDATE pubsub_events pe");
   });
 
+  it('suppresses no-op completion logs for the polling VPS worker', async () => {
+    const originalRuntime = process.env.FLASH_RUNTIME;
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const clientQuery = vi.fn().mockResolvedValue({ rows: [] });
+    mockTransaction.mockImplementation(async (fn) => fn({ query: clientQuery } as never));
+
+    try {
+      process.env.FLASH_RUNTIME = 'vps';
+      const response = await handler(makeRequest(), {} as never);
+
+      expect(response?.status).toBe(200);
+      expect(logSpy).not.toHaveBeenCalledWith(
+        'Background sync processor completed: 0 jobs across 0 batch(es)'
+      );
+    } finally {
+      logSpy.mockRestore();
+      if (originalRuntime === undefined) delete process.env.FLASH_RUNTIME;
+      else process.env.FLASH_RUNTIME = originalRuntime;
+    }
+  });
+
+  it('retains useful VPS completion logs when queue work was processed', async () => {
+    const originalRuntime = process.env.FLASH_RUNTIME;
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const webhookJob = {
+      id: 'job_vps_log_1',
+      job_type: 'webhook',
+      payload: JSON.stringify({ url: 'https://hooks.example.test/webhook' }),
+      environment_id: 'env1',
+      attempts: 0,
+      max_attempts: 3,
+    };
+    mockTransaction
+      .mockImplementationOnce(async () => [webhookJob] as never)
+      .mockImplementationOnce(async () => [] as never);
+
+    try {
+      process.env.FLASH_RUNTIME = 'vps';
+      const response = await handler(makeRequest(), {} as never);
+
+      expect(response?.status).toBe(200);
+      expect(logSpy).toHaveBeenCalledWith(
+        'Background sync processor completed: 1 jobs across 1 batch(es)'
+      );
+    } finally {
+      logSpy.mockRestore();
+      if (originalRuntime === undefined) delete process.env.FLASH_RUNTIME;
+      else process.env.FLASH_RUNTIME = originalRuntime;
+    }
+  });
+
   it('marks unknown job types as dead and does not mark them completed', async () => {
     const unknownJob = {
       id: 'job1',
