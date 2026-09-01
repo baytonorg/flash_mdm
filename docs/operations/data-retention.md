@@ -31,7 +31,7 @@ This function runs daily at **03:00 UTC** (`0 3 * * *`). It reads retention conf
 
 As built (with defaults when unset/invalid):
 
-- `AUDIT_LOG_RETENTION_DAYS` (default: **365**)
+- `AUDIT_LOG_RETENTION_DAYS` (default: **30**)
 - `DEVICE_LOCATION_RETENTION_DAYS` (default: **90**)
 - `DEVICE_STATUS_REPORT_RETENTION_DAYS` (default: **90**)
 - `SOFT_DELETED_DEVICE_RETENTION_DAYS` (default: **30**)

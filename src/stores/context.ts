@@ -9,6 +9,7 @@ interface Workspace {
   gcp_project_id: string | null;
   has_google_credentials?: boolean;
   default_pubsub_topic?: string | null;
+  settings?: unknown;
   user_role?: string;
   access_scope?: string;
 }

@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { Monitor, FileText, KeyRound, ShieldCheck } from 'lucide-react';
+import { Link } from 'react-router';
+import { AlertTriangle, Monitor, FileText, KeyRound, ShieldCheck } from 'lucide-react';
 import { useContextStore } from '@/stores/context';
 import { apiClient } from '@/api/client';
 import WidgetGrid from '@/components/dashboard/WidgetGrid';
@@ -26,6 +27,11 @@ interface DashboardData {
   compliance_rate: number;
   enrollment_trend: Array<{ date: string; count: number }>;
   recent_events: Array<{ id: string; action: string; resource_type: string; created_at: string }>;
+  device_report_health: {
+    stale_after_days: number;
+    stale: number;
+    unknown: number;
+  };
 }
 
 function SkeletonCard() {
@@ -139,6 +145,30 @@ export default function Dashboard() {
             onRetry={() => void refetch()}
             retrying={isFetching}
           />
+        </div>
+      )}
+
+      {(data.device_report_health.stale > 0 || data.device_report_health.unknown > 0) && (
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+            <div>
+              <p className="text-sm font-semibold">Device report health needs attention</p>
+              <p className="text-sm text-amber-800">
+                {data.device_report_health.stale} stale after {data.device_report_health.stale_after_days} days
+                {data.device_report_health.unknown > 0
+                  ? `; ${data.device_report_health.unknown} never reported`
+                  : ''}.
+                {' '}AMAPI resource state is shown separately.
+              </p>
+            </div>
+          </div>
+          <Link
+            to={`/devices?report_freshness=${data.device_report_health.stale > 0 ? 'stale' : 'unknown'}`}
+            className="text-sm font-semibold text-amber-900 underline underline-offset-2 hover:text-amber-700"
+          >
+            View affected devices
+          </Link>
         </div>
       )}
 

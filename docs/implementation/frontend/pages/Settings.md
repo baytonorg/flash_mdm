@@ -49,7 +49,7 @@
 
 The page renders four tabs controlled via URL search params (`?tab=workspace|environment|api|profile`). Tab visibility is RBAC-controlled: the workspace tab requires workspace-level read permission and the environment tab requires environment-level read permission.
 
-**Workspace Tab**: Edit workspace name and default Pub/Sub topic, upload/replace GCP service account credentials (JSON key file), scan for and recover disassociated enterprises (creates a new environment and binds the orphaned enterprise with device import), and manage workspace-scoped signup links.
+**Workspace Tab**: Edit workspace name, default Pub/Sub topic, and the device-report stale threshold (1-365 days, default 7); upload/replace GCP service account credentials (JSON key file); scan for and recover disassociated enterprises (creates a new environment and binds the orphaned enterprise with device import); and manage workspace-scoped signup links.
 
 **Environment Tab**: Lists all environments with bound/unbound status. Supports creating new environments, switching between them, editing environment name and Pub/Sub topic (with workspace default inheritance), binding enterprises via Google sign-up URL flow, enterprise upgrade, reconcile device imports, environment-level policy assignment, environment deletion (with confirmation), sign-in URL enrollment configuration, and zero-touch provisioning configuration. The zero-touch iframe requires a selected existing or newly created enrollment token and receives the corresponding Android Device Policy provisioning extras from the shared backend. The notification types for binding include `ENTERPRISE_UPGRADE`.
 

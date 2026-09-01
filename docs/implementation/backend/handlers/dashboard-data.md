@@ -16,6 +16,7 @@
 | `requireAuth` | `_lib/auth` | Authentication |
 | `requireEnvironmentAccessScopeForPermission` | `_lib/rbac` | Environment access scope enforcement (full or group-scoped) |
 | `jsonResponse`, `errorResponse`, `getSearchParams` | `_lib/helpers` | Response utilities |
+| `getDeviceReportStaleAfterDays` | `_lib/device-health` | Resolves the workspace-configured report freshness threshold (seven-day default) |
 
 ## Key Logic
 
@@ -23,7 +24,7 @@ GET-only endpoint. Requires `environment_id` query parameter. Uses `requireEnvir
 
 **Group-scoped users:** When the caller has `mode: 'group'` access, all device queries are filtered by `group_id = ANY($2::uuid[])`. If no groups are accessible, returns an empty dashboard with zero counts. Policy count, enrollment token count, and audit events are also scoped accordingly.
 
-**Parallel queries:** All 12 dashboard queries run in parallel via `Promise.all` for performance:
+**Parallel queries:** Dashboard queries run in parallel via `Promise.all` for performance:
 1. Devices by state
 2. Devices by ownership
 3. Devices by management mode
@@ -36,10 +37,11 @@ GET-only endpoint. Requires `environment_id` query parameter. Uses `requireEnvir
 10. Enrollment trend (daily counts over last 30 days)
 11. Recent audit events (last 10)
 12. Total device count
+13. Stale and never-reported device counts, independent of AMAPI resource state
 
 **Compliance rate:** Calculated as `compliant / (compliant + non_compliant) * 100`, rounded to two decimal places.
 
-**Response:** Returns both a primary shape (flat fields like `device_count`, `compliance_rate`, distribution maps) and backwards-compatible fields (`total_devices`, `compliance` object).
+**Response:** Returns both a primary shape (flat fields like `device_count`, `compliance_rate`, distribution maps), a `device_report_health` object (`stale_after_days`, `stale`, `unknown`), and backwards-compatible fields (`total_devices`, `compliance` object).
 
 ## API Surface
 

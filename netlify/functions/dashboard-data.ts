@@ -3,6 +3,7 @@ import { query, queryOne } from './_lib/db.js';
 import { requireAuth } from './_lib/auth.js';
 import { requireEnvironmentAccessScopeForPermission } from './_lib/rbac.js';
 import { jsonResponse, errorResponse, getSearchParams } from './_lib/helpers.js';
+import { getDeviceReportStaleAfterDays } from './_lib/device-health.js';
 
 export default async (request: Request, context: Context) => {
   try {
@@ -18,6 +19,14 @@ export default async (request: Request, context: Context) => {
 
     const envScope = await requireEnvironmentAccessScopeForPermission(auth, environmentId, 'read');
     const scopedGroupIds = envScope.mode === 'group' ? (envScope.accessible_group_ids ?? []) : null;
+    const workspace = await queryOne<{ settings: unknown }>(
+      `SELECT w.settings
+       FROM environments e
+       JOIN workspaces w ON w.id = e.workspace_id
+       WHERE e.id = $1`,
+      [environmentId]
+    );
+    const staleAfterDays = getDeviceReportStaleAfterDays(workspace?.settings);
 
     if (envScope.mode === 'group' && scopedGroupIds.length === 0) {
       return jsonResponse({
@@ -35,6 +44,7 @@ export default async (request: Request, context: Context) => {
         recent_events: [],
         total_devices: 0,
         compliance: { compliant: 0, non_compliant: 0, rate: 0 },
+        device_report_health: { stale_after_days: staleAfterDays, stale: 0, unknown: 0 },
       });
     }
 
@@ -57,6 +67,7 @@ export default async (request: Request, context: Context) => {
       enrollmentTrend,
       recentEvents,
       totalDevices,
+      deviceReportHealth,
     ] = await Promise.all([
     // Devices by state
     query<{ state: string; count: string }>(
@@ -189,6 +200,19 @@ export default async (request: Request, context: Context) => {
        WHERE environment_id = $1 AND deleted_at IS NULL${deviceScopeClause}`,
       deviceScopeParams
     ),
+
+    // Device report freshness is independent of the AMAPI resource state.
+    queryOne<{ stale: string; unknown: string }>(
+      `SELECT
+         COUNT(*) FILTER (
+           WHERE last_status_report_at IS NOT NULL
+             AND last_status_report_at < now() - make_interval(days => $${deviceScopeParams.length + 1})
+         ) AS stale,
+         COUNT(*) FILTER (WHERE last_status_report_at IS NULL) AS unknown
+       FROM devices
+       WHERE environment_id = $1 AND deleted_at IS NULL${deviceScopeClause}`,
+      [...deviceScopeParams, staleAfterDays]
+    ),
     ]);
 
     // Calculate compliance rate
@@ -243,6 +267,11 @@ export default async (request: Request, context: Context) => {
       enrollment_token_count: parseInt(enrollmentTokenCount?.count ?? '0', 10),
       enrollment_trend: enrollmentTrendRows,
       recent_events: recentEvents,
+      device_report_health: {
+        stale_after_days: staleAfterDays,
+        stale: parseInt(deviceReportHealth?.stale ?? '0', 10),
+        unknown: parseInt(deviceReportHealth?.unknown ?? '0', 10),
+      },
 
       // Backwards-compatible fields retained for older consumers
       total_devices: totalDeviceCount,

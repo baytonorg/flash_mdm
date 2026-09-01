@@ -33,7 +33,7 @@ Runs as a Netlify scheduled function (cron: `0 3 * * *`). Performs the following
 5. **Completed/dead jobs** -- delete from `job_queue` older than 7 days
 6. **Stale rate limit buckets** -- delete buckets unused for 24 hours
 7. **Expired API keys** -- revoke keys past their `expires_at`
-8. **Old audit logs** -- delete older than `AUDIT_LOG_RETENTION_DAYS` (default 365)
+8. **Old audit logs** -- delete older than `AUDIT_LOG_RETENTION_DAYS` (default 30)
 9. **Device locations** -- delete older than `DEVICE_LOCATION_RETENTION_DAYS` (default 90)
 10. **Device status reports** -- delete older than `DEVICE_STATUS_REPORT_RETENTION_DAYS` (default 90)
 11. **Soft-deleted devices** -- nullify FK references in `audit_log` and `workflow_executions`, then hard-delete devices soft-deleted longer than `SOFT_DELETED_DEVICE_RETENTION_DAYS` (default 30)

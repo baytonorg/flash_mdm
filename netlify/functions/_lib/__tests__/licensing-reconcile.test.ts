@@ -177,11 +177,18 @@ describe('runLicensingReconcile', () => {
 
   it('resolves open overage cases and exits early when platform licensing is disabled', async () => {
     mockIsPlatformLicensingEnabled.mockResolvedValueOnce(false);
+    mockSyncLicensingWindowExpiries.mockResolvedValueOnce({
+      platform_grants_expired: 2,
+      environment_entitlements_expired: 3,
+    });
 
     const stats = await runLicensingReconcile({ dryRun: false });
 
     expect(stats.lock_acquired).toBe(true);
     expect(stats.environments_checked).toBe(0);
+    expect(stats.platform_grants_expired).toBe(2);
+    expect(stats.environment_entitlements_expired).toBe(3);
+    expect(mockSyncLicensingWindowExpiries).toHaveBeenCalledOnce();
     expect(
       mockExecute.mock.calls.some(([sql]) => typeof sql === 'string' && sql.includes('UPDATE license_overage_cases'))
     ).toBe(true);
@@ -189,6 +196,10 @@ describe('runLicensingReconcile', () => {
   });
 
   it('does not create cases or queue commands while dry-run is enabled', async () => {
+    mockSyncLicensingWindowExpiries.mockResolvedValueOnce({
+      platform_grants_expired: 1,
+      environment_entitlements_expired: 4,
+    });
     mockQuery
       .mockResolvedValueOnce([{ id: 'env_1', workspace_id: 'ws_1' }])
       .mockResolvedValueOnce([]);
@@ -231,6 +242,10 @@ describe('runLicensingReconcile', () => {
     expect(stats.cases_created).toBe(0);
     expect(stats.disable_actions_queued).toBe(0);
     expect(stats.wipe_actions_queued).toBe(0);
+    expect(stats.platform_grants_expired).toBe(1);
+    expect(stats.environment_entitlements_expired).toBe(4);
+    expect(mockSyncLicensingWindowExpiries).toHaveBeenCalledOnce();
+    expect(mockQueueAndSendBillingEmail).not.toHaveBeenCalled();
     expect(mockLockClientQuery).toHaveBeenCalledWith(
       'SELECT pg_advisory_unlock($1)',
       [724501923]

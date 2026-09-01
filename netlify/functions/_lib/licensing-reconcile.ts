@@ -710,6 +710,12 @@ export async function runLicensingReconcile(options: ReconcileOptions): Promise<
     }
 
     try {
+    // Expiry normalization is lifecycle maintenance, not enforcement. Keep persisted
+    // grant/entitlement state accurate even when enforcement is disabled or dry-run.
+    const expiryStats = await syncLicensingWindowExpiries();
+    stats.platform_grants_expired = expiryStats.platform_grants_expired;
+    stats.environment_entitlements_expired = expiryStats.environment_entitlements_expired;
+
     const platformLicensingEnabled = await isPlatformLicensingEnabled();
     if (!platformLicensingEnabled) {
       if (!options.dryRun) {
@@ -740,9 +746,6 @@ export async function runLicensingReconcile(options: ReconcileOptions): Promise<
     }
 
     if (!options.dryRun) {
-      const expiryStats = await syncLicensingWindowExpiries();
-      stats.platform_grants_expired = expiryStats.platform_grants_expired;
-      stats.environment_entitlements_expired = expiryStats.environment_entitlements_expired;
       await queueNearExpiryBillingNotifications(options, stats);
     }
 

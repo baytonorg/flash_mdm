@@ -11,7 +11,7 @@ export default async (_request: Request, _context: Context) => {
   console.log('Daily cleanup started');
 
   const results: Record<string, number> = {};
-  const auditRetentionDays = parsePositiveInt(process.env.AUDIT_LOG_RETENTION_DAYS, 365);
+  const auditRetentionDays = parsePositiveInt(process.env.AUDIT_LOG_RETENTION_DAYS, 30);
   const locationRetentionDays = parsePositiveInt(process.env.DEVICE_LOCATION_RETENTION_DAYS, 90);
   const statusReportRetentionDays = parsePositiveInt(process.env.DEVICE_STATUS_REPORT_RETENTION_DAYS, 90);
   const softDeletedDeviceRetentionDays = parsePositiveInt(process.env.SOFT_DELETED_DEVICE_RETENTION_DAYS, 30);
@@ -82,7 +82,7 @@ export default async (_request: Request, _context: Context) => {
     );
     results.expired_api_keys = expiredApiKeys.rowCount;
 
-    // Retain audit logs for a bounded period (default 365 days)
+    // Retain audit logs for a bounded period (default 30 days)
     results.deleted_audit_log_rows = await deleteInBatches(
       'audit_log',
       `created_at < now() - make_interval(days => $1)`,

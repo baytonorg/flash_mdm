@@ -46,9 +46,9 @@
 The reconciliation loop is designed to run as a scheduled background job. It uses a Postgres advisory lock (`pg_try_advisory_lock`) to guarantee only one instance runs at a time; concurrent invocations exit immediately with `skipped_due_to_lock: true`.
 
 **Main flow:**
-1. Check if platform licensing is enabled globally. If disabled, resolve all open cases and cancel queued enforcement actions.
-2. Expire stale license grants and environment entitlements via `syncLicensingWindowExpiries`.
-3. Send near-expiry billing notifications for grants/entitlements expiring in 30, 7, or 1 days.
+1. Expire stale license grants and environment entitlements via `syncLicensingWindowExpiries`, including during dry-run or when enforcement is disabled.
+2. Check if platform licensing is enabled globally. If disabled, resolve all open cases and cancel queued enforcement actions in live mode.
+3. In live mode, send near-expiry billing notifications for grants/entitlements expiring in 30, 7, or 1 days.
 4. Iterate all environments in batches of 200.
 5. For each environment, get the licensing snapshot and determine the overage phase.
 
@@ -58,4 +58,4 @@ The reconciliation loop is designed to run as a scheduled background job. It use
 - **Disable phase**: Queue DISABLE commands for the most recently enrolled active devices up to the overage count.
 - **Wipe phase**: Queue WIPE commands for previously disabled devices that have not yet been wiped.
 
-Enforcement actions are capped at 500 per run to prevent runaway operations. All enforcement and notification actions are skipped in dry-run mode.
+Enforcement actions are capped at 500 per run to prevent runaway operations. All enforcement and notification actions are skipped in dry-run mode; expiry-status normalization still runs because it does not grant seats or issue device commands.
