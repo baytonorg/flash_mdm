@@ -1117,6 +1117,7 @@ WorkingDirectory=${CURRENT_LINK}
 ExecStart=${TSX_BIN} server.ts
 Restart=on-failure
 RestartSec=5
+SuccessExitStatus=143 SIGTERM
 Environment=NODE_ENV=production
 Environment=FLASH_RUNTIME=vps
 Environment=FLASH_INTERNAL_ORIGIN=http://127.0.0.1:3000
