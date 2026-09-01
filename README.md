@@ -349,7 +349,7 @@ app.all('/api/devices/*', h(deviceGet));        // catch-all after specific rout
 // ... one line per redirect rule
 
 // SPA fallback - serve the built frontend
-app.use('/assets/*', serveStatic({ root: './dist' }));
+app.use('/*', serveStatic({ root: './dist' }));
 app.get('*', serveStatic({ root: './dist', path: '/index.html' }));
 
 serve({ fetch: app.fetch, port: 3000 });

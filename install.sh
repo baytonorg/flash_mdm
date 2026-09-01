@@ -974,8 +974,9 @@ app.all('/.netlify/functions/sync-process-background', h(syncProcessBackground))
 app.all('/.netlify/functions/workflow-evaluate-background', h(workflowEvaluateBackground));
 
 // ── Static assets & SPA fallback ────────────────────────────────────────────
-app.use('/assets/*', serveStatic({ root: './dist' }));
-app.use('/favicon.ico', serveStatic({ root: './dist' }));
+// Serve every Vite public asset before the client-side route fallback. Limiting
+// this to /assets/* causes root-level files such as /favicon.svg to become HTML.
+app.use('/*', serveStatic({ root: './dist' }));
 app.get('*', serveStatic({ root: './dist', path: '/index.html' }));
 
 // ── Start ───────────────────────────────────────────────────────────────────

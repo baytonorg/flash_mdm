@@ -142,6 +142,14 @@ describe('VPS server parity', () => {
     expect(installer.slice(internalRoute, staticFallback)).toContain('reverse_proxy localhost:3000');
   });
 
+  it('serves root-level Vite public assets before the SPA fallback', () => {
+    const staticAssets = server.indexOf("app.use('/*', serveStatic({ root: './dist' }));");
+    const spaFallback = server.indexOf("app.get('*', serveStatic({ root: './dist', path: '/index.html' }));");
+
+    expect(staticAssets).toBeGreaterThan(-1);
+    expect(spaFallback).toBeGreaterThan(staticAssets);
+  });
+
   it('generates an autonomous worker and a restartable VPS service', () => {
     const installer = readText('install.sh');
     const worker = extractGeneratedWorker();
