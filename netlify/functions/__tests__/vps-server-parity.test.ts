@@ -25,6 +25,17 @@ function extractGeneratedWorker(): string {
   return match[1];
 }
 
+function extractGeneratedSystemdUnit(serviceName: string): string {
+  const installer = readText('install.sh');
+  const marker = `sudo tee /etc/systemd/system/${serviceName} > /dev/null <<UNITEOF\n`;
+  const start = installer.indexOf(marker);
+  if (start === -1) throw new Error(`Could not find generated ${serviceName}`);
+  const contentStart = start + marker.length;
+  const end = installer.indexOf('\nUNITEOF', contentStart);
+  if (end === -1) throw new Error(`Could not find end of generated ${serviceName}`);
+  return installer.slice(contentStart, end);
+}
+
 function parseNetlifyRedirects() {
   const toml = readText('netlify.toml');
   const blocks = [...toml.matchAll(/\[\[redirects\]\]([\s\S]*?)(?=\n\[\[|$)/g)].map((match) => match[1]);
@@ -163,6 +174,13 @@ describe('VPS server parity', () => {
     expect(installer).toContain('/etc/systemd/system/flashmdm-worker.service');
     expect(installer).toContain('Environment=FLASH_RUNTIME=vps');
     expect(installer).toContain('sudo systemctl restart flashmdm-worker');
+  });
+
+  it('treats the web server\'s intentional SIGTERM shutdown as successful', () => {
+    const service = extractGeneratedSystemdUnit('flashmdm.service');
+
+    expect(service).toContain('Restart=on-failure');
+    expect(service).toContain('SuccessExitStatus=143 SIGTERM');
   });
 
   it('runs command-result and keyed-app-state processing through the shared handler', () => {

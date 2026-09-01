@@ -498,6 +498,7 @@ WorkingDirectory=/path/to/flash_mdm
 ExecStart=/path/to/flash_mdm/node_modules/.bin/tsx server.ts
 Restart=on-failure
 RestartSec=5
+SuccessExitStatus=143 SIGTERM
 Environment=NODE_ENV=production
 
 [Install]
