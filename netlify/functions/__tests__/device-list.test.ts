@@ -40,7 +40,11 @@ describe('device-list filters and validation', () => {
       accessible_group_ids: null,
     } as never);
     mockQuery.mockResolvedValue([] as never);
-    mockQueryOne.mockResolvedValue({ count: '0' } as never);
+    mockQueryOne.mockImplementation(async (sql) => (
+      String(sql).includes('JOIN workspaces')
+        ? { settings: {} }
+        : { count: '0' }
+    ) as never);
   });
 
   it('rejects malformed environment_id before RBAC/DB access', async () => {
@@ -114,6 +118,21 @@ describe('device-list filters and validation', () => {
     expect(mockQuery).not.toHaveBeenCalled();
   });
 
+  it('rejects invalid report freshness filters before database queries', async () => {
+    const res = await handler(
+      new Request(
+        `http://localhost/api/device-list?environment_id=${environmentId}&report_freshness=offline`,
+        { method: 'GET' }
+      ),
+      {} as never
+    );
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: 'report_freshness must be fresh, stale, or unknown' });
+    expect(mockQueryOne).not.toHaveBeenCalled();
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['true', true],
     ['false', false],
@@ -126,7 +145,7 @@ describe('device-list filters and validation', () => {
       {} as never
     );
 
-    const [countSql, countParams] = mockQueryOne.mock.calls[0] ?? [];
+    const [countSql, countParams] = mockQueryOne.mock.calls[1] ?? [];
     expect(String(countSql)).toContain('d.policy_compliant = $2');
     expect(countParams).toEqual([environmentId, expectedValue]);
 
@@ -147,7 +166,9 @@ describe('device-list filters and validation', () => {
         { manufacturer: 'motorola' },
       ] as never)
       .mockResolvedValueOnce([device] as never);
-    mockQueryOne.mockResolvedValueOnce({ count: '26' } as never);
+    mockQueryOne
+      .mockResolvedValueOnce({ settings: { device_health: { stale_after_days: 14 } } } as never)
+      .mockResolvedValueOnce({ count: '26' } as never);
 
     const res = await handler(
       new Request(
@@ -164,7 +185,7 @@ describe('device-list filters and validation', () => {
     expect(String(facetSql)).not.toContain('LOWER(BTRIM(d.manufacturer)) = LOWER($');
     expect(facetParams).toEqual([environmentId]);
 
-    const [countSql, countParams] = mockQueryOne.mock.calls[0] ?? [];
+    const [countSql, countParams] = mockQueryOne.mock.calls[1] ?? [];
     expect(String(countSql)).toContain('LOWER(BTRIM(d.manufacturer)) = LOWER($2)');
     expect(String(countSql)).toContain('d.policy_compliant = $3');
     expect(countParams).toEqual([environmentId, 'google', false]);
@@ -176,7 +197,7 @@ describe('device-list filters and validation', () => {
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({
-      devices: [device],
+      devices: [{ ...device, report_freshness: 'unknown' }],
       pagination: { page: 2, per_page: 10, total: 26, total_pages: 3 },
       facets: {
         manufacturers: [
@@ -184,6 +205,7 @@ describe('device-list filters and validation', () => {
           { value: 'motorola', label: 'motorola' },
         ],
       },
+      device_report_stale_after_days: 14,
     });
   });
 
@@ -203,8 +225,9 @@ describe('device-list filters and validation', () => {
       devices: [],
       pagination: { page: 1, per_page: 50, total: 0, total_pages: 0 },
       facets: { manufacturers: [] },
+      device_report_stale_after_days: 7,
     });
-    expect(mockQueryOne).not.toHaveBeenCalled();
+    expect(mockQueryOne).toHaveBeenCalledTimes(1);
     expect(mockQuery).not.toHaveBeenCalled();
   });
 
@@ -230,10 +253,28 @@ describe('device-list filters and validation', () => {
     expect(String(facetSql)).toContain('d.group_id = ANY($2::uuid[])');
     expect(facetParams).toEqual([environmentId, accessibleGroupIds]);
 
-    const [countSql, countParams] = mockQueryOne.mock.calls[0] ?? [];
+    const [countSql, countParams] = mockQueryOne.mock.calls[1] ?? [];
     expect(String(countSql)).toContain('d.group_id = ANY($2::uuid[])');
     expect(String(countSql)).toContain('LOWER(BTRIM(d.manufacturer)) = LOWER($3)');
     expect(String(countSql)).toContain('d.policy_compliant = $4');
     expect(countParams).toEqual([environmentId, accessibleGroupIds, 'Google', false]);
+  });
+
+  it.each([
+    ['stale', '<', [environmentId, 7]],
+    ['fresh', '>=', [environmentId, 7]],
+    ['unknown', 'IS NULL', [environmentId]],
+  ])('filters report_freshness=%s using the workspace threshold', async (freshness, operator, expectedParams) => {
+    await handler(
+      new Request(
+        `http://localhost/api/device-list?environment_id=${environmentId}&report_freshness=${freshness}`,
+        { method: 'GET' }
+      ),
+      {} as never
+    );
+
+    const [countSql, countParams] = mockQueryOne.mock.calls[1] ?? [];
+    expect(String(countSql)).toContain(`d.last_status_report_at ${operator}`);
+    expect(countParams).toEqual(expectedParams);
   });
 });

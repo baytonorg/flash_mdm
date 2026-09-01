@@ -28,7 +28,7 @@ vi.mock('../_lib/audit.js', () => ({
   logAudit: vi.fn(),
 }));
 
-import { query, queryOne } from '../_lib/db.js';
+import { execute, query, queryOne } from '../_lib/db.js';
 import { requireAuth } from '../_lib/auth.js';
 import { requireWorkspacePermission } from '../_lib/rbac.js';
 import { amapiCall } from '../_lib/amapi.js';
@@ -36,6 +36,7 @@ import handler from '../workspace-crud.ts';
 
 const mockQuery = vi.mocked(query);
 const mockQueryOne = vi.mocked(queryOne);
+const mockExecute = vi.mocked(execute);
 const mockRequireAuth = vi.mocked(requireAuth);
 const mockRequireWorkspacePermission = vi.mocked(requireWorkspacePermission);
 const mockAmapiCall = vi.mocked(amapiCall);
@@ -43,6 +44,7 @@ const mockAmapiCall = vi.mocked(amapiCall);
 beforeEach(() => {
   mockQuery.mockReset();
   mockQueryOne.mockReset();
+  mockExecute.mockReset();
   mockRequireAuth.mockReset();
   mockRequireWorkspacePermission.mockReset();
   mockAmapiCall.mockReset();
@@ -52,6 +54,44 @@ beforeEach(() => {
     user: { id: 'user_1', is_superadmin: false },
   } as never);
   mockRequireWorkspacePermission.mockResolvedValue('admin' as never);
+});
+
+describe('workspace-crud device report health settings', () => {
+  it('validates the stale threshold range', async () => {
+    const res = await handler(
+      new Request('http://localhost/api/workspaces/update', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'ws_1', device_report_stale_after_days: 0 }),
+      }),
+      {} as never
+    );
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({
+      error: 'device_report_stale_after_days must be an integer between 1 and 365',
+    });
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
+  it('updates only the nested device health setting while preserving workspace settings', async () => {
+    mockExecute.mockResolvedValue({ rowCount: 1 } as never);
+
+    const res = await handler(
+      new Request('http://localhost/api/workspaces/update', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'ws_1', device_report_stale_after_days: 14 }),
+      }),
+      {} as never
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockExecute).toHaveBeenCalledWith(
+      expect.stringContaining("settings = jsonb_set(COALESCE(settings, '{}'::jsonb), '{device_health}'"),
+      [14, 'ws_1']
+    );
+  });
 });
 
 describe('workspace-crud orphaned enterprise discovery', () => {

@@ -3,6 +3,7 @@ import { query, queryOne } from './_lib/db.js';
 import { requireAuth } from './_lib/auth.js';
 import { requireEnvironmentAccessScopeForResourcePermission } from './_lib/rbac.js';
 import { jsonResponse, errorResponse, getSearchParams, isValidUuid } from './_lib/helpers.js';
+import { getDeviceReportFreshness, getDeviceReportStaleAfterDays } from './_lib/device-health.js';
 
 export default async (request: Request, _context: Context) => {
   try {
@@ -32,6 +33,13 @@ export default async (request: Request, _context: Context) => {
   const policyCompliantFilter = policyCompliantParam
     ? policyCompliantParam === 'true'
     : null;
+  const reportFreshnessFilter = params.get('report_freshness');
+  if (
+    reportFreshnessFilter
+    && !['fresh', 'stale', 'unknown'].includes(reportFreshnessFilter)
+  ) {
+    return errorResponse('report_freshness must be fresh, stale, or unknown');
+  }
   const groupId = params.get('group_id');
   if (groupId && !isValidUuid(groupId)) return errorResponse('group_id must be a valid UUID');
   const sortBy = params.get('sort_by') ?? 'last_status_report_at';
@@ -44,6 +52,15 @@ export default async (request: Request, _context: Context) => {
     safeSortBy === 'last_status_report_at'
       ? `d.last_status_report_at ${sortDir} NULLS LAST, d.updated_at DESC`
       : `d.${safeSortBy} ${sortDir}`;
+
+  const workspace = await queryOne<{ settings: unknown }>(
+    `SELECT w.settings
+     FROM environments e
+     JOIN workspaces w ON w.id = e.workspace_id
+     WHERE e.id = $1`,
+    [environmentId]
+  );
+  const staleAfterDays = getDeviceReportStaleAfterDays(workspace?.settings);
 
   let scopeWhereClause = 'd.environment_id = $1 AND d.deleted_at IS NULL';
   const scopeParams: unknown[] = [environmentId];
@@ -64,6 +81,7 @@ export default async (request: Request, _context: Context) => {
         devices: [],
         pagination: { page, per_page: perPage, total: 0, total_pages: 0 },
         facets: { manufacturers: [] },
+        device_report_stale_after_days: staleAfterDays,
       });
     }
     scopeWhereClause += ` AND d.group_id = ANY($${scopeParamIdx}::uuid[])`;
@@ -122,6 +140,18 @@ export default async (request: Request, _context: Context) => {
     paramIdx++;
   }
 
+  if (reportFreshnessFilter === 'unknown') {
+    whereClause += ' AND d.last_status_report_at IS NULL';
+  } else if (reportFreshnessFilter === 'stale') {
+    whereClause += ` AND d.last_status_report_at IS NOT NULL AND d.last_status_report_at < now() - make_interval(days => $${paramIdx})`;
+    queryParams.push(staleAfterDays);
+    paramIdx++;
+  } else if (reportFreshnessFilter === 'fresh') {
+    whereClause += ` AND d.last_status_report_at IS NOT NULL AND d.last_status_report_at >= now() - make_interval(days => $${paramIdx})`;
+    queryParams.push(staleAfterDays);
+    paramIdx++;
+  }
+
   // Count total
   const countResult = await queryOne<{ count: string }>(
     `SELECT COUNT(*) as count FROM devices d WHERE ${whereClause}`,
@@ -131,7 +161,7 @@ export default async (request: Request, _context: Context) => {
 
   // Fetch devices
   const paginatedParams = [...queryParams, perPage, offset];
-  const devices = await query(
+  const deviceRows = await query<{ last_status_report_at: string | null } & Record<string, unknown>>(
     `SELECT d.id, d.amapi_name, d.name, d.serial_number, d.imei, d.manufacturer, d.model,
             d.os_version, d.security_patch_level, d.state, d.ownership, d.management_mode,
             d.policy_compliant, d.enrollment_time, d.last_status_report_at, d.last_policy_sync_at,
@@ -161,6 +191,10 @@ export default async (request: Request, _context: Context) => {
      LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
     paginatedParams
   );
+  const devices = deviceRows.map((device) => ({
+    ...device,
+    report_freshness: getDeviceReportFreshness(device.last_status_report_at, staleAfterDays),
+  }));
 
     return jsonResponse({
       devices,
@@ -171,6 +205,7 @@ export default async (request: Request, _context: Context) => {
         total_pages: Math.ceil(total / perPage),
       },
       facets: { manufacturers: manufacturerFacets },
+      device_report_stale_after_days: staleAfterDays,
     });
   } catch (err) {
     if (isResponseLike(err)) return err;

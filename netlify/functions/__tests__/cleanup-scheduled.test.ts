@@ -29,7 +29,7 @@ describe('cleanup-scheduled retention jobs', () => {
     expect(mockExecute).toHaveBeenCalledTimes(15);
     expect(mockExecute.mock.calls[6]?.[0]).toContain('totp_pending_created_at');
     expect(mockExecute.mock.calls[7]?.[0]).toContain('UPDATE api_keys');
-    expect(mockExecute.mock.calls[8]?.[1]).toEqual([365, DELETE_BATCH_SIZE]); // audit log
+    expect(mockExecute.mock.calls[8]?.[1]).toEqual([30, DELETE_BATCH_SIZE]); // audit log
     expect(mockExecute.mock.calls[9]?.[1]).toEqual([90, DELETE_BATCH_SIZE]); // device locations
     expect(mockExecute.mock.calls[10]?.[1]).toEqual([90, DELETE_BATCH_SIZE]); // status reports
     expect(mockExecute.mock.calls[11]?.[1]).toEqual([30, DELETE_BATCH_SIZE]); // flashagent chat messages
@@ -97,7 +97,7 @@ describe('cleanup-scheduled retention jobs', () => {
     expect(auditDeleteCalls).toHaveLength(3);
     expect(auditDeleteCalls[0]?.[0]).toContain('SELECT id FROM audit_log');
     expect(auditDeleteCalls[0]?.[0]).toContain('LIMIT $2');
-    expect(auditDeleteCalls[0]?.[1]).toEqual([365, DELETE_BATCH_SIZE]);
+    expect(auditDeleteCalls[0]?.[1]).toEqual([30, DELETE_BATCH_SIZE]);
 
     expect(logSpy).toHaveBeenCalledWith(
       'Daily cleanup completed:',

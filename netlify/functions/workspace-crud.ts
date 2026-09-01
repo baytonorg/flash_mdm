@@ -6,6 +6,10 @@ import { encrypt } from './_lib/crypto.js';
 import { amapiCall, getAmapiErrorHttpStatus } from './_lib/amapi.js';
 import { logAudit } from './_lib/audit.js';
 import { jsonResponse, errorResponse, parseJsonBody, getClientIp, getSearchParams } from './_lib/helpers.js';
+import {
+  MAX_DEVICE_REPORT_STALE_AFTER_DAYS,
+  MIN_DEVICE_REPORT_STALE_AFTER_DAYS,
+} from './_lib/device-health.js';
 
 export default async (request: Request, context: Context) => {
   try {
@@ -157,7 +161,13 @@ export default async (request: Request, context: Context) => {
 
   // PUT /api/workspaces/update
   if (request.method === 'PUT' && action === 'update') {
-    const body = await parseJsonBody<{ id: string; name?: string; gcp_project_id?: string; default_pubsub_topic?: string | null }>(request);
+    const body = await parseJsonBody<{
+      id: string;
+      name?: string;
+      gcp_project_id?: string;
+      default_pubsub_topic?: string | null;
+      device_report_stale_after_days?: number;
+    }>(request);
     if (!body.id) return errorResponse('Workspace ID is required');
 
     await requireWorkspacePermission(auth, body.id, 'write');
@@ -172,6 +182,22 @@ export default async (request: Request, context: Context) => {
       const normalised = body.default_pubsub_topic?.trim() || null;
       updates.push(`default_pubsub_topic = $${paramIdx++}`);
       values.push(normalised);
+    }
+    if (body.device_report_stale_after_days !== undefined) {
+      if (
+        !Number.isInteger(body.device_report_stale_after_days)
+        || body.device_report_stale_after_days < MIN_DEVICE_REPORT_STALE_AFTER_DAYS
+        || body.device_report_stale_after_days > MAX_DEVICE_REPORT_STALE_AFTER_DAYS
+      ) {
+        return errorResponse(
+          `device_report_stale_after_days must be an integer between ${MIN_DEVICE_REPORT_STALE_AFTER_DAYS} and ${MAX_DEVICE_REPORT_STALE_AFTER_DAYS}`
+        );
+      }
+      updates.push(
+        `settings = jsonb_set(COALESCE(settings, '{}'::jsonb), '{device_health}', `
+        + `COALESCE(settings->'device_health', '{}'::jsonb) || jsonb_build_object('stale_after_days', $${paramIdx++}::int), true)`
+      );
+      values.push(body.device_report_stale_after_days);
     }
     updates.push(`updated_at = now()`);
 

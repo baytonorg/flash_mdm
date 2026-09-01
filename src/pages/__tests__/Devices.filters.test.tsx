@@ -29,6 +29,7 @@ const response = {
       enrollment_time: null,
       last_status_report_at: null,
       snapshot: null,
+      report_freshness: 'unknown',
     },
   ],
   pagination: { page: 1, per_page: 25, total: 1, total_pages: 1 },
@@ -38,6 +39,7 @@ const response = {
       { value: 'Motorola', label: 'Motorola' },
     ],
   },
+  device_report_stale_after_days: 7,
 };
 
 function renderPage() {
@@ -91,6 +93,22 @@ describe('device list filters', () => {
           && params.get('policy_compliant') === 'false'
           && params.get('page') === '1';
       })).toBe(true);
+    });
+  });
+
+  it('shows report health and sends the stale filter', async () => {
+    const user = userEvent.setup();
+    const getSpy = vi.spyOn(apiClient, 'get').mockResolvedValue(response);
+    renderPage();
+
+    expect(await screen.findByText('never reported')).toBeInTheDocument();
+    const reportHealthSelect = screen.getAllByRole('combobox')[4];
+    await user.selectOptions(reportHealthSelect, 'stale');
+
+    await waitFor(() => {
+      expect(getSpy.mock.calls.some(([path]) => (
+        new URL(path, 'http://localhost').searchParams.get('report_freshness') === 'stale'
+      ))).toBe(true);
     });
   });
 });

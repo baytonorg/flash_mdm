@@ -157,6 +157,14 @@ function FeedbackMessage({ success, error }: { success?: string; error?: string 
 
 // ---- Workspace Tab ----
 
+function getWorkspaceDeviceReportStaleDays(settings: unknown): number {
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return 7;
+  const deviceHealth = (settings as Record<string, unknown>).device_health;
+  if (!deviceHealth || typeof deviceHealth !== 'object' || Array.isArray(deviceHealth)) return 7;
+  const value = (deviceHealth as Record<string, unknown>).stale_after_days;
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 365 ? value : 7;
+}
+
 function WorkspaceTab() {
   const { activeWorkspace, environments, fetchWorkspaces, fetchEnvironments } = useContextStore();
   const { user } = useAuthStore();
@@ -166,6 +174,9 @@ function WorkspaceTab() {
 
   const [wsName, setWsName] = useState(activeWorkspace?.name ?? '');
   const [wsDefaultPubsub, setWsDefaultPubsub] = useState(activeWorkspace?.default_pubsub_topic ?? '');
+  const [wsDeviceReportStaleDays, setWsDeviceReportStaleDays] = useState(() =>
+    String(getWorkspaceDeviceReportStaleDays(activeWorkspace?.settings))
+  );
 
   // Sync local state when activeWorkspace changes (e.g. after async load)
   useEffect(() => {
@@ -173,7 +184,8 @@ function WorkspaceTab() {
       setWsName(activeWorkspace.name);
     }
     setWsDefaultPubsub(activeWorkspace?.default_pubsub_topic ?? '');
-  }, [activeWorkspace?.name, activeWorkspace?.default_pubsub_topic]);
+    setWsDeviceReportStaleDays(String(getWorkspaceDeviceReportStaleDays(activeWorkspace?.settings)));
+  }, [activeWorkspace?.name, activeWorkspace?.default_pubsub_topic, activeWorkspace?.settings]);
   const [feedback, setFeedback] = useState<{ success?: string; error?: string }>({});
   const [credFeedback, setCredFeedback] = useState<{ success?: string; error?: string }>({});
   const [orphanFeedback, setOrphanFeedback] = useState<{ success?: string; error?: string }>({});
@@ -257,6 +269,7 @@ function WorkspaceTab() {
         id: activeWorkspace.id,
         name: wsName.trim(),
         default_pubsub_topic: wsDefaultPubsub.trim() || null,
+        device_report_stale_after_days: Number(wsDeviceReportStaleDays),
       });
       await fetchWorkspaces();
       setFeedback({ success: 'Workspace settings updated.' });
@@ -407,6 +420,29 @@ function WorkspaceTab() {
           </div>
           <p className="mt-1 max-w-2xl text-xs text-gray-500">
             Default Pub/Sub topic inherited by all environments. Each environment can override this.
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="device-report-stale-days">
+            Device report stale after
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              id="device-report-stale-days"
+              type="number"
+              min={1}
+              max={365}
+              step={1}
+              required
+              value={wsDeviceReportStaleDays}
+              onChange={(e) => setWsDeviceReportStaleDays(e.target.value)}
+              className="w-24 rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
+            />
+            <span className="text-sm text-gray-600">days</span>
+          </div>
+          <p className="mt-1 max-w-2xl text-xs text-gray-500">
+            Devices whose last status report is older than this remain in their AMAPI state, but are flagged as stale.
           </p>
         </div>
 

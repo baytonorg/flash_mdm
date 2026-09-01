@@ -23,6 +23,7 @@ export interface DeviceListParams {
   ownership?: string;
   manufacturer?: string;
   policy_compliant?: boolean;
+  report_freshness?: 'fresh' | 'stale' | 'unknown';
   group_id?: string;
   sort_by?: string;
   sort_dir?: 'asc' | 'desc';
@@ -39,6 +40,7 @@ export interface DeviceListResponse {
   facets: {
     manufacturers: Array<{ value: string; label: string }>;
   };
+  device_report_stale_after_days: number;
 }
 
 interface DeviceDetailResponse {
@@ -90,6 +92,7 @@ function buildDeviceListQuery(params: DeviceListParams): string {
   if (params.ownership) searchParams.set('ownership', params.ownership);
   if (params.manufacturer) searchParams.set('manufacturer', params.manufacturer);
   if (params.policy_compliant != null) searchParams.set('policy_compliant', String(params.policy_compliant));
+  if (params.report_freshness) searchParams.set('report_freshness', params.report_freshness);
   if (params.group_id) searchParams.set('group_id', params.group_id);
   if (params.sort_by) searchParams.set('sort_by', params.sort_by);
   if (params.sort_dir) searchParams.set('sort_dir', params.sort_dir);

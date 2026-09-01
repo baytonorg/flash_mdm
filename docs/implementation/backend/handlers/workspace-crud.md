@@ -42,7 +42,7 @@ The handler routes on `request.method` plus a path segment parsed from the URL:
 1. **List** -- superadmins see all workspaces; API keys see only their scoped workspace; session users see workspaces they have a membership in.
 2. **Get by ID** -- returns a single workspace with the caller's role and access scope.
 3. **Create** -- superadmin-only; inserts a workspace row and adds the creator as owner.
-4. **Update** -- requires workspace `write`; dynamically builds an `UPDATE` statement from provided fields (`name`, `gcp_project_id`, `default_pubsub_topic`).
+4. **Update** -- requires workspace `write`; dynamically builds an `UPDATE` statement from provided fields (`name`, `gcp_project_id`, `default_pubsub_topic`, `device_report_stale_after_days`). The report-health threshold is validated from 1-365 days and stored under `settings.device_health.stale_after_days` without replacing other workspace settings.
 5. **Secrets** -- requires `manage_settings`; validates uploaded JSON is a GCP service account, encrypts it via `encrypt()`, and stores it. Also extracts the `project_id` from the JSON to backfill `gcp_project_id`.
 6. **Orphaned enterprises** -- calls AMAPI to list all enterprises under the GCP project, diffs against locally linked `environments.enterprise_name`, and returns the orphans with device counts and display metadata. Fails soft (returns empty array + `unavailable` flag) so the UI panel degrades gracefully.
 

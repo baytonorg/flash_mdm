@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '@/api/client';
 import { useContextStore } from '@/stores/context';
@@ -34,6 +34,7 @@ interface Device {
   enrollment_time: string | null;
   last_status_report_at: string | null;
   snapshot: Record<string, any> | null;
+  report_freshness: 'fresh' | 'stale' | 'unknown';
 }
 
 interface DevicesResponse {
@@ -47,6 +48,7 @@ interface DevicesResponse {
   facets: {
     manufacturers: Array<{ value: string; label: string }>;
   };
+  device_report_stale_after_days: number;
 }
 
 function formatRelativeTime(dateStr: string | null): string {
@@ -67,6 +69,7 @@ function formatRelativeTime(dateStr: string | null): string {
 export default function Devices() {
   const LIVE_REFRESH_MS = 30000;
   const navigate = useNavigate();
+  const [urlSearchParams] = useSearchParams();
   const { activeEnvironment, activeGroup } = useContextStore();
 
   // Filter state
@@ -75,6 +78,10 @@ export default function Devices() {
   const [ownershipFilter, setOwnershipFilter] = useState('');
   const [manufacturerFilter, setManufacturerFilter] = useState('');
   const [complianceFilter, setComplianceFilter] = useState('');
+  const [reportFreshnessFilter, setReportFreshnessFilter] = useState(() => {
+    const value = urlSearchParams.get('report_freshness');
+    return value && ['fresh', 'stale', 'unknown'].includes(value) ? value : '';
+  });
   const [page, setPage] = useState(1);
   const [perPage] = useState(25);
   const [sortBy, setSortBy] = useState('last_status_report_at');
@@ -104,10 +111,11 @@ export default function Devices() {
     if (ownershipFilter) params.set('ownership', ownershipFilter);
     if (manufacturerFilter) params.set('manufacturer', manufacturerFilter);
     if (complianceFilter) params.set('policy_compliant', complianceFilter);
+    if (reportFreshnessFilter) params.set('report_freshness', reportFreshnessFilter);
     if (sortBy) params.set('sort_by', sortBy);
     if (sortDir) params.set('sort_dir', sortDir);
     return params.toString();
-  }, [environmentId, groupId, page, perPage, search, stateFilter, ownershipFilter, manufacturerFilter, complianceFilter, sortBy, sortDir]);
+  }, [environmentId, groupId, page, perPage, search, stateFilter, ownershipFilter, manufacturerFilter, complianceFilter, reportFreshnessFilter, sortBy, sortDir]);
 
   const { data, isLoading, isError, error, refetch, isFetching, dataUpdatedAt } = useQuery({
     queryKey: ['devices', queryParams],
@@ -160,6 +168,11 @@ export default function Devices() {
 
   const handleComplianceChange = (value: string) => {
     setComplianceFilter(value);
+    setPage(1);
+  };
+
+  const handleReportFreshnessChange = (value: string) => {
+    setReportFreshnessFilter(value);
     setPage(1);
   };
 
@@ -230,7 +243,13 @@ export default function Devices() {
         label: 'Last Seen',
         sortable: true,
         render: (_, row) => (
-          <span className="text-muted">{formatRelativeTime(row.last_status_report_at)}</span>
+          <div className="flex flex-col items-start gap-1">
+            <span className="text-muted">{formatRelativeTime(row.last_status_report_at)}</span>
+            <StatusBadge
+              status={row.report_freshness === 'unknown' ? 'never reported' : row.report_freshness}
+              variant={row.report_freshness === 'fresh' ? 'success' : row.report_freshness === 'stale' ? 'warning' : 'default'}
+            />
+          </div>
         ),
       },
     ],
@@ -351,6 +370,17 @@ export default function Devices() {
             options: [
               { value: 'true', label: 'Compliant' },
               { value: 'false', label: 'Non-compliant' },
+            ],
+          },
+          {
+            key: 'report_freshness',
+            label: 'All Report Health',
+            value: reportFreshnessFilter,
+            onChange: handleReportFreshnessChange,
+            options: [
+              { value: 'fresh', label: 'Current' },
+              { value: 'stale', label: 'Stale' },
+              { value: 'unknown', label: 'Never Reported' },
             ],
           },
         ]}
