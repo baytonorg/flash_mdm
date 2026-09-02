@@ -10,6 +10,7 @@
     "prebuild": "npm run monaco:copy",
     "build": "tsc -b && vite build",
     "openapi:generate": "node scripts/generate-openapi.mjs",
+    "openapi:check": "node scripts/generate-openapi.mjs --check",
     "amapi-schema:update": "node scripts/generate-amapi-policy-schema.mjs",
     "amapi-schema:check": "node scripts/generate-amapi-policy-schema.mjs --check",
     "lint": "eslint .",

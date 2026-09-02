@@ -5,6 +5,11 @@ const repoRoot = process.cwd();
 const netlifyTomlPath = path.join(repoRoot, 'netlify.toml');
 const functionsDir = path.join(repoRoot, 'netlify', 'functions');
 const outputPath = path.join(repoRoot, 'public', 'openapi.json');
+const args = process.argv.slice(2);
+if (args.some((arg) => arg !== '--check')) {
+  throw new Error(`Unknown argument: ${args.find((arg) => arg !== '--check')}`);
+}
+const checkOnly = args.includes('--check');
 
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'];
 
@@ -597,7 +602,7 @@ const spec = {
   info: {
     title: 'Flash MDM API',
     version: '1.0.0',
-    description: 'Route-complete OpenAPI specification generated from Netlify route mappings and handler sources. Endpoint request/response schemas are generic for legacy handlers unless explicitly documented.',
+    description: 'Route-complete OpenAPI specification generated from Netlify route mappings and handler sources. Endpoint request/response schemas are generic for legacy handlers unless explicitly documented.\n\nNote: Superadmin endpoints (`/api/superadmin/*`) require an active superadmin session cookie. There are currently no API key scopes that permit access to superadmin endpoints; this may change in future releases. API key authentication is explicitly rejected on all superadmin handlers.',
   },
   servers: [
     { url: 'https://flash-mdm.bayton.org' },
@@ -630,6 +635,15 @@ const spec = {
   paths: Object.fromEntries(Object.entries(paths).sort(([a], [b]) => a.localeCompare(b))),
 };
 
-fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-fs.writeFileSync(outputPath, JSON.stringify(spec, null, 2) + '\n');
-console.log(`Wrote ${outputPath}`);
+const rendered = JSON.stringify(spec, null, 2) + '\n';
+if (checkOnly) {
+  const existing = fs.readFileSync(outputPath, 'utf8');
+  if (existing !== rendered) {
+    throw new Error('public/openapi.json is not aligned with current routes and handlers');
+  }
+  console.log('OpenAPI specification is current (public/openapi.json)');
+} else {
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  fs.writeFileSync(outputPath, rendered);
+  console.log(`Wrote ${outputPath}`);
+}
