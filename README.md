@@ -167,6 +167,7 @@ npm run test           # Run all tests
 npm run test:watch     # Run tests and re-run when files change
 npm run test:coverage  # Run tests with coverage report
 npm run lint           # Check code style
+npm run openapi:check  # Confirm generated API documentation is current
 ```
 
 ## Architecture overview
@@ -524,7 +525,7 @@ All UI text, email templates, and authenticator app labels pull from these files
 
 ## Documentation
 
-GitHub Actions validates pull requests and pushes to `main` with `npm run lint`, `npm run build`, and `npm test`. The lint command blocks configured errors; existing legacy warnings are retained as a visible cleanup backlog.
+GitHub Actions validates pull requests and pushes to `main` with lint, build, generated OpenAPI parity, and the full test suite. The lint command blocks configured errors; existing legacy warnings are retained as a visible cleanup backlog.
 
 The [`docs/`](./docs/) directory has detailed documentation on every aspect of the platform:
 

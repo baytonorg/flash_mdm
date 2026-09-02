@@ -10,6 +10,7 @@ Common commands:
 npm test                 # vitest run (single pass)
 npm run test:watch       # vitest (watch mode)
 npm run test:coverage    # vitest run --coverage (text + lcov reporters)
+npm run openapi:check    # verify public/openapi.json matches routes and handlers
 ```
 
 ## Where tests live

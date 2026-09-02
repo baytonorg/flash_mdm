@@ -1890,6 +1890,70 @@
         }
       }
     },
+    "/api/auth/profile": {
+      "put": {
+        "operationId": "put_api_auth_profile",
+        "tags": [
+          "auth"
+        ],
+        "summary": "PUT /api/auth/profile",
+        "description": "Implemented by Netlify function `auth-profile`.\nRequirement: Auth: session cookie required (API keys rejected)",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [],
+        "x-flash-auth": {
+          "authModel": "session-only",
+          "apiKeyRejected": true,
+          "workspaceRoles": [],
+          "environmentRoles": [],
+          "workspacePerms": [],
+          "envResourcePerms": [],
+          "groupPerms": []
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
     "/api/auth/register": {
       "post": {
         "operationId": "post_api_auth_register",
@@ -6102,6 +6166,54 @@
               }
             }
           }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "operationId": "get_api_health",
+        "tags": [
+          "health"
+        ],
+        "summary": "GET /api/health",
+        "description": "Implemented by Netlify function `health`.",
+        "parameters": [],
+        "x-flash-auth": {
+          "authModel": "unknown",
+          "apiKeyRejected": true,
+          "workspaceRoles": [],
+          "environmentRoles": [],
+          "workspacePerms": [],
+          "envResourcePerms": [],
+          "groupPerms": []
         },
         "responses": {
           "200": {
