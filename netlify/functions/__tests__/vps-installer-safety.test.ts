@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readlinkSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -9,6 +9,7 @@ const repoRoot = resolve(import.meta.dirname, '../../..');
 const installer = join(repoRoot, 'install.sh');
 const installerLib = join(repoRoot, 'scripts/vps-install-lib.sh');
 const scheduledRunner = join(repoRoot, 'scripts/run-vps-scheduled.sh');
+const releasePruner = join(repoRoot, 'scripts/prune-vps-releases.mjs');
 
 describe('VPS installer operational safety', () => {
   it('reads generated environment values without evaluating shell syntax', () => {
@@ -77,6 +78,40 @@ describe('VPS installer operational safety', () => {
 
     expect(result.status).toBe(0);
     expect(readlinkSync(current)).toBe(first);
+  });
+
+  it('removes inactive VPS releases only after resolving the active release inside the release root', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'flash-release-prune-'));
+    const releases = join(dir, 'releases');
+    const first = join(releases, 'release-1');
+    const second = join(releases, 'release-2');
+    const current = join(dir, 'current');
+    mkdirSync(first, { recursive: true });
+    mkdirSync(second);
+    symlinkSync(second, current);
+
+    const result = spawnSync(process.execPath, [releasePruner, releases, current], { encoding: 'utf8' });
+
+    expect(result.status).toBe(0);
+    expect(existsSync(first)).toBe(false);
+    expect(existsSync(second)).toBe(true);
+  });
+
+  it('refuses to prune when the active release resolves outside the release root', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'flash-release-prune-boundary-'));
+    const releases = join(dir, 'releases');
+    const retained = join(releases, 'release-1');
+    const outside = join(dir, 'outside');
+    const current = join(dir, 'current');
+    mkdirSync(retained, { recursive: true });
+    mkdirSync(outside);
+    symlinkSync(outside, current);
+
+    const result = spawnSync(process.execPath, [releasePruner, releases, current], { encoding: 'utf8' });
+
+    expect(result.status).not.toBe(0);
+    expect(existsSync(retained)).toBe(true);
+    expect(existsSync(outside)).toBe(true);
   });
 
   it('keeps the installer fail-closed and release-based', () => {

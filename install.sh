@@ -1373,6 +1373,15 @@ elif [[ "$AUTO_DEPLOY" == "false" ]]; then
   success "Webhook deployment disabled"
 fi
 
+# A successful release has already passed service readiness, database migration,
+# worker startup, and Caddy validation. LXD snapshots provide the operational
+# rollback boundary, so keeping complete inactive releases only duplicates that
+# recovery material and grows the container on every deployment.
+info "Removing superseded VPS releases..."
+sudo node "$RELEASE_DIR/scripts/prune-vps-releases.mjs" "$RELEASES_DIR" "$CURRENT_LINK" \
+  || fail "Superseded VPS releases could not be removed"
+success "Only the active VPS release remains on disk"
+
 # ── Done ─────────────────────────────────────────────────────────────────────
 echo
 printf "${BOLD}${GREEN}══════════════════════════════════════════════════════════════${NC}\n"

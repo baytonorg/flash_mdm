@@ -66,3 +66,5 @@ journalctl -u 'flashmdm-auto-deploy@*.service' -f
 ```
 
 The webhook listener runs as the configured deployment user and has no interactive shell. Its only privileged action is a root-owned launcher that accepts exactly one 40-character lowercase SHA before starting the corresponding release unit. The root launcher, release helper, and active `current` symlink are root-owned outside the writable release staging directory. The release unit runs the existing installer in its controlled root mode while preserving the configured unprivileged owner for the runtime services and cron. Treat write access to the configured repository as production-root-equivalent access.
+
+After a candidate release passes readiness, migrations, worker startup, and Caddy validation, the installer removes all inactive release directories. A failed candidate retains the previous release until rollback completes. Operational rollback after a successful deployment is provided by the host's LXD snapshots rather than by accumulating complete application releases inside the container.

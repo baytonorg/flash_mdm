@@ -103,6 +103,7 @@ For deeper information on architecture, deployment, security, operations, and de
 | [auth-password-reset-complete.md](backend/handlers/auth-password-reset-complete.md) | Completes password-reset by consuming the reset token and setting a new password |
 | [auth-register.md](backend/handlers/auth-register.md) | Registers a new user with support for bootstrap, self-signup, invite, and signup-link flows |
 | [auth-session.md](backend/handlers/auth-session.md) | Returns current user's session info, or clears environment-setup flag via POST |
+| [auth-profile.md](backend/handlers/auth-profile.md) | Updates the authenticated user's name and email address with session-only authorization |
 | [auth-totp-setup.md](backend/handlers/auth-totp-setup.md) | Initiates TOTP 2FA setup by generating secret, backup codes, and otpauth URI |
 | [auth-totp-verify.md](backend/handlers/auth-totp-verify.md) | Handles TOTP verification (finalising setup) and TOTP disabling |
 | [api-key-crud.md](backend/handlers/api-key-crud.md) | CRUD operations for API keys scoped to workspaces or environments with RBAC |

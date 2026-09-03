@@ -191,7 +191,7 @@ Key concepts:
 
 ## API reference
 
-All API endpoints live under `/api/` and are documented with Swagger. Once the app is running, visit `/api-docs` for interactive API documentation.
+All API endpoints live under `/api/` and are documented with Swagger. Once the app is running, visit `/api/docs/` for interactive API documentation.
 
 | Path prefix | What it does |
 |-------------|-------------|
