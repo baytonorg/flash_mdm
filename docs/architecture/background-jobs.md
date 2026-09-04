@@ -69,11 +69,23 @@ This list is intentionally high-level; details live in code and will be expanded
 - **Concurrency control:** use advisory locks for global reconcile tasks.
 - **Timeouts:** scheduled functions must batch work to avoid runtime timeouts.
 - **Safety:** destructive actions should be guarded by feature flags and dry-run modes.
-- **VPS logging:** the two-second durable-worker poll stays silent when no jobs are
-  available, but retains batch/completion logs whenever work is processed.
+- **Database outages:** queue and deployment drains return HTTP 503 with
+  `Retry-After` and `X-Flash-Degraded: database` when PostgreSQL is unavailable.
+  The VPS worker applies capped exponential backoff with jitter (30 seconds by
+  default) and resets to its normal poll interval immediately after recovery.
+- **VPS logging:** idle polls stay silent. A database outage emits one structured
+  `event=database_unavailable` warning per affected drain, followed by one
+  `event=database_recovered` message with the degraded-poll count. Batch/completion
+  logs remain available whenever work is processed.
 - **VPS shutdown:** `SIGTERM` stops new polls, lets active handlers finish, and
-  closes the shared PostgreSQL pool so planned releases do not wait for idle
-  database handles.
+  interrupts any normal or database-backoff sleep, then closes the shared
+  PostgreSQL pool so planned releases do not wait for idle database handles.
+- **Lease safety:** database loss after a claim leaves the row leased instead of
+  spending an application retry or marking it dead. Existing 10-minute queue and
+  15-minute deployment stale-lease thresholds are deliberately unchanged. A lost
+  connection around a write or external side effect has an uncertain outcome, so
+  handlers do not replay whole transactions or arbitrary writes transparently;
+  stale-lease reclamation remains the recovery boundary.
 
 See also:
 

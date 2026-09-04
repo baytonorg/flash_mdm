@@ -47,6 +47,7 @@ import {
   assignPolicyToDeviceWithDerivative,
 } from '../_lib/policy-derivatives.js';
 import handler, { processDeploymentJob } from '../deployment-jobs.ts';
+import { markDatabaseError } from '../_lib/db-errors.js';
 
 const mockQuery = vi.mocked(query);
 const mockQueryOne = vi.mocked(queryOne);
@@ -126,6 +127,56 @@ describe('processDeploymentJob cancellation handling', () => {
     const sqlCalls = mockExecute.mock.calls.map(([sql]) => String(sql));
     expect(sqlCalls.some((sql) => sql.includes("SET status = $2") && sql.includes('completed_at = now()'))).toBe(false);
     expect(sqlCalls.some((sql) => sql.includes('SET completed_devices = $2') && !sql.includes('SET status = $2'))).toBe(true);
+  });
+
+  it('does not mark a deployment failed when derivative sync loses PostgreSQL', async () => {
+    mockQueryOne.mockResolvedValueOnce({ config: {} } as never);
+    mockSyncPolicyDerivativesForPolicy.mockRejectedValueOnce(
+      Object.assign(new Error('database restarting'), { code: '57P03' })
+    );
+
+    await expect(processDeploymentJob(
+      'job_1',
+      'policy_1',
+      'env_1',
+      ['device_1'],
+      {
+        workspace_id: 'ws_1',
+        gcp_project_id: 'proj_1',
+        enterprise_name: 'enterprises/e1',
+      },
+      'user_1'
+    )).rejects.toMatchObject({ code: '57P03' });
+
+    const sqlCalls = mockExecute.mock.calls.map(([sql]) => String(sql));
+    expect(sqlCalls.filter((sql) => sql.includes("SET status = 'running'"))).toHaveLength(1);
+    expect(sqlCalls.some((sql) => sql.includes("SET status = 'failed'"))).toBe(false);
+  });
+
+  it('does not count a database outage as a device deployment failure', async () => {
+    mockQueryOne
+      .mockResolvedValueOnce({ config: {} } as never)
+      .mockResolvedValueOnce({ status: 'running' } as never);
+    mockAssignPolicyToDeviceWithDerivative.mockRejectedValueOnce(markDatabaseError(
+      Object.assign(new Error('connection reset'), { code: 'ECONNRESET' })
+    ));
+
+    await expect(processDeploymentJob(
+      'job_1',
+      'policy_1',
+      'env_1',
+      ['device_1'],
+      {
+        workspace_id: 'ws_1',
+        gcp_project_id: 'proj_1',
+        enterprise_name: 'enterprises/e1',
+      },
+      'user_1'
+    )).rejects.toMatchObject({ code: 'ECONNRESET' });
+
+    const sqlCalls = mockExecute.mock.calls.map(([sql]) => String(sql));
+    expect(sqlCalls.some((sql) => sql.includes('failed_devices'))).toBe(false);
+    expect(sqlCalls.some((sql) => sql.includes('completed_at = now()'))).toBe(false);
   });
 });
 

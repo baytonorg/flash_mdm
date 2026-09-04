@@ -11,6 +11,7 @@ import {
 } from './_lib/policy-derivatives.js';
 import { jsonResponse, errorResponse, parseJsonBody, getSearchParams, getClientIp } from './_lib/helpers.js';
 import { internalFunctionUrl, shouldTriggerBackgroundFunction } from './_lib/runtime.js';
+import { isDatabaseInfrastructureError } from './_lib/db-errors.js';
 
 type DeploymentJobRow = {
   id: string;
@@ -243,6 +244,7 @@ export async function processDeploymentJob(
       amapiContext,
     });
   } catch (err) {
+    if (isDatabaseInfrastructureError(err)) throw err;
     console.error('deployment-jobs: derivative sync failed', { job_id: jobId, error: String(err) });
     await execute(
       `UPDATE deployment_jobs SET status = 'failed', error_log = $2::jsonb, completed_at = now(), updated_at = now() WHERE id = $1`,
@@ -268,6 +270,7 @@ export async function processDeploymentJob(
     }
 
     const batch = deviceIds.slice(i, i + BATCH_SIZE);
+    let infrastructureFailure: unknown = null;
 
     await Promise.allSettled(
       batch.map(async (deviceId) => {
@@ -281,6 +284,10 @@ export async function processDeploymentJob(
           });
           completed++;
         } catch (err) {
+          if (isDatabaseInfrastructureError(err)) {
+            infrastructureFailure ??= err;
+            return;
+          }
           failed++;
           errorLog.push({
             device_id: deviceId,
@@ -290,6 +297,8 @@ export async function processDeploymentJob(
         }
       })
     );
+
+    if (infrastructureFailure) throw infrastructureFailure;
 
     // Update progress after each batch
     await execute(

@@ -12,6 +12,10 @@ import { executeValidatedOutboundWebhook } from './_lib/outbound-webhook.js';
 import { internalFunctionUrl, isVpsRuntime } from './_lib/runtime.js';
 import { resolveAmapiDeviceImei } from './_lib/amapi-device-network.js';
 import { classifyAmapiCommandOperation } from './_lib/amapi-command-result.js';
+import {
+  databaseUnavailableResponse,
+  isDatabaseInfrastructureError,
+} from './_lib/db-errors.js';
 
 export const config = {
   type: 'background',
@@ -1897,6 +1901,13 @@ export default async (request: Request, _context: Context) => {
           [job.id]
         );
       } catch (err) {
+        if (isDatabaseInfrastructureError(err)) {
+          // The claim remains leased. Do not guess whether a preceding write or
+          // external action committed, and do not spend a job attempt on an outage.
+          console.warn(`Job ${job.id} (${job.job_type}) paused: PostgreSQL unavailable`);
+          throw err;
+        }
+
         console.error(`Job ${job.id} (${job.job_type}) failed:`, err);
 
         const newAttempts = job.attempts + 1;
@@ -1938,6 +1949,9 @@ export default async (request: Request, _context: Context) => {
     }
     return Response.json({ status: 'processed', jobs: totalProcessed, batches: batchNum });
   } catch (err) {
+    if (isDatabaseInfrastructureError(err)) {
+      return databaseUnavailableResponse();
+    }
     console.error('Background sync processor error:', err);
     return Response.json({ error: 'Background sync processor failed' }, { status: 500 });
   }

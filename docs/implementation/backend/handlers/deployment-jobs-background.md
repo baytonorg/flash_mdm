@@ -20,7 +20,8 @@
 
 | Import | From | Used for |
 |--------|------|----------|
-| `queryOne` | `_lib/db.js` | Database queries |
+| `execute`, `transaction` | `_lib/db.js` | Atomic claim and status updates |
+| `databaseUnavailableResponse`, `isDatabaseInfrastructureError` | `_lib/db-errors.js` | Database-outage classification and degraded 503 response |
 | `requireInternalCaller` | `_lib/internal-auth.js` | Validates internal function secret header |
 | `getPolicyAmapiContext` | `_lib/policy-derivatives.js` | Resolves AMAPI context for the environment |
 | `getDeploymentTargetDeviceIds`, `processDeploymentJob` | `./deployment-jobs.ts` | Reuses device resolution and batch processing logic from the main handler |
@@ -29,10 +30,13 @@
 
 1. Validates the caller via `requireInternalCaller` (checks `x-internal-secret` header).
 2. Only accepts POST requests.
-3. Fetches the deployment job by `job_id`; ignores jobs not in `pending` status.
+3. Atomically claims the requested or oldest pending deployment, reclaiming a
+   running row only after the existing 15-minute stale threshold.
 4. Resolves AMAPI context for the job's environment; fetches target device IDs.
 5. Delegates to `processDeploymentJob` (from `deployment-jobs.ts`) which handles batched device sync, progress tracking, and cancellation checks.
-6. Returns a JSON response with the processing result (used for logging; the caller does not wait for it).
+6. Returns a JSON response with the processing result. PostgreSQL availability
+   failures return a degraded 503 and leave claimed work reclaimable rather than
+   marking it failed.
 
 ## API Surface
 

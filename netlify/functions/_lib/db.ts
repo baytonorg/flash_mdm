@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { normalizePostgresConnectionString } from './postgres-connection.js';
+import { markDatabaseError } from './db-errors.js';
 
 const { Pool } = pg;
 
@@ -37,8 +38,12 @@ export async function query<T = Record<string, unknown>>(
   params: unknown[] = []
 ): Promise<T[]> {
   const client = getPool();
-  const result = await client.query(sql, params);
-  return result.rows as T[];
+  try {
+    const result = await client.query(sql, params);
+    return result.rows as T[];
+  } catch (err) {
+    throw markDatabaseError(err);
+  }
 }
 
 export async function queryOne<T = Record<string, unknown>>(
@@ -54,16 +59,39 @@ export async function execute(
   params: unknown[] = []
 ): Promise<{ rowCount: number }> {
   const client = getPool();
-  const result = await client.query(sql, params);
-  return { rowCount: result.rowCount ?? 0 };
+  try {
+    const result = await client.query(sql, params);
+    return { rowCount: result.rowCount ?? 0 };
+  } catch (err) {
+    throw markDatabaseError(err);
+  }
 }
 
 export async function withClient<T>(
   fn: (client: pg.PoolClient) => Promise<T>
 ): Promise<T> {
-  const client = await getPool().connect();
+  let client: pg.PoolClient;
   try {
-    return await fn(client);
+    client = await getPool().connect();
+  } catch (err) {
+    throw markDatabaseError(err);
+  }
+
+  const databaseClient = new Proxy(client, {
+    get(target, property, receiver) {
+      if (property !== 'query') return Reflect.get(target, property, receiver);
+      return async (...args: unknown[]) => {
+        try {
+          return await Reflect.apply(target.query, target, args);
+        } catch (err) {
+          throw markDatabaseError(err);
+        }
+      };
+    },
+  }) as pg.PoolClient;
+
+  try {
+    return await fn(databaseClient);
   } finally {
     client.release();
   }

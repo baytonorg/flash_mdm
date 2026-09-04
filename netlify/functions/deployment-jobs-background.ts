@@ -3,6 +3,10 @@ import { execute, transaction } from './_lib/db.js';
 import { requireInternalCaller } from './_lib/internal-auth.js';
 import { getPolicyAmapiContext } from './_lib/policy-derivatives.js';
 import { getDeploymentTargetDeviceIds, processDeploymentJob } from './deployment-jobs.ts';
+import {
+  databaseUnavailableResponse,
+  isDatabaseInfrastructureError,
+} from './_lib/db-errors.js';
 
 export const config = {
   type: 'background',
@@ -56,6 +60,9 @@ export default async function handler(request: Request, _context: Context): Prom
 
     return Response.json({ status: 'processed', job_id: job.id });
   } catch (err) {
+    if (isDatabaseInfrastructureError(err)) {
+      return databaseUnavailableResponse();
+    }
     console.error('deployment-jobs-background error:', err);
     return Response.json({ error: 'Internal server error' }, { status: 500 });
   }

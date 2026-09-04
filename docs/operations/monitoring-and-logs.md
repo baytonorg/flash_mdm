@@ -19,6 +19,10 @@ Flash MDM exposes operational signals through:
 
 ### VPS logs
 - Web and durable-worker logs are available through `journalctl -u flashmdm` and `journalctl -u flashmdm-worker`.
+- A PostgreSQL outage produces one `event=database_unavailable` worker message per
+  affected drain and one `event=database_recovered` message when normal polling
+  resumes. Alert on an outage without a later recovery message or on sustained
+  backoff, not on each intentionally degraded 503 poll.
 - Scheduled-run failures are written to the system journal with the `flashmdm-cron` tag.
 - The VPS cron wrapper rejects overlapping runs and applies a bounded request timeout. A non-2xx response, malformed response, or non-zero response error count exits unsuccessfully and is retained in the journal.
 
@@ -58,4 +62,5 @@ These run on fixed schedules; failures appear in Netlify function logs.
 - Repeated webhook verification failures
 - Scheduled/background function failures
 - DB connection errors / pool exhaustion
+- Database-unavailable worker events without a matching recovery
 - Unexpected spikes in destructive device actions (disable/wipe)

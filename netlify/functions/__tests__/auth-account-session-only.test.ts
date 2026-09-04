@@ -43,6 +43,7 @@ vi.mock('../_lib/audit.js', () => ({
 import { requireSessionAuth } from '../_lib/auth.js';
 import { validateSession } from '../_lib/auth.js';
 import { queryOne, execute } from '../_lib/db.js';
+import { markDatabaseError } from '../_lib/db-errors.js';
 import authSessionHandler from '../auth-session.ts';
 import authTotpSetupHandler from '../auth-totp-setup.ts';
 import authTotpVerifyHandler from '../auth-totp-verify.ts';
@@ -102,7 +103,7 @@ describe('account endpoints are session-only', () => {
   });
 
   it('returns 503 with stable code when auth-session POST hits db infra error', async () => {
-    mockRequireSessionAuth.mockRejectedValueOnce(new Error('too many connections'));
+    mockRequireSessionAuth.mockRejectedValueOnce(markDatabaseError(new Error('too many connections')));
 
     const res = await authSessionHandler(new Request('http://localhost/api/auth/session', {
       method: 'POST',
