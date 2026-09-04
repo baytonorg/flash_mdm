@@ -41,7 +41,7 @@ The webhook proves that a push came from GitHub and deploys the exact branch-hea
 - apply the protection to repository administrators; and
 - disable force pushes and branch deletion.
 
-No approving review count is required by this deployment gate; teams can add a review requirement as a separate governance control. Do not configure a bypass actor for the deployment identity. With this protection in place, Actions validates the pull-request head first, GitHub creates the merge commit only after the required check passes, and the existing signed push webhook deploys that already-validated merge.
+No approving review count is required by this deployment gate; teams can add a review requirement as a separate governance control. Do not configure a bypass actor for the deployment identity. With this protection in place, Actions validates the pull-request merge candidate against the current `main` branch before GitHub permits the merge, and the existing signed push webhook then deploys the resulting merge commit. This Option A gate validates the content entering `main` and prevents unvalidated direct pushes. It does not make the separate post-merge `push` workflow a prerequisite for deployment or prove that the exact merge SHA's push run has already completed.
 
 Verify the live repository setting rather than relying on documentation alone:
 
@@ -50,7 +50,7 @@ gh api repos/OWNER/REPOSITORY/branches/main/protection \
   --jq '{required_status_checks, enforce_admins, required_pull_request_reviews, allow_force_pushes, allow_deletions}'
 ```
 
-Test the gate with a documentation-only pull request: confirm `validate` is required and passes, merge the pull request, then confirm the webhook deploys the merge SHA and `/api/health` reports the same version. A direct push rejection can also be tested from a disposable branch clone, but never rewrite production history to exercise the control.
+Test the gate with a documentation-only pull request: confirm `validate` is required and passes for the merge candidate, merge the pull request, then confirm the webhook deploys the merge SHA, the independently triggered main-branch Validate run passes, and `/api/health` reports the same version. A direct push rejection can also be tested from a disposable branch clone, but never rewrite production history to exercise the control.
 
 The normal recovery path is another validated pull request that reverts the faulty change. Runtime rollback remains the host's LXD snapshot procedure. If GitHub Actions itself is unavailable during an urgent incident, a repository administrator may temporarily change branch protection as a recorded break-glass action, perform only the minimum recovery, and immediately restore and re-verify the controls; the webhook's signature, exact-SHA, readiness, and rollback checks remain mandatory.
 
