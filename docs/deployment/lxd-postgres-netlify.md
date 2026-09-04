@@ -18,9 +18,25 @@ performed as `postgres`; otherwise later application migrations can fail with
 `must be owner of table`.
 
 The queue worker stops accepting new polls on `SIGTERM`, lets active handlers
-finish, and closes its PostgreSQL pool. Systemd still enforces a 20-second bound
-during release activation. A forced-stop fallback is safe because the queue
-reclaims expired worker leases before retrying work.
+finish, interrupts an in-progress polling/backoff sleep, and closes its PostgreSQL
+pool. Systemd still enforces a 20-second bound during release activation. A
+forced-stop fallback is safe because the queue reclaims expired worker leases
+before retrying work.
+
+During a PostgreSQL restart, the queue and deployment handlers advertise a
+database-degraded HTTP 503 with a bounded `Retry-After`. Each worker drain backs
+off exponentially with jitter from `FLASH_WORKER_POLL_MS` to a default ceiling of
+30 seconds. `FLASH_WORKER_DB_BACKOFF_MAX_MS` can raise or lower that ceiling within
+the enforced poll-to-300-second range. A successful poll resets the failure count
+immediately. Check `journalctl -u flashmdm-worker` for the single
+`event=database_unavailable` and matching `event=database_recovered` messages.
+
+Jobs already claimed when connectivity is lost remain leased and are reclaimed
+through the existing 10-minute queue or 15-minute deployment threshold. Those
+thresholds are intentionally not shortened: an interrupted database write or
+external AMAPI action may have completed even when its acknowledgement was lost.
+The worker therefore never applies blanket retries to arbitrary writes or whole
+transactions, and a database-unavailable response alone does not mark work dead.
 
 ## Recommended shape
 

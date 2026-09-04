@@ -43,7 +43,7 @@ For deeper information on architecture, deployment, security, operations, and de
 | [brand.md](backend/lib/brand.md) | Centralized brand/product name constants used across the backend |
 | [crypto.md](backend/lib/crypto.md) | AES-256-GCM authenticated encryption/decryption and SHA-256 token hashing utilities |
 | [db.md](backend/lib/db.md) | PostgreSQL connection pool and query helpers (`query`, `queryOne`, `execute`, `transaction`) |
-| [db-errors.md](backend/lib/db-errors.md) | Postgres error code detection utility for identifying missing table/relation errors |
+| [db-errors.md](backend/lib/db-errors.md) | PostgreSQL relation and infrastructure-error classification with degraded 503 responses |
 | [deployment-sync.md](backend/lib/deployment-sync.md) | Synchronizes policy derivatives to AMAPI after deployment configuration changes |
 | [device-apps.md](backend/lib/device-apps.md) | Extracts and normalizes device application inventory from an AMAPI device snapshot |
 | [device-commands.md](backend/lib/device-commands.md) | Shared command catalogs, alias normalization, and enum guards for device command handling |
@@ -74,6 +74,7 @@ For deeper information on architecture, deployment, security, operations, and de
 | [variable-resolution.md](backend/lib/variable-resolution.md) | Resolves strict `${namespace.key}` placeholders in policy JSON to device/user/group/environment values |
 | [webhook-ssrf.md](backend/lib/webhook-ssrf.md) | SSRF protection for outbound webhook URLs with hostname validation and blocked IP detection |
 | [workflow-dispatch.md](backend/lib/workflow-dispatch.md) | Dispatches workflow evaluation jobs into the job queue when device events occur |
+| [worker-backoff.md](backend/lib/worker-backoff.md) | Calculates capped exponential PostgreSQL-outage polling delays with jitter |
 | [workspace-stripe.md](backend/lib/workspace-stripe.md) | Retrieves and decrypts workspace-level Stripe credentials for self-managed billing |
 | [enterprise-utils.md](backend/lib/enterprise-utils.md) | Shared enterprise resource name extraction for AMAPI scope validation |
 | [flashagent-billing.md](backend/lib/flashagent-billing.md) | Soft billing entitlement hook for the Flashi assistant (permissive stub for future paid addon) |

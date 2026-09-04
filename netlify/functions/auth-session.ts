@@ -1,28 +1,8 @@
 import type { Context } from '@netlify/functions';
 import { validateSession, requireSessionAuth } from './_lib/auth.js';
 import { queryOne, execute } from './_lib/db.js';
+import { isDatabaseInfrastructureError } from './_lib/db-errors.js';
 import { jsonResponse, errorResponse, parseJsonBody } from './_lib/helpers.js';
-
-function isDatabaseInfraError(err: unknown): boolean {
-  const code = typeof err === 'object' && err !== null && 'code' in err
-    ? String((err as { code?: unknown }).code ?? '')
-    : '';
-  if (['53300', '57P03', '08000', '08003', '08006', '08001', '08P01'].includes(code)) {
-    return true;
-  }
-
-  const message = typeof err === 'object' && err !== null && 'message' in err
-    ? String((err as { message?: unknown }).message ?? '').toLowerCase()
-    : '';
-
-  return (
-    message.includes('exceeded the compute time quota')
-    || message.includes('connection terminated unexpectedly')
-    || message.includes('too many connections')
-    || message.includes('connection refused')
-    || message.includes('timeout expired')
-  );
-}
 
 function authServiceUnavailableResponse(): Response {
   return jsonResponse(
@@ -66,7 +46,7 @@ export default async (request: Request, context: Context) => {
       return jsonResponse({ message: 'ok' });
     } catch (err) {
       if (err instanceof Response) return err;
-      if (isDatabaseInfraError(err)) {
+      if (isDatabaseInfrastructureError(err)) {
         console.error('Auth session POST unavailable due to database infrastructure error', err);
         return authServiceUnavailableResponse();
       }
@@ -95,7 +75,7 @@ export default async (request: Request, context: Context) => {
     });
   } catch (err) {
     if (err instanceof Response) return err;
-    if (isDatabaseInfraError(err)) {
+    if (isDatabaseInfrastructureError(err)) {
       console.error('Auth session GET unavailable due to database infrastructure error', err);
       return authServiceUnavailableResponse();
     }

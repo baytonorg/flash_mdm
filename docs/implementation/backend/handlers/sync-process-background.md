@@ -54,7 +54,12 @@
 - `process_enterprise_upgrade` -- Handles enterprise upgrade completion: updates `enterprise_features.enterprise_upgrade_status` JSONB, triggers device re-import via `reconcileEnvironmentDeviceImport`.
 - `bulk_command` -- Executes a command against multiple devices in sequence via AMAPI.
 
-**Retry logic:** Failed jobs increment `attempts` and are retried up to `MAX_ATTEMPTS` (5). Jobs exceeding max attempts are marked `dead`. Successful jobs are marked `completed`.
+**Retry logic:** Application/job failures increment `attempts` and are retried up
+to `MAX_ATTEMPTS` (5). Jobs exceeding max attempts are marked `dead`. PostgreSQL
+availability failures are different: the handler returns a degraded 503 and leaves
+claimed work leased without consuming an application attempt. The existing
+10-minute stale-lease boundary handles later reclamation; the handler never
+blindly replays an uncertain write or whole transaction.
 
 **Runtime logging:** Netlify invocations retain start and completion logs. The VPS
 durable worker suppresses completion messages for empty polls while retaining

@@ -48,6 +48,7 @@ import {
   ensurePreferredDerivativeForDevicePolicy,
 } from '../_lib/policy-derivatives.js';
 import handler from '../sync-process-background.ts';
+import { markDatabaseError } from '../_lib/db-errors.js';
 
 const mockQuery = vi.mocked(query);
 const mockQueryOne = vi.mocked(queryOne);
@@ -90,6 +91,67 @@ beforeEach(() => {
 });
 
 describe('sync-process-background job queue processing', () => {
+  it('returns a degraded 503 when PostgreSQL is unavailable before a claim', async () => {
+    mockTransaction.mockRejectedValue(markDatabaseError(Object.assign(new Error('connect failed'), {
+      code: 'ECONNREFUSED',
+    })));
+
+    const response = await handler(makeRequest(), {} as never);
+
+    expect(response?.status).toBe(503);
+    expect(response?.headers.get('Retry-After')).toBe('5');
+    expect(response?.headers.get('X-Flash-Degraded')).toBe('database');
+    await expect(response?.json()).resolves.toMatchObject({ code: 'DATABASE_UNAVAILABLE' });
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
+  it('leaves a claimed job leased when completion persistence loses PostgreSQL', async () => {
+    const webhookJob = {
+      id: 'job_db_outage_1',
+      job_type: 'webhook',
+      payload: JSON.stringify({ url: 'https://hooks.example.test/webhook' }),
+      environment_id: 'env1',
+      attempts: 2,
+      max_attempts: 3,
+    };
+    mockTransaction.mockImplementationOnce(async () => [webhookJob] as never);
+    mockExecute.mockRejectedValueOnce(Object.assign(new Error('database restarting'), {
+      code: '57P03',
+    }));
+
+    const response = await handler(makeRequest(), {} as never);
+
+    expect(response?.status).toBe(503);
+    expect(mockExecuteValidatedOutboundWebhook).toHaveBeenCalledTimes(1);
+    expect(mockExecute).toHaveBeenCalledTimes(1);
+    const attemptedSql = mockExecute.mock.calls.map(([sql]) => String(sql)).join('\n');
+    expect(attemptedSql).not.toContain("status = 'dead'");
+    expect(attemptedSql).not.toContain("status = 'pending'");
+  });
+
+  it('does not mark work dead when failure-state persistence loses PostgreSQL', async () => {
+    const webhookJob = {
+      id: 'job_failure_persist_outage_1',
+      job_type: 'webhook',
+      payload: JSON.stringify({ url: 'https://hooks.example.test/webhook' }),
+      environment_id: 'env1',
+      attempts: 0,
+      max_attempts: 5,
+    };
+    mockTransaction.mockImplementationOnce(async () => [webhookJob] as never);
+    mockExecuteValidatedOutboundWebhook.mockRejectedValueOnce(new Error('remote endpoint failed'));
+    mockExecute.mockRejectedValueOnce(Object.assign(new Error('connection lost'), {
+      code: '08006',
+    }));
+
+    const response = await handler(makeRequest(), {} as never);
+
+    expect(response?.status).toBe(503);
+    expect(mockExecute).toHaveBeenCalledTimes(1);
+    expect(String(mockExecute.mock.calls[0]?.[0])).toContain("status = 'pending'");
+    expect(String(mockExecute.mock.calls[0]?.[0])).not.toContain("status = 'dead'");
+  });
+
   it('atomically claims due jobs, reclaims stale leases, and honours row attempt limits', async () => {
     const clientQuery = vi.fn().mockResolvedValue({ rows: [] });
     mockTransaction.mockImplementation(async (fn) => fn({ query: clientQuery } as never));

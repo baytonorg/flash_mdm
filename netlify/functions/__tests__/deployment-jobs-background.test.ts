@@ -33,6 +33,7 @@ vi.mock('../deployment-jobs.ts', () => ({
 }));
 
 import handler from '../deployment-jobs-background.ts';
+import { markDatabaseError } from '../_lib/db-errors.js';
 
 const claimedJob = {
   id: 'job_1',
@@ -67,6 +68,51 @@ beforeEach(() => {
 });
 
 describe('deployment background worker lifecycle', () => {
+  it('returns a degraded 503 when PostgreSQL is unavailable before a claim', async () => {
+    mockTransaction.mockRejectedValue(markDatabaseError(Object.assign(new Error('connect failed'), {
+      code: 'ECONNREFUSED',
+    })));
+
+    const response = await handler(request(), {} as never);
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get('Retry-After')).toBe('5');
+    expect(response.headers.get('X-Flash-Degraded')).toBe('database');
+    expect(mockProcessDeploymentJob).not.toHaveBeenCalled();
+  });
+
+  it('keeps a claimed deployment reclaimable when PostgreSQL disappears', async () => {
+    mockTransaction.mockImplementation(async (fn) => fn({
+      query: vi.fn().mockResolvedValue({ rows: [claimedJob] }),
+    }));
+    mockProcessDeploymentJob.mockRejectedValue(Object.assign(new Error('database restarting'), {
+      code: '57P03',
+    }));
+
+    const response = await handler(request({ job_id: 'job_1' }), {} as never);
+
+    expect(response.status).toBe(503);
+    expect(mockExecute).not.toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'failed'"),
+      expect.anything()
+    );
+  });
+
+  it('returns degraded when persisting a permanent prerequisite failure loses PostgreSQL', async () => {
+    mockTransaction.mockImplementation(async (fn) => fn({
+      query: vi.fn().mockResolvedValue({ rows: [claimedJob] }),
+    }));
+    mockGetPolicyAmapiContext.mockResolvedValue(null);
+    mockExecute.mockRejectedValue(Object.assign(new Error('connection lost'), {
+      code: '08006',
+    }));
+
+    const response = await handler(request({ job_id: 'job_1' }), {} as never);
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get('X-Flash-Degraded')).toBe('database');
+  });
+
   it('atomically claims the oldest pending or stale deployment without a wake-up id', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [claimedJob] });
     mockTransaction.mockImplementation(async (fn) => fn({ query }));

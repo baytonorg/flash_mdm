@@ -992,14 +992,29 @@ import 'dotenv/config';
 import syncProcessBackground from './netlify/functions/sync-process-background.js';
 import deploymentJobsBackground from './netlify/functions/deployment-jobs-background.js';
 import { closeDatabasePool } from './netlify/functions/_lib/db.js';
+import { isDatabaseInfrastructureError } from './netlify/functions/_lib/db-errors.js';
+import { databaseBackoffDelayMs } from './netlify/functions/_lib/worker-backoff.js';
 
 const configuredPollMs = Number.parseInt(process.env.FLASH_WORKER_POLL_MS || '2000', 10);
 const pollMs = Number.isFinite(configuredPollMs) ? Math.max(250, configuredPollMs) : 2000;
+const configuredDatabaseBackoffMaxMs = Number.parseInt(
+  process.env.FLASH_WORKER_DB_BACKOFF_MAX_MS || '30000',
+  10
+);
+const databaseBackoffMaxMs = Number.isFinite(configuredDatabaseBackoffMaxMs)
+  ? Math.max(pollMs, Math.min(300000, configuredDatabaseBackoffMaxMs))
+  : 30000;
 const secret = process.env.INTERNAL_FUNCTION_SECRET ?? '';
 let stopping = false;
+const shutdownController = new AbortController();
 
-process.once('SIGINT', () => { stopping = true; });
-process.once('SIGTERM', () => { stopping = true; });
+function requestStop(): void {
+  stopping = true;
+  shutdownController.abort();
+}
+
+process.once('SIGINT', requestStop);
+process.once('SIGTERM', requestStop);
 
 function internalRequest(functionName: string, body?: Record<string, unknown>): Request {
   return new Request(`http://127.0.0.1:3000/.netlify/functions/${functionName}`, {
@@ -1012,21 +1027,70 @@ function internalRequest(functionName: string, body?: Record<string, unknown>): 
   });
 }
 
-async function sleep(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, pollMs));
+async function sleep(delayMs: number): Promise<void> {
+  if (shutdownController.signal.aborted) return;
+
+  await new Promise<void>((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = () => {
+      if (timer) clearTimeout(timer);
+      shutdownController.signal.removeEventListener('abort', finish);
+      resolve();
+    };
+    timer = setTimeout(finish, delayMs);
+    shutdownController.signal.addEventListener('abort', finish, { once: true });
+    if (shutdownController.signal.aborted) finish();
+  });
 }
 
 async function runLoop(name: string, work: () => Promise<Response | undefined>): Promise<void> {
+  let consecutiveDatabaseFailures = 0;
+
   while (!stopping) {
+    let nextDelayMs = pollMs;
     try {
       const response = await work();
-      if (response && !response.ok) {
+      const databaseUnavailable = response?.status === 503
+        && response.headers.get('X-Flash-Degraded') === 'database';
+
+      if (databaseUnavailable) {
+        consecutiveDatabaseFailures += 1;
+        nextDelayMs = databaseBackoffDelayMs(
+          consecutiveDatabaseFailures,
+          pollMs,
+          databaseBackoffMaxMs,
+          response.headers.get('Retry-After')
+        );
+        if (consecutiveDatabaseFailures === 1) {
+          console.warn(`[worker:${name}] event=database_unavailable backoff_ms=${nextDelayMs}`);
+        }
+      } else if (response?.ok) {
+        if (consecutiveDatabaseFailures > 0) {
+          console.info(
+            `[worker:${name}] event=database_recovered degraded_polls=${consecutiveDatabaseFailures}`
+          );
+        }
+        consecutiveDatabaseFailures = 0;
+      } else if (response) {
         console.error(`[worker:${name}] HTTP ${response.status}: ${await response.text()}`);
       }
     } catch (error) {
-      console.error(`[worker:${name}]`, error);
+      if (isDatabaseInfrastructureError(error)) {
+        consecutiveDatabaseFailures += 1;
+        nextDelayMs = databaseBackoffDelayMs(
+          consecutiveDatabaseFailures,
+          pollMs,
+          databaseBackoffMaxMs,
+          null
+        );
+        if (consecutiveDatabaseFailures === 1) {
+          console.warn(`[worker:${name}] event=database_unavailable backoff_ms=${nextDelayMs}`);
+        }
+      } else {
+        console.error(`[worker:${name}]`, error);
+      }
     }
-    if (!stopping) await sleep();
+    if (!stopping) await sleep(nextDelayMs);
   }
 }
 

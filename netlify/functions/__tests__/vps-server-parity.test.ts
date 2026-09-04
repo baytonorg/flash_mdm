@@ -170,6 +170,15 @@ describe('VPS server parity', () => {
     expect(worker).toContain("import syncProcessBackground");
     expect(worker).toContain("import deploymentJobsBackground");
     expect(worker).toContain("import { closeDatabasePool }");
+    expect(worker).toContain("import { isDatabaseInfrastructureError }");
+    expect(worker).toContain("import { databaseBackoffDelayMs }");
+    expect(worker).toContain("event=database_unavailable");
+    expect(worker).toContain("event=database_recovered");
+    expect(worker).toContain("response.headers.get('X-Flash-Degraded') === 'database'");
+    expect(worker).toContain('consecutiveDatabaseFailures = 0;');
+    expect(worker).toContain('const shutdownController = new AbortController()');
+    expect(worker).toContain('shutdownController.abort()');
+    expect(worker).toContain("addEventListener('abort', finish");
     expect(worker).toContain('await closeDatabasePool()');
     expect(installer).toContain('/etc/systemd/system/flashmdm-worker.service');
     expect(installer).toContain('Environment=FLASH_RUNTIME=vps');
