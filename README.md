@@ -264,7 +264,7 @@ curl -fsSL https://raw.githubusercontent.com/baytonorg/flash_mdm/main/install.sh
 
 All `FLASH_*` variables are optional - the script will prompt for any that aren't provided. See the full list of supported variables in [`install.sh`](install.sh).
 
-For optional deploy-key-backed webhook VPS releases, see [VPS webhook deployment](./docs/deployment/vps-auto-deploy.md). It is disabled unless `FLASH_AUTO_DEPLOY=true` and `FLASH_AUTO_DEPLOY_WEBHOOK_SECRET` are set.
+For optional deploy-key-backed webhook VPS releases, see [VPS webhook deployment](./docs/deployment/vps-auto-deploy.md). It is disabled unless `FLASH_AUTO_DEPLOY=true` and `FLASH_AUTO_DEPLOY_WEBHOOK_SECRET` are set. Production repositories that deploy pushes to `main` must also require pull requests and the strict `validate` status check through GitHub branch protection so only PR-validated content can enter the deployed branch.
 
 ### Manual deployment
 

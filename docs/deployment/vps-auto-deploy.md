@@ -31,6 +31,29 @@ For SSH repositories, the known-hosts file is mandatory. Obtain the host key fro
 
 The listener verifies GitHub's `X-Hub-Signature-256` HMAC, accepts only `push` events for the configured repository and branch, and starts a SHA-addressed one-shot release service. It returns `202` only after the privileged launcher has successfully handed the release to systemd; a failed handoff returns `503` so GitHub retries the delivery. The release service verifies that the signed `after` SHA is still the configured remote branch head before calling the installer. It exits without a restart when that SHA is already active. Use the default loopback bind for single-container Caddy. When Caddy is in a separate LXD container, bind only to the Flash container's private address so that Caddy can reach it.
 
+## Production validation gate
+
+The webhook proves that a push came from GitHub and deploys the exact branch-head SHA, but it does not inspect the GitHub Actions result. A production repository that deploys pushes to `main` must therefore protect `main` in GitHub with all of these controls:
+
+- require changes through a pull request;
+- require the `validate` status check from `.github/workflows/validate.yml`;
+- require branches to be up to date before merging (strict status checks);
+- apply the protection to repository administrators; and
+- disable force pushes and branch deletion.
+
+No approving review count is required by this deployment gate; teams can add a review requirement as a separate governance control. Do not configure a bypass actor for the deployment identity. With this protection in place, Actions validates the pull-request merge candidate against the current `main` branch before GitHub permits the merge, and the existing signed push webhook then deploys the resulting merge commit. This Option A gate validates the content entering `main` and prevents unvalidated direct pushes. It does not make the separate post-merge `push` workflow a prerequisite for deployment or prove that the exact merge SHA's push run has already completed.
+
+Verify the live repository setting rather than relying on documentation alone:
+
+```bash
+gh api repos/OWNER/REPOSITORY/branches/main/protection \
+  --jq '{required_status_checks, enforce_admins, required_pull_request_reviews, allow_force_pushes, allow_deletions}'
+```
+
+Test the gate with a documentation-only pull request: confirm `validate` is required and passes for the merge candidate, merge the pull request, then confirm the webhook deploys the merge SHA, the independently triggered main-branch Validate run passes, and `/api/health` reports the same version. A direct push rejection can also be tested from a disposable branch clone, but never rewrite production history to exercise the control.
+
+The normal recovery path is another validated pull request that reverts the faulty change. Runtime rollback remains the host's LXD snapshot procedure. If GitHub Actions itself is unavailable during an urgent incident, a repository administrator may temporarily change branch protection as a recorded break-glass action, perform only the minimum recovery, and immediately restore and re-verify the controls; the webhook's signature, exact-SHA, readiness, and rollback checks remain mandatory.
+
 For an external Caddy deployment, add this route before the catch-all Flash proxy in the public Caddy configuration and reload it as the Caddy administrator:
 
 ```caddyfile
