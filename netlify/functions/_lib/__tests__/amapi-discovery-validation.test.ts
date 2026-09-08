@@ -12,7 +12,7 @@ describe('pinned AMAPI Discovery policy validation', () => {
     expect(AMAPI_POLICY_DISCOVERY_SOURCE).toBe(
       'https://androidmanagement.googleapis.com/$discovery/rest?version=v1'
     );
-    expect(AMAPI_POLICY_DISCOVERY_REVISION).toBe('20260901');
+    expect(AMAPI_POLICY_DISCOVERY_REVISION).toBe('20260907');
   });
 
   it('rejects unknown policy fields, nested fields, and enum values', () => {
