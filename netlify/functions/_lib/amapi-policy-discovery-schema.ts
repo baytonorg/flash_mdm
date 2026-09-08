@@ -2,7 +2,7 @@
 // Refresh deliberately with `npm run amapi-schema:update` and review the schema diff.
 export const AMAPI_POLICY_DISCOVERY_SCHEMA = {
   "source": "https://androidmanagement.googleapis.com/$discovery/rest?version=v1",
-  "revision": "20260901",
+  "revision": "20260907",
   "root": "Policy",
   "schemas": {
     "AdvancedSecurityOverrides": {
