@@ -9,10 +9,33 @@ interface AmapiCallOptions {
   enterpriseName?: string;
   resourceType?: string;
   resourceId?: string;
+  retryMode?: 'safe' | 'never';
+}
+
+const TRANSIENT_AMAPI_STATUSES = new Set([502, 503, 504]);
+const SAFE_RETRY_ATTEMPTS = 3;
+const SAFE_RETRY_MAX_DELAY_MS = 5_000;
+
+export class AmapiDeliveryUncertainError extends Error {
+  readonly code = 'AMAPI_DELIVERY_UNCERTAIN';
+
+  constructor(message: string, readonly status: number | null = null) {
+    super(message);
+    this.name = 'AmapiDeliveryUncertainError';
+  }
+}
+
+export function isAmapiDeliveryUncertainError(err: unknown): err is AmapiDeliveryUncertainError {
+  return err instanceof AmapiDeliveryUncertainError
+    || (
+      err instanceof Error
+      && (err as Error & { code?: string }).code === 'AMAPI_DELIVERY_UNCERTAIN'
+    );
 }
 
 export function getAmapiErrorHttpStatus(err: unknown): number | null {
   if (!(err instanceof Error)) return null;
+  if (isAmapiDeliveryUncertainError(err)) return err.status;
   const status = /^AMAPI error \((\d{3})\):/.exec(err.message)?.[1];
   if (!status) return null;
   const parsed = Number(status);
@@ -78,6 +101,10 @@ export async function amapiCall<T = unknown>(
   options: AmapiCallOptions
 ): Promise<T> {
   const { method = 'GET', body, projectId, enterpriseName, resourceType = 'general', resourceId } = options;
+  const normalizedMethod = method.toUpperCase();
+  const retrySafe = options.retryMode === 'safe'
+    || (options.retryMode === undefined && (normalizedMethod === 'GET' || normalizedMethod === 'HEAD'));
+  const maxAttempts = retrySafe ? SAFE_RETRY_ATTEMPTS : 1;
 
   // Rate limit check (only when we have an enterprise context)
   if (enterpriseName) {
@@ -104,12 +131,47 @@ export async function amapiCall<T = unknown>(
     body: body ? JSON.stringify(body) : undefined,
   };
 
-  let response = await fetch(url, fetchOptions);
+  let response: Response | null = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      response = await fetch(url, fetchOptions);
+    } catch (err) {
+      if (retrySafe && attempt + 1 < maxAttempts) {
+        await sleepBeforeSafeRetry(attempt);
+        continue;
+      }
+      if (!retrySafe && normalizedMethod !== 'GET' && normalizedMethod !== 'HEAD') {
+        throw new AmapiDeliveryUncertainError(
+          'AMAPI request delivery is uncertain after a transport failure'
+        );
+      }
+      throw new Error(`AMAPI transport error: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
-  // Retry once on 503 (AMAPI rate limit)
-  if (response.status === 503) {
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    response = await fetch(url, fetchOptions);
+    if (
+      TRANSIENT_AMAPI_STATUSES.has(response.status)
+      && retrySafe
+      && attempt + 1 < maxAttempts
+    ) {
+      await sleepBeforeSafeRetry(attempt);
+      continue;
+    }
+
+    break;
+  }
+
+  if (!response) throw new Error('AMAPI request failed without a response');
+
+  if (
+    TRANSIENT_AMAPI_STATUSES.has(response.status)
+    && !retrySafe
+    && normalizedMethod !== 'GET'
+    && normalizedMethod !== 'HEAD'
+  ) {
+    throw new AmapiDeliveryUncertainError(
+      `AMAPI request delivery is uncertain after transient HTTP ${response.status}`,
+      response.status
+    );
   }
 
   if (!response.ok) {
@@ -127,4 +189,13 @@ export async function amapiCall<T = unknown>(
 
   if (response.status === 204) return {} as T;
   return response.json() as Promise<T>;
+}
+
+async function sleepBeforeSafeRetry(attempt: number): Promise<void> {
+  const exponentialDelay = Math.min(
+    SAFE_RETRY_MAX_DELAY_MS,
+    500 * Math.pow(2, attempt)
+  );
+  const jitter = Math.floor(Math.random() * 250);
+  await new Promise((resolve) => setTimeout(resolve, exponentialDelay + jitter));
 }

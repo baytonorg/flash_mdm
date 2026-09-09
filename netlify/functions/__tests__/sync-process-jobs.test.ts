@@ -14,6 +14,10 @@ vi.mock('../_lib/internal-auth.js', () => ({
 vi.mock('../_lib/amapi.js', () => ({
   amapiCall: vi.fn(),
   getAmapiErrorHttpStatus: vi.fn(() => null),
+  isAmapiDeliveryUncertainError: vi.fn((err: unknown) =>
+    err instanceof Error
+      && (err as Error & { code?: string }).code === 'AMAPI_DELIVERY_UNCERTAIN'
+  ),
 }));
 
 vi.mock('../_lib/amapi-command.js', () => ({
@@ -647,6 +651,7 @@ describe('sync-process-background job queue processing', () => {
       'ws_1',
       expect.objectContaining({
         method: 'PATCH',
+        retryMode: 'safe',
         body: { state: 'DISABLED' },
         projectId: 'proj_1',
         enterpriseName: 'enterprises/e1',
@@ -665,6 +670,59 @@ describe('sync-process-background job queue processing', () => {
         (call[1] as unknown[])?.includes('job_disable')
     );
     expect(completedCall).toBeDefined();
+  });
+
+  it('terminates uncertain device commands without queue replay', async () => {
+    const job = {
+      id: 'job_uncertain_command',
+      job_type: 'device_command',
+      payload: JSON.stringify({
+        device_id: 'dev_1',
+        command_type: 'REBOOT',
+      }),
+      environment_id: 'env1',
+      attempts: 0,
+      max_attempts: 3,
+      locked_at: new Date().toISOString(),
+    };
+
+    mockTransaction
+      .mockImplementationOnce(async () => [job] as never)
+      .mockImplementationOnce(async () => [] as never);
+    mockQueryOne
+      .mockResolvedValueOnce({
+        amapi_name: 'enterprises/e1/devices/d1',
+        environment_id: 'env_1',
+      } as never)
+      .mockResolvedValueOnce({
+        workspace_id: 'ws_1',
+        gcp_project_id: 'proj_1',
+        enterprise_name: 'enterprises/e1',
+      } as never);
+    mockAmapiCall.mockRejectedValueOnce(Object.assign(
+      new Error('AMAPI request delivery is uncertain after transient HTTP 504'),
+      { code: 'AMAPI_DELIVERY_UNCERTAIN', status: 504 }
+    ));
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await handler(makeRequest(), {} as never);
+
+    expect(mockAmapiCall).toHaveBeenCalledTimes(1);
+    expect(mockAmapiCall).toHaveBeenCalledWith(
+      'enterprises/e1/devices/d1:issueCommand',
+      'ws_1',
+      expect.objectContaining({ retryMode: 'never' })
+    );
+    const uncertainCall = mockExecute.mock.calls.find(([sql, params]) =>
+      String(sql).includes("status = 'delivery_uncertain'")
+        && (params as unknown[])?.includes('job_uncertain_command')
+    );
+    expect(uncertainCall).toBeDefined();
+    const replayCall = mockExecute.mock.calls.find(([sql, params]) =>
+      (String(sql).includes("status = 'pending'") || String(sql).includes("status = 'dead'"))
+        && (params as unknown[])?.includes('job_uncertain_command')
+    );
+    expect(replayCall).toBeUndefined();
   });
 
   it('processes device_delete jobs using AMAPI delete then soft-deletes local records', async () => {

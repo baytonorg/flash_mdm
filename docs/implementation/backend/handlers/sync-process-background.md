@@ -35,7 +35,7 @@
 | Import | From | Used for |
 |--------|------|----------|
 | `query`, `queryOne`, `execute`, `transaction` | `_lib/db` | Database operations |
-| `amapiCall`, `getAmapiErrorHttpStatus` | `_lib/amapi` | Android Management API calls |
+| `amapiCall`, `getAmapiErrorHttpStatus`, `isAmapiDeliveryUncertainError` | `_lib/amapi` | Android Management API calls and uncertain-delivery classification |
 | `buildAmapiCommandPayload` | `_lib/amapi-command` | Command payload construction |
 | `storeBlob` | `_lib/blobs` | Storing raw event payloads |
 | `logAudit` | `_lib/audit` | Audit logging |
@@ -60,6 +60,13 @@ availability failures are different: the handler returns a degraded 503 and leav
 claimed work leased without consuming an application attempt. The existing
 10-minute stale-lease boundary handles later reclamation; the handler never
 blindly replays an uncertain write or whole transaction.
+
+AMAPI `devices:issueCommand` is a specific terminal exception: a transient
+502/503/504 or transport failure is recorded as `delivery_uncertain`, with no queue
+retry. Explicitly idempotent ENABLE/DISABLE state PATCHes use the safe retry policy.
+Workflow evaluator responses propagate the same terminal status into their parent
+queue row so queue health does not misleadingly report an ambiguous command as a
+normal completion.
 
 **Runtime logging:** Netlify invocations retain start and completion logs. The VPS
 durable worker suppresses completion messages for empty polls while retaining

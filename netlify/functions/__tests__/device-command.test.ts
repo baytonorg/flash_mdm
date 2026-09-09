@@ -15,8 +15,15 @@ vi.mock('../_lib/rbac.js', () => ({
 
 vi.mock('../_lib/amapi.js', () => ({
   amapiCall: vi.fn(),
+  isAmapiDeliveryUncertainError: vi.fn((err: unknown) =>
+    err instanceof Error
+      && (err as Error & { code?: string }).code === 'AMAPI_DELIVERY_UNCERTAIN'
+  ),
   getAmapiErrorHttpStatus: vi.fn((err: unknown) => {
     if (!(err instanceof Error)) return null;
+    if ((err as Error & { code?: string; status?: number }).code === 'AMAPI_DELIVERY_UNCERTAIN') {
+      return (err as Error & { status?: number }).status ?? null;
+    }
     const match = /^AMAPI error \((\d{3})\):/.exec(err.message)?.[1];
     return match ? Number(match) : null;
   }),
@@ -152,6 +159,33 @@ describe('device-command AMAPI error passthrough', () => {
     });
   });
 
+  it('records and reports uncertain command delivery without suggesting an automatic retry', async () => {
+    seedBaseLookups();
+    mockAmapiCall.mockRejectedValue(Object.assign(
+      new Error('AMAPI request delivery is uncertain after transient HTTP 503'),
+      { code: 'AMAPI_DELIVERY_UNCERTAIN', status: 503 }
+    ));
+
+    const res = await handler(
+      makeRequest({ device_id: VALID_DEVICE_ID, command: 'REBOOT' }),
+      {} as never
+    );
+
+    expect(res.status).toBe(502);
+    await expect(res.json()).resolves.toEqual({
+      error: 'Command delivery is uncertain. Do not retry automatically; check device operations and audit history before trying again.',
+      code: 'AMAPI_DELIVERY_UNCERTAIN',
+    });
+    expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'device.command.delivery_uncertain',
+      details: {
+        command: 'REBOOT',
+        upstream_status: 503,
+        automatic_retry: false,
+      },
+    }));
+  });
+
   it('records AMAPI operation metadata in audit details for issued commands', async () => {
     seedBaseLookups();
     mockAmapiCall.mockResolvedValue({ name: 'operations/cmd-123', done: false } as never);
@@ -195,6 +229,7 @@ describe('device-command state commands', () => {
       'ws_1',
       expect.objectContaining({
         method: 'PATCH',
+        retryMode: 'safe',
         body: { state: 'DISABLED' },
         projectId: 'proj-123',
         enterpriseName: 'enterprises/e1',

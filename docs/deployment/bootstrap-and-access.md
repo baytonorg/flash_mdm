@@ -42,8 +42,15 @@ Source: `netlify/functions/auth-register.ts`
 
 Because the hosting operator has ultimate authority, access to:
 
-- the Netlify account
+- the hosting control plane (the Netlify account or VPS SSH/root/systemd access)
 - the database
-- environment variables
+- protected environment configuration (`/opt/flash-mdm/.env` on the supported
+  VPS installer path, or Netlify environment variables)
+- blob storage and backup recovery sets
 
 must be tightly controlled. Anyone with access to these can read or modify any data in the system.
+
+On a VPS, confirm `/opt/flash-mdm/.env` remains mode `0600` and owned by the
+service account. Repository deploy keys and the signed-webhook configuration do
+not belong in the application `.env`; follow the separate protected paths in
+[VPS webhook deployment](./vps-auto-deploy.md).

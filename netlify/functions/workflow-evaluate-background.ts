@@ -1,6 +1,10 @@
 import type { Context } from '@netlify/functions';
 import { queryOne, execute } from './_lib/db.js';
-import { amapiCall } from './_lib/amapi.js';
+import {
+  amapiCall,
+  getAmapiErrorHttpStatus,
+  isAmapiDeliveryUncertainError,
+} from './_lib/amapi.js';
 import { buildAmapiCommandPayload } from './_lib/amapi-command.js';
 import { logAudit } from './_lib/audit.js';
 import { sendEmail } from './_lib/resend.js';
@@ -75,7 +79,7 @@ interface WorkflowAuditOptions {
 
 type WorkflowActionResult =
   | ({ success: true } & Record<string, unknown>)
-  | ({ success: false; error: string } & Record<string, unknown>);
+  | ({ success: false; error: string; delivery_uncertain?: boolean } & Record<string, unknown>);
 
 // ─── Condition Evaluation ───────────────────────────────────────────────────
 
@@ -237,18 +241,34 @@ async function executeAction(
         (action_config.command_data as Record<string, unknown> | undefined) ?? {}
       );
 
-      const result = await amapiCall(
-        `${device.amapi_name}:issueCommand`,
-        envContext.workspace_id,
-        {
-          method: 'POST',
-          body: commandBody,
-          projectId: envContext.gcp_project_id,
-          enterpriseName: envContext.enterprise_name,
-          resourceType: 'devices',
-          resourceId: device.amapi_name,
+      let result: unknown;
+      try {
+        result = await amapiCall(
+          `${device.amapi_name}:issueCommand`,
+          envContext.workspace_id,
+          {
+            method: 'POST',
+            body: commandBody,
+            projectId: envContext.gcp_project_id,
+            enterpriseName: envContext.enterprise_name,
+            resourceType: 'devices',
+            resourceId: device.amapi_name,
+            retryMode: 'never',
+          }
+        );
+      } catch (err) {
+        if (isAmapiDeliveryUncertainError(err)) {
+          return {
+            success: false,
+            delivery_uncertain: true,
+            command_type: commandType,
+            upstream_status: getAmapiErrorHttpStatus(err),
+            automatic_retry: false,
+            error: 'AMAPI command delivery is uncertain; verify device operations before retrying.',
+          };
         }
-      );
+        throw err;
+      }
 
       return { success: true, command_type: commandType, amapi_result: result };
     }
@@ -518,13 +538,19 @@ export default async (request: Request, _context: Context) => {
       const result = await executeAction(workflow, device, envContext);
 
       const hasError = !result.success;
+      const deliveryUncertain = !result.success && result.delivery_uncertain === true;
+      const executionStatus = deliveryUncertain
+        ? 'delivery_uncertain'
+        : hasError ? 'failed' : 'success';
       await execute(
         `UPDATE workflow_executions SET status = $2, result = $3 WHERE id = $1`,
-        [executionId, hasError ? 'failed' : 'success', JSON.stringify(result)]
+        [executionId, executionStatus, JSON.stringify(result)]
       );
 
       await logWorkflowExecutionAudit({
-        action: hasError ? 'workflow.execution.failed' : 'workflow.execution.executed',
+        action: deliveryUncertain
+          ? 'workflow.execution.delivery_uncertain'
+          : hasError ? 'workflow.execution.failed' : 'workflow.execution.executed',
         workflow,
         device,
         triggerData: trigger_data ?? {},
@@ -539,7 +565,8 @@ export default async (request: Request, _context: Context) => {
         [workflow_id]
       );
 
-      console.log(`Workflow ${workflow_id} executed for device ${device_id}: ${hasError ? 'failed' : 'success'}`);
+      console.log(`Workflow ${workflow_id} executed for device ${device_id}: ${executionStatus}`);
+      return Response.json({ status: executionStatus, execution_id: executionId });
     } catch (err) {
       console.error(`Workflow ${workflow_id} action failed:`, err);
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -556,8 +583,10 @@ export default async (request: Request, _context: Context) => {
         `UPDATE workflow_executions SET status = 'failed', result = $2 WHERE id = $1`,
         [executionId, JSON.stringify({ error: errorMessage })]
       );
+      return Response.json({ status: 'failed', execution_id: executionId });
     }
   } catch (err) {
     console.error('Workflow evaluation error:', err);
+    return Response.json({ status: 'failed' });
   }
 };

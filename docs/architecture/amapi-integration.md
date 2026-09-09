@@ -70,7 +70,11 @@ AMAPI is rate-limited and can return transient failures.
 As-built notes:
 
 - Code contains explicit comments about AMAPI rate limits and conservative batching.
-- AMAPI wrapper retries specific failure cases.
+- Read-only calls retry HTTP 502, 503, 504, and transport failures with capped
+  exponential backoff and jitter.
+- Callers may explicitly mark an idempotent state update as retry-safe.
+- Non-idempotent `devices:issueCommand` calls are single-attempt. An ambiguous
+  transient outcome becomes `delivery_uncertain` instead of being blindly replayed.
 
 Related code:
 
@@ -82,6 +86,7 @@ Related code:
 Common failure modes to document/monitor:
 
 - AMAPI 429/503 (rate limiting / transient backend issues)
+- AMAPI 502/503/504 or transport failures with an uncertain command outcome
 - Pub/Sub delivery failures or auth misconfiguration
 - Background processor backlog growth
 - Policy patch failures causing partial sync
@@ -91,6 +96,8 @@ Observability:
 - Netlify function logs
 - Superadmin-exposed server logs
 - Audit log for sensitive actions
+- Workflow execution and durable queue status `delivery_uncertain`; check AMAPI
+  device operations and state before any manual replay
 
 ## 8) Security considerations
 

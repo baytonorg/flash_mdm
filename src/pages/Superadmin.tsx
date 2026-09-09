@@ -2940,6 +2940,8 @@ export function SuperadminStats() {
                             <span className={`rounded px-2 py-0.5 ${
                               event.status === 'completed'
                                 ? 'bg-green-100 text-green-700'
+                                : event.status === 'delivery_uncertain'
+                                  ? 'bg-amber-100 text-amber-800'
                                 : event.status === 'dead'
                                   ? 'bg-red-100 text-red-700'
                                   : event.status === 'locked'
@@ -3007,6 +3009,8 @@ export function SuperadminStats() {
                             <span className={`rounded px-2 py-0.5 ${
                               event.status === 'success'
                                 ? 'bg-green-100 text-green-700'
+                                : event.status === 'delivery_uncertain'
+                                  ? 'bg-amber-100 text-amber-800'
                                 : event.status === 'failed'
                                   ? 'bg-red-100 text-red-700'
                                   : event.status === 'skipped'
