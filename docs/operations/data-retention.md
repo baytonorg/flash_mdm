@@ -18,7 +18,7 @@ This function runs daily at **03:00 UTC** (`0 3 * * *`). It reads retention conf
 | Expired magic links | Hard-deleted |
 | Expired/pending invites | Marked `expired` |
 | Old Pub/Sub events (>30 days) | Archived (status set to `archived`) |
-| Completed/dead job queue entries (>7 days) | Hard-deleted |
+| Completed/dead/delivery-uncertain job queue entries (>7 days) | Hard-deleted |
 | Stale rate limit buckets (unused >24 hours) | Hard-deleted |
 | Stale pending TOTP setup data | Pending TOTP blob + timestamp cleared when older than 1 day (or legacy rows missing timestamp) |
 | Expired API keys | Revoked (`revoked_at` set) — keys with no expiry are left active |

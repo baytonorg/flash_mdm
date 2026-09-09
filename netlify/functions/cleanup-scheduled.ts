@@ -45,10 +45,10 @@ export default async (_request: Request, _context: Context) => {
     );
     results.archived_pubsub_events = archivedEvents.rowCount;
 
-    // Delete completed/dead jobs older than 7 days
+    // Delete terminal jobs older than 7 days
     results.deleted_jobs = await deleteInBatches(
       'job_queue',
-      `status IN ('completed', 'dead')
+      `status IN ('completed', 'dead', 'delivery_uncertain')
        AND created_at < now() - interval '7 days'`
     );
 

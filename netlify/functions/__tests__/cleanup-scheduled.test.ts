@@ -27,6 +27,7 @@ describe('cleanup-scheduled retention jobs', () => {
     await handler(new Request('http://localhost/.netlify/functions/cleanup-scheduled'), {} as never);
 
     expect(mockExecute).toHaveBeenCalledTimes(15);
+    expect(mockExecute.mock.calls[4]?.[0]).toContain("'delivery_uncertain'");
     expect(mockExecute.mock.calls[6]?.[0]).toContain('totp_pending_created_at');
     expect(mockExecute.mock.calls[7]?.[0]).toContain('UPDATE api_keys');
     expect(mockExecute.mock.calls[8]?.[1]).toEqual([30, DELETE_BATCH_SIZE]); // audit log

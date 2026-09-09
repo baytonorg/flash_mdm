@@ -1,6 +1,10 @@
 import type { Context } from '@netlify/functions';
 import { query, queryOne, execute, transaction } from './_lib/db.js';
-import { amapiCall, getAmapiErrorHttpStatus } from './_lib/amapi.js';
+import {
+  amapiCall,
+  getAmapiErrorHttpStatus,
+  isAmapiDeliveryUncertainError,
+} from './_lib/amapi.js';
 import { buildAmapiCommandPayload } from './_lib/amapi-command.js';
 import { storeBlob } from './_lib/blobs.js';
 import { logAudit } from './_lib/audit.js';
@@ -1479,8 +1483,9 @@ async function processUsageLogs(
 /**
  * Process a bulk command job: send device commands via AMAPI.
  */
-async function processBulkCommand(payload: BulkCommandPayload): Promise<void> {
+async function processBulkCommand(payload: BulkCommandPayload): Promise<boolean> {
   const { device_amapi_names, command_type, command_data, workspace_id, project_id, enterprise_name } = payload;
+  let deliveryUncertain = false;
 
   for (const deviceName of device_amapi_names) {
     try {
@@ -1494,6 +1499,7 @@ async function processBulkCommand(payload: BulkCommandPayload): Promise<void> {
           enterpriseName: enterprise_name,
           resourceType: 'devices',
           resourceId: deviceName,
+          retryMode: 'never',
         }
       );
 
@@ -1506,14 +1512,25 @@ async function processBulkCommand(payload: BulkCommandPayload): Promise<void> {
       );
     } catch (err) {
       console.error(`Failed to send command to ${deviceName}:`, err);
+      const uncertain = isAmapiDeliveryUncertainError(err);
+      deliveryUncertain ||= uncertain;
       await tryUpdateDeviceCommandStatus(
-        `UPDATE device_commands SET status = 'FAILED', error = $3, updated_at = now()
+        `UPDATE device_commands SET status = $3, error = $4, updated_at = now()
          WHERE device_amapi_name = $1 AND command_type = $2 AND status = 'PENDING'
          ORDER BY created_at DESC LIMIT 1`,
-        [deviceName, command_type, String(err)]
+        [
+          deviceName,
+          command_type,
+          uncertain ? 'DELIVERY_UNCERTAIN' : 'FAILED',
+          uncertain
+            ? 'AMAPI command delivery is uncertain; automatic retry was suppressed'
+            : String(err),
+        ]
       );
     }
   }
+
+  return deliveryUncertain;
 }
 
 async function processQueuedDeviceDelete(payload: {
@@ -1747,7 +1764,11 @@ export default async (request: Request, _context: Context) => {
           }
 
           case 'bulk_command': {
-            await processBulkCommand(payload as BulkCommandPayload);
+            const deliveryUncertain = await processBulkCommand(payload as BulkCommandPayload);
+            if (deliveryUncertain) {
+              await markJobDeliveryUncertain(job.id);
+              continue;
+            }
             break;
           }
 
@@ -1768,6 +1789,14 @@ export default async (request: Request, _context: Context) => {
             });
             if (!response.ok) {
               throw new Error(`Workflow evaluator returned HTTP ${response.status}`);
+            }
+            const evaluation = await response.json().catch(() => null) as {
+              status?: string;
+              execution_id?: string;
+            } | null;
+            if (evaluation?.status === 'delivery_uncertain') {
+              await markJobDeliveryUncertain(job.id, evaluation.execution_id);
+              continue;
             }
             break;
           }
@@ -1804,6 +1833,7 @@ export default async (request: Request, _context: Context) => {
                         enterpriseName: cmdEnvCtx.enterprise_name,
                         resourceType: 'devices',
                         resourceId: cmdDevice.amapi_name.split('/').pop(),
+                        retryMode: 'safe',
                       }
                     );
                     await execute(
@@ -1811,6 +1841,7 @@ export default async (request: Request, _context: Context) => {
                       [targetState, cmdDeviceId]
                     );
                   } catch (err) {
+                    if (isAmapiDeliveryUncertainError(err)) throw err;
                     const status = getAmapiErrorHttpStatus(err);
                     throw new Error(
                       `Bulk ${command_type.toLowerCase()} failed${status ? ` (${status})` : ''}: ${err instanceof Error ? err.message : String(err)}`
@@ -1828,9 +1859,11 @@ export default async (request: Request, _context: Context) => {
                         enterpriseName: cmdEnvCtx.enterprise_name,
                         resourceType: 'devices',
                         resourceId: cmdDevice.amapi_name.split('/').pop(),
+                        retryMode: 'never',
                       }
                     );
                   } catch (err) {
+                    if (isAmapiDeliveryUncertainError(err)) throw err;
                     const status = getAmapiErrorHttpStatus(err);
                     throw new Error(
                       `Bulk ${command_type.toLowerCase()} failed${status ? ` (${status})` : ''}: ${err instanceof Error ? err.message : String(err)}`
@@ -1906,6 +1939,14 @@ export default async (request: Request, _context: Context) => {
           // external action committed, and do not spend a job attempt on an outage.
           console.warn(`Job ${job.id} (${job.job_type}) paused: PostgreSQL unavailable`);
           throw err;
+        }
+
+        if (isAmapiDeliveryUncertainError(err)) {
+          console.warn(
+            `event=amapi_delivery_uncertain job_id=${job.id} job_type=${job.job_type} automatic_retry=false`
+          );
+          await markJobDeliveryUncertain(job.id);
+          continue;
         }
 
         console.error(`Job ${job.id} (${job.job_type}) failed:`, err);
@@ -2062,4 +2103,20 @@ async function updateJobQueueFailure(
       [jobId, attempts, error, backoffSeconds]
     );
   }
+}
+
+async function markJobDeliveryUncertain(
+  jobId: string,
+  executionId?: string
+): Promise<void> {
+  const detail = executionId
+    ? `Workflow execution ${executionId} has uncertain AMAPI command delivery; automatic retry was suppressed`
+    : 'AMAPI command delivery is uncertain; automatic retry was suppressed';
+  await execute(
+    `UPDATE job_queue
+     SET status = 'delivery_uncertain', error = $2, completed_at = now(),
+         locked_at = NULL, locked_by = NULL
+     WHERE id = $1`,
+    [jobId, detail]
+  );
 }

@@ -8,7 +8,11 @@ import {
   isDeviceCommandType,
   isPatchStateCommandType,
 } from './_lib/device-commands.js';
-import { amapiCall, getAmapiErrorHttpStatus } from './_lib/amapi.js';
+import {
+  amapiCall,
+  getAmapiErrorHttpStatus,
+  isAmapiDeliveryUncertainError,
+} from './_lib/amapi.js';
 import { buildAmapiCommandPayload, AmapiCommandValidationError } from './_lib/amapi-command.js';
 import { logAudit } from './_lib/audit.js';
 import { jsonResponse, errorResponse, parseJsonBody, getClientIp, isValidUuid } from './_lib/helpers.js';
@@ -104,6 +108,7 @@ export default async (request: Request, context: Context) => {
             enterpriseName: env.enterprise_name,
             resourceType: 'devices',
             resourceId: device.amapi_name.split('/').pop(),
+            retryMode: 'safe',
           }
         );
 
@@ -181,6 +186,27 @@ export default async (request: Request, context: Context) => {
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       console.error(`Failed to issue command ${command}:`, message);
+      if (isAmapiDeliveryUncertainError(err)) {
+        await logAudit({
+          workspace_id: env.workspace_id,
+          environment_id: device.environment_id,
+          user_id: auth.user.id,
+          device_id: device.id,
+          action: 'device.command.delivery_uncertain',
+          resource_type: 'device',
+          resource_id: device.id,
+          details: {
+            command,
+            upstream_status: getAmapiErrorHttpStatus(err),
+            automatic_retry: false,
+          },
+          ip_address: getClientIp(request),
+        });
+        return jsonResponse({
+          error: 'Command delivery is uncertain. Do not retry automatically; check device operations and audit history before trying again.',
+          code: 'AMAPI_DELIVERY_UNCERTAIN',
+        }, 502);
+      }
       const status = getAmapiErrorHttpStatus(err) ?? 502;
       const amapiDetail = /^AMAPI error \(\d+\):\s*(.+)$/i.exec(message)?.[1];
       const clientMessage = amapiDetail

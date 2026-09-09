@@ -24,7 +24,9 @@
 
 Renders a vertical timeline with a connector line between entries. Each execution card shows:
 
-1. **Status badge** -- colour-coded pill with icon. Six statuses are supported: `success` (green), `failed` (red), `pending` (amber), `running` (blue), `skipped` (gray), `dry_run` (purple).
+1. **Status badge** -- colour-coded pill with icon. Seven statuses are supported:
+   `success` (green), `failed` (red), `delivery_uncertain` (amber), `pending`
+   (amber), `running` (blue), `skipped` (gray), and `dry_run` (purple).
 2. **Timestamp** -- formatted as short month, day, hour, and minute.
 3. **Device info** -- manufacturer, model, and serial number (shown if present).
 4. **Trigger data** -- JSON-formatted in a scrollable `<pre>` block, shown if non-empty.

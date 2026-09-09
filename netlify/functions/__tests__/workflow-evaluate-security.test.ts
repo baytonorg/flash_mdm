@@ -14,6 +14,15 @@ vi.mock('../_lib/db.js', () => ({
 
 vi.mock('../_lib/amapi.js', () => ({
   amapiCall: vi.fn(),
+  getAmapiErrorHttpStatus: vi.fn((err: unknown) =>
+    err instanceof Error
+      ? (err as Error & { status?: number }).status ?? null
+      : null
+  ),
+  isAmapiDeliveryUncertainError: vi.fn((err: unknown) =>
+    err instanceof Error
+      && (err as Error & { code?: string }).code === 'AMAPI_DELIVERY_UNCERTAIN'
+  ),
 }));
 
 vi.mock('../_lib/amapi-command.js', () => ({
@@ -515,5 +524,54 @@ describe('workflow-evaluate-background — security', () => {
     expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({
       action: 'workflow.execution.failed',
     }));
+  });
+
+  it('records transient issueCommand responses as delivery uncertain without replaying them', async () => {
+    mockRequireInternalCaller.mockImplementation(() => {});
+    mockBuildAmapiCommandPayload.mockReturnValue({ type: 'REBOOT' });
+    mockAmapiCall.mockRejectedValue(Object.assign(
+      new Error('AMAPI request delivery is uncertain after transient HTTP 502'),
+      { code: 'AMAPI_DELIVERY_UNCERTAIN', status: 502 }
+    ));
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    mockQueryOne
+      .mockResolvedValueOnce({
+        id: 'wf1', environment_id: 'env1', name: 'Reboot', enabled: true,
+        trigger_type: 'scheduled', trigger_config: {}, conditions: [],
+        action_type: 'device.command', action_config: { command_type: 'REBOOT' },
+        scope_type: 'environment', scope_id: null,
+      } as never)
+      .mockResolvedValueOnce({
+        id: 'dev1', environment_id: 'env1', amapi_name: 'enterprises/test/devices/dev1',
+        serial_number: 'SN123', manufacturer: 'Google', model: 'Pixel', os_version: '14',
+        state: 'ACTIVE', ownership: 'COMPANY_OWNED', policy_compliant: true,
+        group_id: null, snapshot: null,
+      } as never)
+      .mockResolvedValueOnce({
+        workspace_id: 'ws1', enterprise_name: 'enterprises/test', gcp_project_id: 'proj-1',
+      } as never);
+
+    const response = await handler(
+      makeRequest({ workflow_id: 'wf1', device_id: 'dev1', trigger_data: {} }),
+      {} as never
+    );
+
+    expect(mockAmapiCall).toHaveBeenCalledTimes(1);
+    expect(mockAmapiCall).toHaveBeenCalledWith(
+      'enterprises/test/devices/dev1:issueCommand',
+      'ws1',
+      expect.objectContaining({ retryMode: 'never' })
+    );
+    expect(mockExecute).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE workflow_executions SET status = $2'),
+      expect.arrayContaining(['delivery_uncertain'])
+    );
+    expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'workflow.execution.delivery_uncertain',
+    }));
+    await expect(response?.json()).resolves.toMatchObject({
+      status: 'delivery_uncertain',
+    });
   });
 });

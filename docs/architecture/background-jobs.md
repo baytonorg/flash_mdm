@@ -19,7 +19,8 @@ Jobs are stored in Postgres (e.g. `job_queue`) and processed in batches.
 Common design patterns:
 
 - `FOR UPDATE SKIP LOCKED` when dequeuing from `job_queue` (used in `sync-process-background`)
-- explicit status transitions (`pending` → `processing` → `completed`/`failed`)
+- explicit status transitions (`pending` → `locked` → `completed`/`dead`, with
+  terminal `delivery_uncertain` for ambiguous non-idempotent AMAPI delivery)
 - idempotency/deduplication for externally-triggered events (e.g. Pub/Sub, Stripe)
 
 ### Scheduled functions
@@ -86,6 +87,11 @@ This list is intentionally high-level; details live in code and will be expanded
   connection around a write or external side effect has an uncertain outcome, so
   handlers do not replay whole transactions or arbitrary writes transparently;
   stale-lease reclamation remains the recovery boundary.
+- **Command delivery safety:** reads and explicitly idempotent device-state PATCH
+  operations retry transient 502/503/504 and transport failures with capped
+  backoff. `devices:issueCommand` never retries an ambiguous outcome. The worker
+  records the job as terminal `delivery_uncertain`; operators must establish the
+  remote outcome before any manual replay.
 
 See also:
 

@@ -3,7 +3,7 @@
 Flash MDM exposes operational signals through:
 
 - the unauthenticated `/api/health` readiness endpoint
-- Netlify function logs (platform-level)
+- platform runtime logs (Netlify function logs or VPS system journals)
 - In-app server logs (Superadmin UI)
 - Audit logs (security and change tracking)
 
@@ -37,7 +37,8 @@ Flash MDM exposes operational signals through:
 
 ## 2) Scheduled functions to monitor
 
-These run on fixed schedules; failures appear in Netlify function logs.
+These run on fixed schedules. Failures appear in Netlify function logs for a
+Netlify deployment or under the `flashmdm-cron` journal tag on VPS.
 
 | Function | Schedule | Purpose |
 |---|---|---|
@@ -52,7 +53,10 @@ These run on fixed schedules; failures appear in Netlify function logs.
 - Elevated auth failures / rate limit hits
 - AMAPI error rates and timeouts
 - Stripe webhook failures and retries
-- Background job queue growth / stuck jobs (`job_queue` table, status `pending` or `dead`)
+- Background job queue growth / stuck jobs (`pending`, expired `locked`, or `dead`)
+- Terminal `delivery_uncertain` queue rows, workflow executions, and privileged
+  audit events. These mean a non-idempotent AMAPI command received a transient
+  response or transport failure and was deliberately not replayed.
 - Database connection saturation
 - Scheduled function errors (search logs for `error` or `fatal error` suffixes)
 
@@ -64,3 +68,20 @@ These run on fixed schedules; failures appear in Netlify function logs.
 - DB connection errors / pool exhaustion
 - Database-unavailable worker events without a matching recovery
 - Unexpected spikes in destructive device actions (disable/wipe)
+- Any `workflow.execution.delivery_uncertain`,
+  `device.command.delivery_uncertain`, or `event=amapi_delivery_uncertain` signal
+
+## 5) AMAPI retry and recovery contract
+
+- Read-only AMAPI requests retry HTTP 502, 503, 504, and transport failures with
+  capped exponential backoff and jitter.
+- Device state PATCH operations opt into the same safe retry policy because
+  applying the same target state is idempotent.
+- `devices:issueCommand` requests are never replayed automatically after an
+  ambiguous transient response. Flash records `delivery_uncertain` in workflow
+  history and the durable queue and writes a privileged audit event.
+- A definite non-transient AMAPI rejection remains `failed` and follows the
+  ordinary correction path.
+- Before manually retrying a delivery-uncertain command, inspect AMAPI device
+  operations, current device state, workflow history, and the audit record. For
+  destructive actions, escalate if the outcome cannot be established.

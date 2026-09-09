@@ -55,7 +55,11 @@
    - `notification.email`: Sends branded HTML email via Resend
    - `notification.webhook`: POSTs device/workflow data to a URL (with SSRF validation and optional secret header)
    - `audit.log`: Writes a custom audit entry
-6. **Status tracking**: Updates the execution record to `success`, `failed`, or `skipped` with result details. Updates `last_triggered_at` on the workflow.
+6. **Status tracking**: Updates the execution record to `success`, `failed`,
+   `delivery_uncertain`, or `skipped` with result details. Ambiguous transient
+   `devices:issueCommand` outcomes are not retried automatically and emit a
+   privileged `workflow.execution.delivery_uncertain` audit event. Updates
+   `last_triggered_at` on the workflow.
 
 ## API Surface
 

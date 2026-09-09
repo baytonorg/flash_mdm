@@ -1,4 +1,4 @@
-import { CheckCircle, XCircle, Clock, SkipForward, FlaskConical, Smartphone } from 'lucide-react';
+import { AlertTriangle, CheckCircle, XCircle, Clock, SkipForward, FlaskConical, Smartphone } from 'lucide-react';
 import clsx from 'clsx';
 import type { WorkflowExecution } from '@/api/queries/workflows';
 
@@ -27,6 +27,12 @@ const STATUS_CONFIG: Record<string, {
     color: 'text-red-600',
     bg: 'bg-red-50',
     label: 'Failed',
+  },
+  delivery_uncertain: {
+    icon: AlertTriangle,
+    color: 'text-amber-700',
+    bg: 'bg-amber-50',
+    label: 'Delivery uncertain',
   },
   pending: {
     icon: Clock,
@@ -145,7 +151,9 @@ export default function ExecutionHistory({ executions }: ExecutionHistoryProps) 
                         'rounded p-2 text-xs overflow-x-auto max-h-20',
                         execution.status === 'failed'
                           ? 'bg-red-50 text-red-700'
-                          : 'bg-gray-50 text-gray-600'
+                          : execution.status === 'delivery_uncertain'
+                            ? 'bg-amber-50 text-amber-800'
+                            : 'bg-gray-50 text-gray-600'
                       )}
                     >
                       {JSON.stringify(execution.result, null, 2)}
