@@ -32,6 +32,14 @@ vi.mock('../_lib/audit.js', () => ({
   logAudit: vi.fn(),
 }));
 
+vi.mock('../_lib/command-operation-ledger.js', () => ({
+  reconcileCommandOperation: vi.fn().mockResolvedValue('completed'),
+  recordCommandReconciliationFailure: vi.fn().mockResolvedValue(undefined),
+  recordSubmittedCommandOperation: vi.fn().mockResolvedValue('command_op_1'),
+  recordUncertainCommandOperation: vi.fn().mockResolvedValue('command_op_uncertain'),
+  updateCommandOperationFromEvent: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock('../_lib/policy-derivatives.js', () => ({
   assignPolicyToDeviceWithDerivative: vi.fn(),
   ensurePreferredDerivativeForDevicePolicy: vi.fn(),
@@ -47,6 +55,7 @@ import { amapiCall } from '../_lib/amapi.js';
 import { storeBlob } from '../_lib/blobs.js';
 import { logAudit } from '../_lib/audit.js';
 import { executeValidatedOutboundWebhook } from '../_lib/outbound-webhook.js';
+import { reconcileCommandOperation } from '../_lib/command-operation-ledger.js';
 import {
   assignPolicyToDeviceWithDerivative,
   ensurePreferredDerivativeForDevicePolicy,
@@ -63,6 +72,7 @@ const mockAmapiCall = vi.mocked(amapiCall);
 const mockStoreBlob = vi.mocked(storeBlob);
 const mockLogAudit = vi.mocked(logAudit);
 const mockExecuteValidatedOutboundWebhook = vi.mocked(executeValidatedOutboundWebhook);
+const mockReconcileCommandOperation = vi.mocked(reconcileCommandOperation);
 const mockAssignPolicyToDeviceWithDerivative = vi.mocked(assignPolicyToDeviceWithDerivative);
 const mockEnsurePreferredDerivativeForDevicePolicy = vi.mocked(ensurePreferredDerivativeForDevicePolicy);
 
@@ -83,6 +93,8 @@ beforeEach(() => {
   mockStoreBlob.mockReset();
   mockLogAudit.mockReset();
   mockExecuteValidatedOutboundWebhook.mockReset();
+  mockReconcileCommandOperation.mockReset();
+  mockReconcileCommandOperation.mockResolvedValue('completed');
   mockAssignPolicyToDeviceWithDerivative.mockReset();
   mockEnsurePreferredDerivativeForDevicePolicy.mockReset();
 
@@ -95,6 +107,30 @@ beforeEach(() => {
 });
 
 describe('sync-process-background job queue processing', () => {
+  it('reschedules command reconciliation with a bounded delay instead of replaying a command', async () => {
+    const reconciliationJob = {
+      id: 'job_reconcile_1',
+      job_type: 'command_reconcile',
+      payload: JSON.stringify({ command_operation_id: 'command_op_1' }),
+      environment_id: 'env1',
+      attempts: 0,
+      max_attempts: 5,
+    };
+    mockTransaction
+      .mockImplementationOnce(async () => [reconciliationJob] as never)
+      .mockImplementationOnce(async () => [] as never);
+    mockReconcileCommandOperation.mockResolvedValue('continue');
+
+    await handler(makeRequest(), {} as never);
+
+    expect(mockReconcileCommandOperation).toHaveBeenCalledWith('command_op_1');
+    expect(mockExecute).toHaveBeenCalledWith(
+      expect.stringContaining("scheduled_for = now() + interval '5 seconds'"),
+      ['job_reconcile_1']
+    );
+    expect(mockAmapiCall).not.toHaveBeenCalled();
+  });
+
   it('returns a degraded 503 when PostgreSQL is unavailable before a claim', async () => {
     mockTransaction.mockRejectedValue(markDatabaseError(Object.assign(new Error('connect failed'), {
       code: 'ECONNREFUSED',

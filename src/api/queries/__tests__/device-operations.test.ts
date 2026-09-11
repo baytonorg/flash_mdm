@@ -16,4 +16,15 @@ describe('device operation refresh lifecycle', () => {
       ],
     })).toBe(false);
   });
+
+  it('continues polling while persistent reconciliation is active', () => {
+    expect(getDeviceOperationsRefetchInterval({
+      operations: [{
+        name: 'ledger/1',
+        done: false,
+        ledgerStatus: 'reconciling',
+        error: { code: 0, message: 'Read-only reconciliation is in progress.' },
+      }],
+    })).toBe(3000);
+  });
 });

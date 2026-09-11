@@ -70,6 +70,9 @@ Netlify deployment or under the `flashmdm-cron` journal tag on VPS.
 - Unexpected spikes in destructive device actions (disable/wipe)
 - Any `workflow.execution.delivery_uncertain`,
   `device.command.delivery_uncertain`, or `event=amapi_delivery_uncertain` signal
+- `command_operations` rows stuck in `delivery_uncertain` or `reconciling`,
+  `command_reconcile` dead jobs, and `device.command.reconciliation_unresolved`
+  audit events
 
 ## 5) AMAPI retry and recovery contract
 
@@ -85,3 +88,7 @@ Netlify deployment or under the `flashmdm-cron` journal tag on VPS.
 - Before manually retrying a delivery-uncertain command, inspect AMAPI device
   operations, current device state, workflow history, and the audit record. For
   destructive actions, escalate if the outcome cannot be established.
+- Flash performs this inspection automatically through a read-only cursor. Each
+  job reads one 100-item page and resumes after 5 seconds, up to 250 pages. A
+  matched operation is linked to the ledger; an exhausted or passed time window
+  remains explicitly `unresolved`. Neither state triggers command replay.

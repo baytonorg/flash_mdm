@@ -13,6 +13,10 @@ import { assignPolicyToDeviceWithDerivative } from './_lib/policy-derivatives.js
 import { requireInternalCaller } from './_lib/internal-auth.js';
 import { escapeHtml } from './_lib/html.js';
 import { validateResolvedWebhookUrlForOutbound } from './_lib/webhook-ssrf.js';
+import {
+  recordSubmittedCommandOperation,
+  recordUncertainCommandOperation,
+} from './_lib/command-operation-ledger.js';
 
 export const config = {
   type: 'background',
@@ -227,7 +231,8 @@ export function buildWorkflowNotificationHtml(
 async function executeAction(
   workflow: Workflow,
   device: Device,
-  envContext: EnvironmentContext
+  envContext: EnvironmentContext,
+  executionId: string,
 ): Promise<WorkflowActionResult> {
   const { action_type, action_config } = workflow;
 
@@ -242,6 +247,7 @@ async function executeAction(
       );
 
       let result: unknown;
+      const requestedAt = new Date();
       try {
         result = await amapiCall(
           `${device.amapi_name}:issueCommand`,
@@ -258,10 +264,26 @@ async function executeAction(
         );
       } catch (err) {
         if (isAmapiDeliveryUncertainError(err)) {
+          let commandOperationId: string | null = null;
+          try {
+            commandOperationId = await recordUncertainCommandOperation({
+              workspaceId: envContext.workspace_id,
+              environmentId: workflow.environment_id,
+              deviceId: device.id,
+              deviceAmapiName: device.amapi_name,
+              workflowExecutionId: executionId,
+              source: 'workflow',
+              commandType,
+              requestedAt,
+            }, getAmapiErrorHttpStatus(err));
+          } catch (ledgerError) {
+            console.error('Failed to persist uncertain workflow command operation:', ledgerError);
+          }
           return {
             success: false,
             delivery_uncertain: true,
             command_type: commandType,
+            command_operation_id: commandOperationId,
             upstream_status: getAmapiErrorHttpStatus(err),
             automatic_retry: false,
             error: 'AMAPI command delivery is uncertain; verify device operations before retrying.',
@@ -270,7 +292,27 @@ async function executeAction(
         throw err;
       }
 
-      return { success: true, command_type: commandType, amapi_result: result };
+      let commandOperationId: string | null = null;
+      try {
+        commandOperationId = await recordSubmittedCommandOperation({
+          workspaceId: envContext.workspace_id,
+          environmentId: workflow.environment_id,
+          deviceId: device.id,
+          deviceAmapiName: device.amapi_name,
+          workflowExecutionId: executionId,
+          source: 'workflow',
+          commandType,
+          requestedAt,
+        }, result);
+      } catch (ledgerError) {
+        console.error('Failed to persist accepted workflow command operation:', ledgerError);
+      }
+      return {
+        success: true,
+        command_type: commandType,
+        command_operation_id: commandOperationId,
+        amapi_result: result,
+      };
     }
 
     case 'device.move_group': {
@@ -535,7 +577,7 @@ export default async (request: Request, _context: Context) => {
 
     // Execute the action
     try {
-      const result = await executeAction(workflow, device, envContext);
+      const result = await executeAction(workflow, device, envContext, executionId);
 
       const hasError = !result.success;
       const deliveryUncertain = !result.success && result.delivery_uncertain === true;

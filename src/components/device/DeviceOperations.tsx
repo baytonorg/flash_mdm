@@ -19,7 +19,14 @@ function isCancelledOperation(op: { error?: { code: number; message: string } })
   return code === 1 || message.includes('cancelled') || message.includes('canceled');
 }
 
-function getOperationStatus(op: { done?: boolean; error?: { code: number; message: string } }) {
+function getOperationStatus(op: {
+  done?: boolean;
+  error?: { code: number; message: string };
+  ledgerStatus?: string;
+}) {
+  if (op.ledgerStatus === 'delivery_uncertain') return 'uncertain';
+  if (op.ledgerStatus === 'reconciling') return 'reconciling';
+  if (op.ledgerStatus === 'unresolved') return 'unresolved';
   if (isCancelledOperation(op)) return 'cancelled';
   if (op.error) return 'error';
   if (op.done) return 'done';
@@ -27,7 +34,14 @@ function getOperationStatus(op: { done?: boolean; error?: { code: number; messag
 }
 
 export default function DeviceOperations({ deviceId }: DeviceOperationsProps) {
-  const { data, isLoading, isError } = useDeviceOperations(deviceId);
+  const {
+    data,
+    isLoading,
+    isError,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useDeviceOperations(deviceId);
   const cancelMutation = useCancelOperation();
   const operations = data?.operations ?? [];
   const cancellingOperation = cancelMutation.isPending ? cancelMutation.variables : null;
@@ -55,7 +69,7 @@ export default function DeviceOperations({ deviceId }: DeviceOperationsProps) {
     );
   }
 
-  if (data?.unavailable) {
+  if (data?.unavailable && operations.length === 0) {
     return (
       <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
         <p className="text-sm font-medium text-amber-800">Device operations temporarily unavailable</p>
@@ -75,7 +89,26 @@ export default function DeviceOperations({ deviceId }: DeviceOperationsProps) {
 
   return (
     <div className="space-y-3">
-      <h3 className="text-sm font-semibold text-gray-900">Device Operations</h3>
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-gray-900">Device Operations</h3>
+        {hasNextPage && (
+          <button
+            type="button"
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+            className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50"
+          >
+            {isFetchingNextPage && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {isFetchingNextPage ? 'Loading...' : 'Load older operations'}
+          </button>
+        )}
+      </div>
+      {data?.unavailable && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+          <p className="text-sm font-medium text-amber-800">Live AMAPI history is temporarily unavailable</p>
+          <p className="mt-1 text-xs text-amber-700">Showing the persistent command ledger.</p>
+        </div>
+      )}
       <div className="divide-y divide-border rounded-lg border border-border bg-surface">
         {operations.map((op, idx) => {
           const status = getOperationStatus(op);
@@ -88,6 +121,9 @@ export default function DeviceOperations({ deviceId }: DeviceOperationsProps) {
                   {status === 'running' && <Loader2 className="h-4 w-4 animate-spin text-blue-500 shrink-0" />}
                   {status === 'cancelled' && <XCircle className="h-4 w-4 text-gray-500 shrink-0" />}
                   {status === 'error' && <AlertTriangle className="h-4 w-4 text-red-500 shrink-0" />}
+                  {(status === 'uncertain' || status === 'reconciling' || status === 'unresolved') && (
+                    <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0" />
+                  )}
                   <span className="text-sm font-medium text-gray-900 truncate">{opId}</span>
                   <span
                     className={clsx(
@@ -96,15 +132,19 @@ export default function DeviceOperations({ deviceId }: DeviceOperationsProps) {
                       status === 'running' && 'bg-blue-100 text-blue-700',
                       status === 'cancelled' && 'bg-gray-100 text-gray-700',
                       status === 'error' && 'bg-red-100 text-red-700',
+                      (status === 'uncertain' || status === 'reconciling' || status === 'unresolved') && 'bg-amber-100 text-amber-800',
                     )}
                   >
                     {status === 'done' && 'Completed'}
                     {status === 'running' && 'In Progress'}
                     {status === 'cancelled' && 'Cancelled'}
                     {status === 'error' && 'Error'}
+                    {status === 'uncertain' && 'Delivery uncertain'}
+                    {status === 'reconciling' && 'Reconciling'}
+                    {status === 'unresolved' && 'Unresolved'}
                   </span>
                 </div>
-                {status === 'running' && op.name && (
+                {status === 'running' && op.name && !op.name.startsWith('ledger/') && (
                   <button
                     type="button"
                     onClick={() => handleCancel(op.name!)}
@@ -121,6 +161,8 @@ export default function DeviceOperations({ deviceId }: DeviceOperationsProps) {
                   <p className="mt-1 text-xs text-gray-600">
                     {op.error.message?.trim() || 'Operation was cancelled before completion.'}
                   </p>
+                ) : status === 'uncertain' || status === 'reconciling' || status === 'unresolved' ? (
+                  <p className="mt-1 text-xs text-amber-700">{op.error.message}</p>
                 ) : (
                   <p className="mt-1 text-xs text-red-600">
                     {op.error.message?.trim()
@@ -129,6 +171,11 @@ export default function DeviceOperations({ deviceId }: DeviceOperationsProps) {
                   </p>
                 )
               )}
+              {op.reconciliation && op.reconciliation.pagesScanned > 0 && (
+                <p className="mt-1 text-xs text-amber-700">
+                  Read-only reconciliation scanned {op.reconciliation.pagesScanned.toLocaleString()} AMAPI page{op.reconciliation.pagesScanned === 1 ? '' : 's'}; the command was never replayed.
+                </p>
+              )}
               {cancelMutation.isError && cancelMutation.variables === op.name && (
                 <p role="alert" className="mt-1 text-xs text-red-600">
                   {cancelMutation.error instanceof Error
@@ -136,7 +183,7 @@ export default function DeviceOperations({ deviceId }: DeviceOperationsProps) {
                     : 'Failed to cancel operation.'}
                 </p>
               )}
-                {op.metadata && Object.keys(op.metadata).length > 0 && (
+              {op.metadata && Object.keys(op.metadata).length > 0 && (
                 <div className="mt-1.5 text-xs text-muted">
                   {typeof op.metadata.type === 'string' && <span>Type: {op.metadata.type}</span>}
                   {typeof op.metadata.createTime === 'string' && (

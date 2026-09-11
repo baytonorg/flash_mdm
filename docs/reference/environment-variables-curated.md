@@ -27,6 +27,8 @@ Canonical encryption key: `ENCRYPTION_MASTER_KEY`.
 
 - `AUDIT_LOG_RETENTION_DAYS` (non-secret)
   - refs: netlify/functions/__tests__/cleanup-scheduled.test.ts:40, netlify/functions/cleanup-scheduled.ts:14
+- `COMMAND_OPERATION_RETENTION_DAYS` (non-secret)
+  - refs: netlify/functions/cleanup-scheduled.ts:19
 - `DEVICE_LOCATION_RETENTION_DAYS` (non-secret)
   - refs: netlify/functions/__tests__/cleanup-scheduled.test.ts:41, netlify/functions/cleanup-scheduled.ts:15
 - `DEVICE_STATUS_REPORT_RETENTION_DAYS` (non-secret)
@@ -87,4 +89,3 @@ Canonical encryption key: `ENCRYPTION_MASTER_KEY`.
 ## Frontend (build-time)
 
 - `VITE_GOOGLE_MAPS_API_KEY` (secret)
-

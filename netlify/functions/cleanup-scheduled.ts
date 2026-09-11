@@ -16,6 +16,7 @@ export default async (_request: Request, _context: Context) => {
   const statusReportRetentionDays = parsePositiveInt(process.env.DEVICE_STATUS_REPORT_RETENTION_DAYS, 90);
   const softDeletedDeviceRetentionDays = parsePositiveInt(process.env.SOFT_DELETED_DEVICE_RETENTION_DAYS, 30);
   const flashagentChatRetentionDays = parsePositiveInt(process.env.FLASHAGENT_CHAT_RETENTION_DAYS, 30);
+  const commandOperationRetentionDays = parsePositiveInt(process.env.COMMAND_OPERATION_RETENTION_DAYS, 180);
 
   try {
     // Delete expired sessions
@@ -101,6 +102,20 @@ export default async (_request: Request, _context: Context) => {
       `received_at < now() - make_interval(days => $1)`,
       [statusReportRetentionDays]
     );
+
+    // Retain the command ledger long enough for incident review. Uncertain,
+    // reconciling, and unresolved records are deliberately never expired here.
+    try {
+      results.deleted_command_operations = await deleteInBatches(
+        'command_operations',
+        `status IN ('submitted', 'succeeded', 'failed', 'cancelled')
+         AND requested_at < now() - make_interval(days => $1)`,
+        [commandOperationRetentionDays]
+      );
+    } catch (err) {
+      if (!isUndefinedTableError(err)) throw err;
+      results.deleted_command_operations = 0;
+    }
 
     // Retain assistant chat history for a bounded period (default 30 days).
     try {

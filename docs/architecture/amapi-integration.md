@@ -98,6 +98,10 @@ Observability:
 - Audit log for sensitive actions
 - Workflow execution and durable queue status `delivery_uncertain`; check AMAPI
   device operations and state before any manual replay
+- The persistent `command_operations` ledger keeps accepted operation names and
+  command metadata available even when AMAPI's oldest-first history exceeds the
+  interactive page depth. Delivery-uncertain rows are reconciled asynchronously
+  through a bounded, rate-limited, read-only page-token cursor.
 
 ## 8) Security considerations
 

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   useCancelOperation: vi.fn(),
   mutate: vi.fn(),
   reset: vi.fn(),
+  fetchNextPage: vi.fn(),
 }));
 
 vi.mock('@/api/queries/device-operations', () => ({
@@ -24,6 +25,9 @@ beforeEach(() => {
     data: { operations: [{ name: operationName, done: false }] },
     isLoading: false,
     isError: false,
+    hasNextPage: false,
+    fetchNextPage: mocks.fetchNextPage,
+    isFetchingNextPage: false,
   });
   mocks.useCancelOperation.mockReturnValue({
     mutate: mocks.mutate,
@@ -69,5 +73,50 @@ describe('DeviceOperations cancellation', () => {
     render(<DeviceOperations deviceId="device_1" />);
 
     expect(screen.getByRole('alert')).toHaveTextContent('Operation already completed');
+  });
+});
+
+describe('DeviceOperations reconciliation', () => {
+  it('shows persistent reconciliation progress without offering command cancellation', () => {
+    mocks.useDeviceOperations.mockReturnValue({
+      data: {
+        operations: [{
+          name: 'ledger/command-1',
+          done: false,
+          ledgerStatus: 'reconciling',
+          error: { code: 0, message: 'Command delivery is uncertain; read-only reconciliation is in progress.' },
+          reconciliation: { pagesScanned: 140 },
+          metadata: { type: 'REBOOT', createTime: '2026-09-10T08:00:00Z' },
+        }],
+      },
+      isLoading: false,
+      isError: false,
+      hasNextPage: false,
+      fetchNextPage: mocks.fetchNextPage,
+      isFetchingNextPage: false,
+    });
+
+    render(<DeviceOperations deviceId="device_1" />);
+
+    expect(screen.getByText('Reconciling')).toBeInTheDocument();
+    expect(screen.getByText(/scanned 140 AMAPI pages/i)).toHaveTextContent('never replayed');
+    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
+  });
+
+  it('loads older operation pages on demand', async () => {
+    mocks.useDeviceOperations.mockReturnValue({
+      data: { operations: [{ name: operationName, done: true }] },
+      isLoading: false,
+      isError: false,
+      hasNextPage: true,
+      fetchNextPage: mocks.fetchNextPage,
+      isFetchingNextPage: false,
+    });
+    const user = userEvent.setup();
+    render(<DeviceOperations deviceId="device_1" />);
+
+    await user.click(screen.getByRole('button', { name: 'Load older operations' }));
+
+    expect(mocks.fetchNextPage).toHaveBeenCalledOnce();
   });
 });

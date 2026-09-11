@@ -3,6 +3,17 @@
 This page documents selected tables derived from `netlify/migrations/*.sql` (canonical: `netlify/functions/migrate.ts`) and is intended as a high-level map of notable tables.
 It does not replace reading the migrations for full column definitions, constraints, and data semantics.
 
+## `command_operations`
+
+Migration 057 adds the durable command ledger. Each row is scoped to workspace,
+environment, and device; records source and command type; stores the AMAPI
+operation name and timestamps when known; and tracks delivery/reconciliation
+state plus the opaque AMAPI continuation token and pages scanned. Accepted
+operation names are unique per environment. Partial indexes support recent
+device history and outstanding reconciliation. Uncertain and unresolved rows
+are retained by cleanup; resolved rows use the operator-configurable 180-day
+default retention.
+
 ## `audit_log`
 
 ### Columns added by later migrations

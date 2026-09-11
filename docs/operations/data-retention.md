@@ -23,6 +23,7 @@ This function runs daily at **03:00 UTC** (`0 3 * * *`). It reads retention conf
 | Stale pending TOTP setup data | Pending TOTP blob + timestamp cleared when older than 1 day (or legacy rows missing timestamp) |
 | Expired API keys | Revoked (`revoked_at` set) — keys with no expiry are left active |
 | Old audit log rows | Hard-deleted per `AUDIT_LOG_RETENTION_DAYS` |
+| Command-operation ledger rows | Submitted, successful, failed, and cancelled rows are hard-deleted per `COMMAND_OPERATION_RETENTION_DAYS`; uncertain, reconciling, and unresolved rows are retained |
 | Old device location records | Hard-deleted per `DEVICE_LOCATION_RETENTION_DAYS` |
 | Old device status reports | Hard-deleted per `DEVICE_STATUS_REPORT_RETENTION_DAYS` |
 | Long-soft-deleted devices | Hard-deleted per `SOFT_DELETED_DEVICE_RETENTION_DAYS`; audit log and workflow execution device references are nullified before deletion |
@@ -32,6 +33,7 @@ This function runs daily at **03:00 UTC** (`0 3 * * *`). It reads retention conf
 As built (with defaults when unset/invalid):
 
 - `AUDIT_LOG_RETENTION_DAYS` (default: **30**)
+- `COMMAND_OPERATION_RETENTION_DAYS` (default: **180**)
 - `DEVICE_LOCATION_RETENTION_DAYS` (default: **90**)
 - `DEVICE_STATUS_REPORT_RETENTION_DAYS` (default: **90**)
 - `SOFT_DELETED_DEVICE_RETENTION_DAYS` (default: **30**)
