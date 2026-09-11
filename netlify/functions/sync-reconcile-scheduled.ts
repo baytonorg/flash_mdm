@@ -5,6 +5,8 @@ import {
   resolveAmapiDeviceImei,
   type AmapiTelephonyInfo,
 } from './_lib/amapi-device-network.js';
+import { enqueueOutstandingCommandReconciliations } from './_lib/command-operation-ledger.js';
+import { internalFunctionUrl } from './_lib/runtime.js';
 
 export const config = {
   schedule: '*/15 * * * *',
@@ -151,7 +153,7 @@ function isAmapiNameUniqueViolation(error: unknown): boolean {
       || pgError.message?.includes('devices_amapi_name_key') === true);
 }
 
-export default async () => {
+export default async (request: Request) => {
   console.log('Reconciliation scheduled function started');
   const stats = { environments_checked: 0, errors: 0 };
 
@@ -168,6 +170,18 @@ export default async () => {
       } catch (err) {
         stats.errors++;
         console.error(`Failed to reconcile environment ${env.id}:`, err);
+      }
+    }
+
+    const queuedReconciliations = await enqueueOutstandingCommandReconciliations();
+    if (queuedReconciliations > 0) {
+      try {
+        await fetch(internalFunctionUrl(request, 'sync-process-background'), {
+          method: 'POST',
+          headers: { 'x-internal-secret': process.env.INTERNAL_FUNCTION_SECRET ?? '' },
+        });
+      } catch (triggerError) {
+        console.warn('Failed to trigger command reconciliation worker:', triggerError);
       }
     }
 

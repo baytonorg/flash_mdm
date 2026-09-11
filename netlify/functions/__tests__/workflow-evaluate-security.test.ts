@@ -33,6 +33,11 @@ vi.mock('../_lib/audit.js', () => ({
   logAudit: vi.fn(),
 }));
 
+vi.mock('../_lib/command-operation-ledger.js', () => ({
+  recordSubmittedCommandOperation: vi.fn().mockResolvedValue('command_op_1'),
+  recordUncertainCommandOperation: vi.fn().mockResolvedValue('command_op_uncertain'),
+}));
+
 vi.mock('../_lib/resend.js', () => ({
   sendEmail: vi.fn(),
 }));

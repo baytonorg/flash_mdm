@@ -15,9 +15,14 @@ vi.mock('../_lib/audit.js', () => ({
   logAudit: vi.fn(),
 }));
 
+vi.mock('../_lib/command-operation-ledger.js', () => ({
+  enqueueOutstandingCommandReconciliations: vi.fn(),
+}));
+
 import { query, queryOne, execute, transaction } from '../_lib/db.js';
 import { amapiCall } from '../_lib/amapi.js';
 import { logAudit } from '../_lib/audit.js';
+import { enqueueOutstandingCommandReconciliations } from '../_lib/command-operation-ledger.js';
 import handler from '../sync-reconcile-scheduled.ts';
 
 const mockQuery = vi.mocked(query);
@@ -27,6 +32,7 @@ const mockTransaction = vi.mocked(transaction);
 const mockClientQuery = vi.fn();
 const mockAmapiCall = vi.mocked(amapiCall);
 const mockLogAudit = vi.mocked(logAudit);
+const mockEnqueueOutstandingCommandReconciliations = vi.mocked(enqueueOutstandingCommandReconciliations);
 
 describe('sync-reconcile-scheduled', () => {
   beforeEach(() => {
@@ -37,11 +43,27 @@ describe('sync-reconcile-scheduled', () => {
     mockClientQuery.mockReset();
     mockAmapiCall.mockReset();
     mockLogAudit.mockReset();
+    mockEnqueueOutstandingCommandReconciliations.mockReset();
     mockExecute.mockResolvedValue({ rowCount: 0 } as never);
     mockTransaction.mockImplementation(async (callback) => callback({ query: mockClientQuery } as never));
     mockClientQuery.mockResolvedValue({ rows: [], rowCount: 0 } as never);
     mockQueryOne.mockResolvedValue(null as never);
     mockLogAudit.mockResolvedValue(undefined as never);
+    mockEnqueueOutstandingCommandReconciliations.mockResolvedValue(0);
+  });
+
+  it('wakes the worker when an orphaned command reconciliation is queued', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 202 }));
+    mockQuery.mockResolvedValueOnce([] as never);
+    mockEnqueueOutstandingCommandReconciliations.mockResolvedValueOnce(1);
+
+    await handler(new Request('http://localhost/.netlify/functions/sync-reconcile-scheduled'));
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'http://localhost/.netlify/functions/sync-process-background',
+      expect.objectContaining({ method: 'POST' })
+    );
+    fetchSpy.mockRestore();
   });
 
   it('URL-encodes device pagination page tokens', async () => {

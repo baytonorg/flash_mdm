@@ -26,23 +26,29 @@ describe('cleanup-scheduled retention jobs', () => {
   it('runs cleanup queries with secure default retention values', async () => {
     await handler(new Request('http://localhost/.netlify/functions/cleanup-scheduled'), {} as never);
 
-    expect(mockExecute).toHaveBeenCalledTimes(15);
+    expect(mockExecute).toHaveBeenCalledTimes(16);
     expect(mockExecute.mock.calls[4]?.[0]).toContain("'delivery_uncertain'");
     expect(mockExecute.mock.calls[6]?.[0]).toContain('totp_pending_created_at');
     expect(mockExecute.mock.calls[7]?.[0]).toContain('UPDATE api_keys');
     expect(mockExecute.mock.calls[8]?.[1]).toEqual([30, DELETE_BATCH_SIZE]); // audit log
     expect(mockExecute.mock.calls[9]?.[1]).toEqual([90, DELETE_BATCH_SIZE]); // device locations
     expect(mockExecute.mock.calls[10]?.[1]).toEqual([90, DELETE_BATCH_SIZE]); // status reports
-    expect(mockExecute.mock.calls[11]?.[1]).toEqual([30, DELETE_BATCH_SIZE]); // flashagent chat messages
-    expect(mockExecute.mock.calls[12]?.[1]).toEqual([30]); // audit refs nulling
-    expect(mockExecute.mock.calls[13]?.[1]).toEqual([30]); // workflow refs nulling
-    expect(mockExecute.mock.calls[14]?.[1]).toEqual([30, DELETE_BATCH_SIZE]); // hard delete devices
+    expect(mockExecute.mock.calls[11]?.[0]).toContain("status IN ('submitted', 'succeeded', 'failed', 'cancelled')");
+    expect(mockExecute.mock.calls[11]?.[0]).not.toContain("'delivery_uncertain'");
+    expect(mockExecute.mock.calls[11]?.[0]).not.toContain("'reconciling'");
+    expect(mockExecute.mock.calls[11]?.[0]).not.toContain("'unresolved'");
+    expect(mockExecute.mock.calls[11]?.[1]).toEqual([180, DELETE_BATCH_SIZE]); // command operations
+    expect(mockExecute.mock.calls[12]?.[1]).toEqual([30, DELETE_BATCH_SIZE]); // flashagent chat messages
+    expect(mockExecute.mock.calls[13]?.[1]).toEqual([30]); // audit refs nulling
+    expect(mockExecute.mock.calls[14]?.[1]).toEqual([30]); // workflow refs nulling
+    expect(mockExecute.mock.calls[15]?.[1]).toEqual([30, DELETE_BATCH_SIZE]); // hard delete devices
   });
 
   it('uses positive integer env overrides and ignores invalid values', async () => {
     process.env.AUDIT_LOG_RETENTION_DAYS = '730';
     process.env.DEVICE_LOCATION_RETENTION_DAYS = '120';
     process.env.DEVICE_STATUS_REPORT_RETENTION_DAYS = '-5'; // invalid -> fallback
+    process.env.COMMAND_OPERATION_RETENTION_DAYS = '365';
     process.env.SOFT_DELETED_DEVICE_RETENTION_DAYS = '45';
 
     await handler(new Request('http://localhost/.netlify/functions/cleanup-scheduled'), {} as never);
@@ -50,10 +56,11 @@ describe('cleanup-scheduled retention jobs', () => {
     expect(mockExecute.mock.calls[8]?.[1]).toEqual([730, DELETE_BATCH_SIZE]);
     expect(mockExecute.mock.calls[9]?.[1]).toEqual([120, DELETE_BATCH_SIZE]);
     expect(mockExecute.mock.calls[10]?.[1]).toEqual([90, DELETE_BATCH_SIZE]);
-    expect(mockExecute.mock.calls[11]?.[1]).toEqual([30, DELETE_BATCH_SIZE]);
-    expect(mockExecute.mock.calls[12]?.[1]).toEqual([45]);
+    expect(mockExecute.mock.calls[11]?.[1]).toEqual([365, DELETE_BATCH_SIZE]);
+    expect(mockExecute.mock.calls[12]?.[1]).toEqual([30, DELETE_BATCH_SIZE]);
     expect(mockExecute.mock.calls[13]?.[1]).toEqual([45]);
-    expect(mockExecute.mock.calls[14]?.[1]).toEqual([45, DELETE_BATCH_SIZE]);
+    expect(mockExecute.mock.calls[14]?.[1]).toEqual([45]);
+    expect(mockExecute.mock.calls[15]?.[1]).toEqual([45, DELETE_BATCH_SIZE]);
   });
 
   it('clears stale pending TOTP setup secrets', async () => {

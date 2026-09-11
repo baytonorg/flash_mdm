@@ -19,7 +19,7 @@
 | Name | Lines | Description |
 |------|-------|-------------|
 | `formatOperationName` | 9-14 | Extracts the operation ID from a full AMAPI resource name |
-| `getOperationStatus` | 16-20 | Derives status (`'error'`, `'done'`, or `'running'`) from operation fields |
+| `getOperationStatus` | helper | Derives AMAPI and ledger states, including uncertain, reconciling, and unresolved |
 
 ## Dependencies (imports from project)
 
@@ -30,4 +30,4 @@
 
 ## Key Logic
 
-The component uses `useDeviceOperations` to fetch operations from the API and renders each one in a bordered list with status icons (green checkmark for done, spinning loader for in-progress, warning triangle for error). In-progress operations show a "Cancel" button that triggers `useCancelOperation`. The component handles loading, error, and "unavailable" states with appropriate UI messages. Operation metadata (type, creation time) is displayed when available. Error details show the error code and message.
+The component renders the merged persistent/AMAPI history with explicit delivery-uncertain, reconciling, and unresolved badges. It shows the number of read-only pages scanned and states that the command was never replayed. A Load older operations control follows AMAPI continuation tokens. Live AMAPI failures leave persistent ledger rows visible. Only real running AMAPI operation names expose cancellation.

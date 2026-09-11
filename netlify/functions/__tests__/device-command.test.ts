@@ -33,6 +33,11 @@ vi.mock('../_lib/audit.js', () => ({
   logAudit: vi.fn(),
 }));
 
+vi.mock('../_lib/command-operation-ledger.js', () => ({
+  recordSubmittedCommandOperation: vi.fn().mockResolvedValue('command_op_1'),
+  recordUncertainCommandOperation: vi.fn().mockResolvedValue('command_op_uncertain'),
+}));
+
 import { queryOne, execute } from '../_lib/db.js';
 import { requireAuth } from '../_lib/auth.js';
 import { requireEnvironmentResourcePermission } from '../_lib/rbac.js';
@@ -86,6 +91,7 @@ beforeEach(() => {
     user: { id: 'user_1', is_superadmin: false },
   } as never);
   mockRequireEnvironmentResourcePermission.mockResolvedValue(undefined as never);
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 202 })));
 });
 
 describe('device-command AMAPI error passthrough', () => {
@@ -178,11 +184,11 @@ describe('device-command AMAPI error passthrough', () => {
     });
     expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({
       action: 'device.command.delivery_uncertain',
-      details: {
+      details: expect.objectContaining({
         command: 'REBOOT',
         upstream_status: 503,
         automatic_retry: false,
-      },
+      }),
     }));
   });
 

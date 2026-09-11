@@ -5,6 +5,7 @@ import { requireEnvironmentResourcePermission } from './_lib/rbac.js';
 import { amapiCall, getAmapiErrorHttpStatus } from './_lib/amapi.js';
 import { logAudit } from './_lib/audit.js';
 import { jsonResponse, errorResponse, parseJsonBody, getSearchParams, getClientIp, isValidUuid } from './_lib/helpers.js';
+import { listDeviceCommandOperations } from './_lib/command-operation-ledger.js';
 
 interface OperationResult {
   name?: string;
@@ -22,9 +23,8 @@ interface OperationListResult {
   message?: string;
 }
 
-const MAX_OPERATION_PAGES = 20;
 const OPERATION_PAGE_SIZE = 100;
-const MAX_OPERATION_ITEMS = 500;
+const MAX_OPERATION_ITEMS = 600;
 
 function getOperationSortTimestamp(op: OperationResult): number {
   const createTimeRaw = op.metadata?.createTime;
@@ -47,8 +47,12 @@ export default async (request: Request, _context: Context) => {
     // --- LIST operations for a device ---
     if (request.method === 'GET' && action === 'list') {
       const deviceId = params.get('device_id');
+      const requestedPageToken = params.get('page_token')?.trim() || undefined;
       if (!deviceId) return errorResponse('device_id is required');
       if (!isValidUuid(deviceId)) return errorResponse('device_id must be a valid UUID');
+      if (requestedPageToken && requestedPageToken.length > 4096) {
+        return errorResponse('page_token is invalid');
+      }
 
       const device = await queryOne<{
         id: string; amapi_name: string; environment_id: string;
@@ -71,46 +75,45 @@ export default async (request: Request, _context: Context) => {
       );
       if (!workspace?.gcp_project_id) return errorResponse('Workspace has no GCP project configured');
 
+      // The ledger is included only on the first page. Repeating it on every
+      // AMAPI page would crowd older live operations out of the bounded result.
+      const ledgerOperations = requestedPageToken
+        ? []
+        : await listDeviceCommandOperations(device.id);
       try {
-        const collected: OperationResult[] = [];
-        let pageToken: string | undefined;
-        let pagesFetched = 0;
-
-        do {
-          const path = pageToken
-            ? `${device.amapi_name}/operations?pageSize=${OPERATION_PAGE_SIZE}&pageToken=${encodeURIComponent(pageToken)}`
-            : `${device.amapi_name}/operations?pageSize=${OPERATION_PAGE_SIZE}`;
-          const result = await amapiCall<OperationListResult>(
-            path,
-            env.workspace_id,
-            {
-              projectId: workspace.gcp_project_id,
-              enterpriseName: env.enterprise_name,
-              resourceType: 'devices',
-              resourceId: device.amapi_name.split('/').pop(),
-            }
-          );
-          collected.push(...(result.operations ?? []));
-          pageToken = result.nextPageToken || undefined;
-          pagesFetched += 1;
-        } while (pageToken && pagesFetched < MAX_OPERATION_PAGES && collected.length < MAX_OPERATION_ITEMS);
-
+        const path = requestedPageToken
+          ? `${device.amapi_name}/operations?pageSize=${OPERATION_PAGE_SIZE}&pageToken=${encodeURIComponent(requestedPageToken)}`
+          : `${device.amapi_name}/operations?pageSize=${OPERATION_PAGE_SIZE}`;
+        const result = await amapiCall<OperationListResult>(
+          path,
+          env.workspace_id,
+          {
+            projectId: workspace.gcp_project_id,
+            enterpriseName: env.enterprise_name,
+            resourceType: 'devices',
+            resourceId: device.amapi_name.split('/').pop(),
+          }
+        );
         const dedupedByName = new Map<string, OperationResult>();
-        for (const op of collected) {
-          if (!op.name) continue;
-          dedupedByName.set(op.name, op);
+        for (const operation of ledgerOperations) dedupedByName.set(operation.name, operation);
+        for (const operation of result.operations ?? []) {
+          if (!operation.name) continue;
+          const persisted = dedupedByName.get(operation.name);
+          dedupedByName.set(operation.name, persisted
+            ? { ...persisted, ...operation, source: 'ledger_and_amapi' }
+            : { ...operation, source: 'amapi' });
         }
         const operations = [...dedupedByName.values()]
           .sort((a, b) => getOperationSortTimestamp(b) - getOperationSortTimestamp(a))
           .slice(0, MAX_OPERATION_ITEMS);
 
-        return jsonResponse({ operations, nextPageToken: pageToken });
+        return jsonResponse({ operations, nextPageToken: result.nextPageToken || undefined });
       } catch (err) {
         const status = getAmapiErrorHttpStatus(err) ?? 502;
         // Operations listing is non-critical for the device detail page; fail soft on upstream/transient errors.
         if (status >= 500) {
           return jsonResponse({
-            operations: [],
+            operations: ledgerOperations,
             nextPageToken: undefined,
             unavailable: true,
             message: 'Operations are temporarily unavailable. Please try again shortly.',

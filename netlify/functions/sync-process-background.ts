@@ -20,6 +20,13 @@ import {
   databaseUnavailableResponse,
   isDatabaseInfrastructureError,
 } from './_lib/db-errors.js';
+import {
+  reconcileCommandOperation,
+  recordCommandReconciliationFailure,
+  recordSubmittedCommandOperation,
+  recordUncertainCommandOperation,
+  updateCommandOperationFromEvent,
+} from './_lib/command-operation-ledger.js';
 
 export const config = {
   type: 'background',
@@ -1384,6 +1391,8 @@ async function processCommand(
     }
   }
 
+  await updateCommandOperationFromEvent(environmentId, payload);
+
   const commandDeviceAmapiName = extractDeviceAmapiNameFromOperationName(commandName);
   if (!commandResult.succeeded || !commandResult.commandType || !commandDeviceAmapiName) return;
 
@@ -1483,13 +1492,18 @@ async function processUsageLogs(
 /**
  * Process a bulk command job: send device commands via AMAPI.
  */
-async function processBulkCommand(payload: BulkCommandPayload): Promise<boolean> {
+async function processBulkCommand(payload: BulkCommandPayload, environmentId: string): Promise<boolean> {
   const { device_amapi_names, command_type, command_data, workspace_id, project_id, enterprise_name } = payload;
   let deliveryUncertain = false;
 
   for (const deviceName of device_amapi_names) {
+    const requestedAt = new Date();
+    const device = await queryOne<{ id: string }>(
+      'SELECT id FROM devices WHERE environment_id = $1 AND amapi_name = $2',
+      [environmentId, deviceName]
+    );
     try {
-      await amapiCall(
+      const result = await amapiCall(
         `${deviceName}:issueCommand`,
         workspace_id,
         {
@@ -1503,6 +1517,20 @@ async function processBulkCommand(payload: BulkCommandPayload): Promise<boolean>
         }
       );
 
+      try {
+        await recordSubmittedCommandOperation({
+          workspaceId: workspace_id,
+          environmentId,
+          deviceId: device?.id ?? null,
+          deviceAmapiName: deviceName,
+          source: 'bulk',
+          commandType: command_type,
+          requestedAt,
+        }, result);
+      } catch (ledgerError) {
+        console.error('Failed to persist accepted bulk command operation:', ledgerError);
+      }
+
       // Update command status
       await tryUpdateDeviceCommandStatus(
         `UPDATE device_commands SET status = 'SENT', updated_at = now()
@@ -1514,6 +1542,21 @@ async function processBulkCommand(payload: BulkCommandPayload): Promise<boolean>
       console.error(`Failed to send command to ${deviceName}:`, err);
       const uncertain = isAmapiDeliveryUncertainError(err);
       deliveryUncertain ||= uncertain;
+      if (uncertain) {
+        try {
+          await recordUncertainCommandOperation({
+            workspaceId: workspace_id,
+            environmentId,
+            deviceId: device?.id ?? null,
+            deviceAmapiName: deviceName,
+            source: 'bulk',
+            commandType: command_type,
+            requestedAt,
+          }, getAmapiErrorHttpStatus(err));
+        } catch (ledgerError) {
+          console.error('Failed to persist uncertain bulk command operation:', ledgerError);
+        }
+      }
       await tryUpdateDeviceCommandStatus(
         `UPDATE device_commands SET status = $3, error = $4, updated_at = now()
          WHERE device_amapi_name = $1 AND command_type = $2 AND status = 'PENDING'
@@ -1764,7 +1807,7 @@ export default async (request: Request, _context: Context) => {
           }
 
           case 'bulk_command': {
-            const deliveryUncertain = await processBulkCommand(payload as BulkCommandPayload);
+            const deliveryUncertain = await processBulkCommand(payload as BulkCommandPayload, job.environment_id);
             if (deliveryUncertain) {
               await markJobDeliveryUncertain(job.id);
               continue;
@@ -1796,6 +1839,25 @@ export default async (request: Request, _context: Context) => {
             } | null;
             if (evaluation?.status === 'delivery_uncertain') {
               await markJobDeliveryUncertain(job.id, evaluation.execution_id);
+              continue;
+            }
+            break;
+          }
+
+          case 'command_reconcile': {
+            const commandOperationId = typeof payload.command_operation_id === 'string'
+              ? payload.command_operation_id
+              : '';
+            if (!commandOperationId) throw new Error('command_reconcile job missing command_operation_id');
+            const reconciliation = await reconcileCommandOperation(commandOperationId);
+            if (reconciliation === 'continue') {
+              await execute(
+                `UPDATE job_queue
+                 SET status = 'pending', scheduled_for = now() + interval '5 seconds',
+                     locked_at = NULL, locked_by = NULL, error = NULL
+                 WHERE id = $1`,
+                [job.id]
+              );
               continue;
             }
             break;
@@ -1848,8 +1910,9 @@ export default async (request: Request, _context: Context) => {
                     );
                   }
                 } else {
+                  const requestedAt = new Date();
                   try {
-                    await amapiCall(
+                    const result = await amapiCall(
                       `${cmdDevice.amapi_name}:issueCommand`,
                       cmdEnvCtx.workspace_id,
                       {
@@ -1862,8 +1925,36 @@ export default async (request: Request, _context: Context) => {
                         retryMode: 'never',
                       }
                     );
+                    try {
+                      await recordSubmittedCommandOperation({
+                        workspaceId: cmdEnvCtx.workspace_id,
+                        environmentId: cmdDevice.environment_id,
+                        deviceId: cmdDeviceId,
+                        deviceAmapiName: cmdDevice.amapi_name,
+                        source: 'geofence',
+                        commandType: command_type,
+                        requestedAt,
+                      }, result);
+                    } catch (ledgerError) {
+                      console.error('Failed to persist accepted geofence command operation:', ledgerError);
+                    }
                   } catch (err) {
-                    if (isAmapiDeliveryUncertainError(err)) throw err;
+                    if (isAmapiDeliveryUncertainError(err)) {
+                      try {
+                        await recordUncertainCommandOperation({
+                          workspaceId: cmdEnvCtx.workspace_id,
+                          environmentId: cmdDevice.environment_id,
+                          deviceId: cmdDeviceId,
+                          deviceAmapiName: cmdDevice.amapi_name,
+                          source: 'geofence',
+                          commandType: command_type,
+                          requestedAt,
+                        }, getAmapiErrorHttpStatus(err));
+                      } catch (ledgerError) {
+                        console.error('Failed to persist uncertain geofence command operation:', ledgerError);
+                      }
+                      throw err;
+                    }
                     const status = getAmapiErrorHttpStatus(err);
                     throw new Error(
                       `Bulk ${command_type.toLowerCase()} failed${status ? ` (${status})` : ''}: ${err instanceof Error ? err.message : String(err)}`
@@ -1953,6 +2044,20 @@ export default async (request: Request, _context: Context) => {
 
         const newAttempts = job.attempts + 1;
         const maxAttempts = job.max_attempts ?? MAX_ATTEMPTS;
+        if (job.job_type === 'command_reconcile') {
+          let commandOperationId = '';
+          try {
+            const failedPayload = parseJobPayload(job.payload);
+            commandOperationId = typeof failedPayload.command_operation_id === 'string'
+              ? failedPayload.command_operation_id
+              : '';
+          } catch {
+            // The generic failure path below will dead-letter malformed payloads.
+          }
+          if (commandOperationId) {
+            await recordCommandReconciliationFailure(commandOperationId, newAttempts >= maxAttempts);
+          }
+        }
         const failedEventMessageId = extractPubSubEventMessageId(job.payload);
         if (newAttempts >= maxAttempts) {
           // Mark as dead

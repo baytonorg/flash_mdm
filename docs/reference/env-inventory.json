@@ -72,6 +72,15 @@
     "in_netlify_toml": false
   },
   {
+    "key": "COMMAND_OPERATION_RETENTION_DAYS",
+    "sources": [
+      "code"
+    ],
+    "used_in_code": true,
+    "in_env_example": false,
+    "in_netlify_toml": false
+  },
+  {
     "key": "DATABASE_URL",
     "sources": [
       ".env.example",

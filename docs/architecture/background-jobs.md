@@ -92,6 +92,12 @@ This list is intentionally high-level; details live in code and will be expanded
   backoff. `devices:issueCommand` never retries an ambiguous outcome. The worker
   records the job as terminal `delivery_uncertain`; operators must establish the
   remote outcome before any manual replay.
+- **Command reconciliation:** every accepted `devices:issueCommand` operation is
+  recorded in `command_operations`. Ambiguous deliveries enqueue a
+  `command_reconcile` job that reads one 100-item AMAPI page at a time, persists
+  the continuation token, waits 5 seconds between pages, and stops after a
+  match, the relevant time window is passed, history ends, or 250 pages. It
+  matches by device, command type, and request time and never replays a command.
 
 See also:
 

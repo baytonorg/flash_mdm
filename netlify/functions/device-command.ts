@@ -16,6 +16,11 @@ import {
 import { buildAmapiCommandPayload, AmapiCommandValidationError } from './_lib/amapi-command.js';
 import { logAudit } from './_lib/audit.js';
 import { jsonResponse, errorResponse, parseJsonBody, getClientIp, isValidUuid } from './_lib/helpers.js';
+import {
+  recordSubmittedCommandOperation,
+  recordUncertainCommandOperation,
+} from './_lib/command-operation-ledger.js';
+import { internalFunctionUrl } from './_lib/runtime.js';
 
 interface CommandBody {
   device_id: string;
@@ -152,6 +157,7 @@ export default async (request: Request, context: Context) => {
       throw err;
     }
 
+    const requestedAt = new Date();
     try {
       const result = await amapiCall(
         `${device.amapi_name}:issueCommand`,
@@ -166,6 +172,23 @@ export default async (request: Request, context: Context) => {
         }
       );
 
+      let commandOperationId: string | null = null;
+      try {
+        commandOperationId = await recordSubmittedCommandOperation({
+          workspaceId: env.workspace_id,
+          environmentId: device.environment_id,
+          deviceId: device.id,
+          deviceAmapiName: device.amapi_name,
+          source: 'direct',
+          commandType: command,
+          requestedAt,
+        }, result);
+      } catch (ledgerError) {
+        // The external command has already been accepted. Never turn a local
+        // ledger write failure into a response that might encourage replay.
+        console.error('Failed to persist accepted command operation:', ledgerError);
+      }
+
       await logAudit({
         workspace_id: env.workspace_id,
         environment_id: device.environment_id,
@@ -177,6 +200,7 @@ export default async (request: Request, context: Context) => {
         details: {
           command,
           params: body.params,
+          command_operation_id: commandOperationId,
           amapi_result: summarizeAmapiResultForAudit(result),
         },
         ip_address: getClientIp(request),
@@ -187,6 +211,20 @@ export default async (request: Request, context: Context) => {
       const message = err instanceof Error ? err.message : 'Unknown error';
       console.error(`Failed to issue command ${command}:`, message);
       if (isAmapiDeliveryUncertainError(err)) {
+        let commandOperationId: string | null = null;
+        try {
+          commandOperationId = await recordUncertainCommandOperation({
+            workspaceId: env.workspace_id,
+            environmentId: device.environment_id,
+            deviceId: device.id,
+            deviceAmapiName: device.amapi_name,
+            source: 'direct',
+            commandType: command,
+            requestedAt,
+          }, getAmapiErrorHttpStatus(err));
+        } catch (ledgerError) {
+          console.error('Failed to persist uncertain command operation:', ledgerError);
+        }
         await logAudit({
           workspace_id: env.workspace_id,
           environment_id: device.environment_id,
@@ -197,11 +235,20 @@ export default async (request: Request, context: Context) => {
           resource_id: device.id,
           details: {
             command,
+            command_operation_id: commandOperationId,
             upstream_status: getAmapiErrorHttpStatus(err),
             automatic_retry: false,
           },
           ip_address: getClientIp(request),
         });
+        try {
+          await fetch(internalFunctionUrl(request, 'sync-process-background'), {
+            method: 'POST',
+            headers: { 'x-internal-secret': process.env.INTERNAL_FUNCTION_SECRET ?? '' },
+          });
+        } catch (triggerError) {
+          console.warn('Failed to trigger command reconciliation worker:', triggerError);
+        }
         return jsonResponse({
           error: 'Command delivery is uncertain. Do not retry automatically; check device operations and audit history before trying again.',
           code: 'AMAPI_DELIVERY_UNCERTAIN',

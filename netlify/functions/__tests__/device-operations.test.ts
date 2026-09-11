@@ -25,11 +25,16 @@ vi.mock('../_lib/audit.js', () => ({
   logAudit: vi.fn(),
 }));
 
+vi.mock('../_lib/command-operation-ledger.js', () => ({
+  listDeviceCommandOperations: vi.fn().mockResolvedValue([]),
+}));
+
 import { queryOne } from '../_lib/db.js';
 import { requireAuth } from '../_lib/auth.js';
 import { requireEnvironmentResourcePermission } from '../_lib/rbac.js';
 import { amapiCall } from '../_lib/amapi.js';
 import { logAudit } from '../_lib/audit.js';
+import { listDeviceCommandOperations } from '../_lib/command-operation-ledger.js';
 import handler from '../device-operations.ts';
 
 const mockQueryOne = vi.mocked(queryOne);
@@ -37,6 +42,7 @@ const mockRequireAuth = vi.mocked(requireAuth);
 const mockRequireEnvironmentResourcePermission = vi.mocked(requireEnvironmentResourcePermission);
 const mockAmapiCall = vi.mocked(amapiCall);
 const mockLogAudit = vi.mocked(logAudit);
+const mockListDeviceCommandOperations = vi.mocked(listDeviceCommandOperations);
 const VALID_DEVICE_ID = '550e8400-e29b-41d4-a716-446655440000';
 
 function makeGet(url: string): Request {
@@ -57,6 +63,8 @@ beforeEach(() => {
   mockRequireEnvironmentResourcePermission.mockReset();
   mockAmapiCall.mockReset();
   mockLogAudit.mockReset();
+  mockListDeviceCommandOperations.mockReset();
+  mockListDeviceCommandOperations.mockResolvedValue([]);
 
   mockRequireAuth.mockResolvedValue({
     sessionId: 'sess_1',
@@ -76,7 +84,7 @@ describe('device-operations', () => {
     await expect(res.json()).resolves.toEqual({ error: 'device_id is required' });
   });
 
-  it('lists operations with member RBAC and calls AMAPI device operations endpoint', async () => {
+  it('lists one AMAPI page with member RBAC and returns its continuation token', async () => {
     mockQueryOne
       .mockResolvedValueOnce({
         id: 'dev_1',
@@ -90,26 +98,16 @@ describe('device-operations', () => {
       .mockResolvedValueOnce({
         gcp_project_id: 'proj_123',
       } as never);
-    mockAmapiCall
-      .mockResolvedValueOnce({
-        operations: [
-          {
-            name: 'enterprises/e1/operations/1772128508043',
-            done: true,
-            metadata: { createTime: '2026-02-26T17:55:08Z' },
-          },
-        ],
-        nextPageToken: 'next-token',
-      } as never)
-      .mockResolvedValueOnce({
-        operations: [
-          {
-            name: 'enterprises/e1/operations/1772129414614',
-            done: true,
-            metadata: { createTime: '2026-02-26T18:10:14Z' },
-          },
-        ],
-      } as never);
+    mockAmapiCall.mockResolvedValueOnce({
+      operations: [
+        {
+          name: 'enterprises/e1/operations/1772128508043',
+          done: true,
+          metadata: { createTime: '2026-02-26T17:55:08Z' },
+        },
+      ],
+      nextPageToken: 'next-token',
+    } as never);
 
     const res = await handler(
       makeGet(`http://localhost/.netlify/functions/device-operations?action=list&device_id=${VALID_DEVICE_ID}`),
@@ -123,20 +121,8 @@ describe('device-operations', () => {
       'device',
       'write'
     );
-    expect(mockAmapiCall).toHaveBeenNthCalledWith(
-      1,
+    expect(mockAmapiCall).toHaveBeenCalledWith(
       'enterprises/e1/devices/d1/operations?pageSize=100',
-      'ws_1',
-      expect.objectContaining({
-        projectId: 'proj_123',
-        enterpriseName: 'enterprises/e1',
-        resourceType: 'devices',
-        resourceId: 'd1',
-      })
-    );
-    expect(mockAmapiCall).toHaveBeenNthCalledWith(
-      2,
-      'enterprises/e1/devices/d1/operations?pageSize=100&pageToken=next-token',
       'ws_1',
       expect.objectContaining({
         projectId: 'proj_123',
@@ -148,17 +134,13 @@ describe('device-operations', () => {
     await expect(res.json()).resolves.toEqual({
       operations: [
         {
-          name: 'enterprises/e1/operations/1772129414614',
-          done: true,
-          metadata: { createTime: '2026-02-26T18:10:14Z' },
-        },
-        {
           name: 'enterprises/e1/operations/1772128508043',
           done: true,
           metadata: { createTime: '2026-02-26T17:55:08Z' },
+          source: 'amapi',
         },
       ],
-      nextPageToken: undefined,
+      nextPageToken: 'next-token',
     });
   });
 
@@ -167,6 +149,64 @@ describe('device-operations', () => {
 
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toEqual({ error: 'operation_name is required' });
+  });
+
+  it('passes an explicit page token without repeating first-page ledger rows', async () => {
+    mockQueryOne
+      .mockResolvedValueOnce({
+        id: 'dev_1',
+        amapi_name: 'enterprises/e1/devices/d1',
+        environment_id: 'env_1',
+      } as never)
+      .mockResolvedValueOnce({ workspace_id: 'ws_1', enterprise_name: 'enterprises/e1' } as never)
+      .mockResolvedValueOnce({ gcp_project_id: 'proj_123' } as never);
+    mockAmapiCall.mockResolvedValue({ operations: [], nextPageToken: 'later-token' } as never);
+
+    const res = await handler(
+      makeGet(`http://localhost/.netlify/functions/device-operations?action=list&device_id=${VALID_DEVICE_ID}&page_token=older-token`),
+      {} as never
+    );
+
+    expect(mockAmapiCall).toHaveBeenCalledWith(
+      'enterprises/e1/devices/d1/operations?pageSize=100&pageToken=older-token',
+      'ws_1',
+      expect.anything()
+    );
+    expect(mockListDeviceCommandOperations).not.toHaveBeenCalled();
+    await expect(res.json()).resolves.toEqual({
+      operations: [],
+      nextPageToken: 'later-token',
+    });
+  });
+
+  it('merges persistent reconciliation state into the first AMAPI page', async () => {
+    mockQueryOne
+      .mockResolvedValueOnce({
+        id: 'dev_1',
+        amapi_name: 'enterprises/e1/devices/d1',
+        environment_id: 'env_1',
+      } as never)
+      .mockResolvedValueOnce({ workspace_id: 'ws_1', enterprise_name: 'enterprises/e1' } as never)
+      .mockResolvedValueOnce({ gcp_project_id: 'proj_123' } as never);
+    mockListDeviceCommandOperations.mockResolvedValue([{
+      name: 'ledger/command-1',
+      done: false,
+      metadata: { type: 'REBOOT', createTime: '2026-09-10T08:00:00Z' },
+      source: 'ledger',
+      ledgerStatus: 'reconciling',
+      ledgerId: 'command-1',
+      reconciliation: { pagesScanned: 10 },
+    }]);
+    mockAmapiCall.mockResolvedValue({ operations: [] } as never);
+
+    const res = await handler(
+      makeGet(`http://localhost/.netlify/functions/device-operations?action=list&device_id=${VALID_DEVICE_ID}`),
+      {} as never
+    );
+
+    await expect(res.json()).resolves.toMatchObject({
+      operations: [expect.objectContaining({ ledgerId: 'command-1', ledgerStatus: 'reconciling' })],
+    });
   });
 
   it('rejects malformed device UUIDs for list requests before DB lookup', async () => {

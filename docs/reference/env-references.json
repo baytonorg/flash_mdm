@@ -24,6 +24,9 @@
   "BOOTSTRAP_SECRET": [
     "netlify/functions/auth-register.ts:149"
   ],
+  "COMMAND_OPERATION_RETENTION_DAYS": [
+    "netlify/functions/cleanup-scheduled.ts:19"
+  ],
   "DATABASE_URL": [
     "netlify/functions/_lib/db.ts:12",
     "netlify/functions/migrate.ts:1564"

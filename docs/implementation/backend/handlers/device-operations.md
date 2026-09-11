@@ -18,7 +18,8 @@
 
 | Import | From | Used for |
 |--------|------|----------|
-| `queryOne` | `_lib/db.js` | Database reads |
+| `queryOne` | `_lib/db.js` | Device and environment reads |
+| `listDeviceCommandOperations` | `_lib/command-operation-ledger.js` | Persistent recent command ledger |
 | `requireAuth` | `_lib/auth.js` | Session/API key authentication |
 | `requireEnvironmentResourcePermission` | `_lib/rbac.js` | Per-environment RBAC enforcement |
 | `amapiCall`, `getAmapiErrorHttpStatus` | `_lib/amapi.js` | Android Management API HTTP calls and error handling |
@@ -30,9 +31,10 @@
 The handler dispatches on HTTP method and an `action` query parameter:
 
 **GET action=list** (default for GET):
-- Requires `device_id`. Fetches the device's AMAPI operations by paginating through up to 20 pages of 100 results each (max 500 total items).
-- Deduplicates operations by name, sorts by creation time descending.
-- On upstream 5xx errors, returns a soft-failure response (`unavailable: true`) instead of an error, since operation listing is non-critical.
+- Requires `device_id`; accepts an optional opaque `page_token`.
+- Fetches one AMAPI page of 100 results, merges it with up to 500 recent persistent command-ledger rows, deduplicates by operation name, and sorts newest first.
+- Returns AMAPI's continuation token so the frontend can load older history without a server-side five-page ceiling.
+- On upstream 5xx errors, returns the persistent ledger with `unavailable: true`, so recent command evidence remains visible.
 
 **GET action=get**:
 - Requires `operation_name` (must start with `enterprises/`). Extracts the enterprise from the name to verify environment access, then fetches the single operation from AMAPI.
@@ -47,14 +49,13 @@ The handler dispatches on HTTP method and an `action` query parameter:
 
 | Name | Value | Description |
 |------|-------|-------------|
-| `MAX_OPERATION_PAGES` | 20 | Maximum AMAPI pages to fetch when listing operations |
 | `OPERATION_PAGE_SIZE` | 100 | Page size per AMAPI list request |
-| `MAX_OPERATION_ITEMS` | 500 | Hard cap on total operations returned |
+| `MAX_OPERATION_ITEMS` | 600 | First-page cap preserving 500 ledger rows plus 100 live AMAPI rows |
 
 ## API Surface
 
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
-| GET | `/.netlify/functions/device-operations?action=list&device_id={id}` | Session/API key | List all operations for a device |
+| GET | `/.netlify/functions/device-operations?action=list&device_id={id}&page_token={token}` | Session/API key | List persistent recent operations plus one AMAPI history page |
 | GET | `/.netlify/functions/device-operations?action=get&operation_name={name}` | Session/API key | Get a single operation by name |
 | POST | `/.netlify/functions/device-operations` | Session/API key | Cancel a pending operation |
