@@ -199,7 +199,7 @@ export async function recordSubmittedCommandOperation(
      ) VALUES (
        $1, $2, $3, $4, $5, $6, $7, $8, $9,
        $10, $11, $12, $13, $14,
-       CASE WHEN $8 IN ('succeeded', 'failed', 'cancelled') THEN now() ELSE NULL END
+       CASE WHEN $8::varchar IN ('succeeded', 'failed', 'cancelled') THEN now() ELSE NULL END
      )
      ON CONFLICT (environment_id, operation_name) WHERE operation_name IS NOT NULL
      DO UPDATE SET

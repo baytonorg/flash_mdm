@@ -108,7 +108,7 @@ describe('command operation persistence', () => {
 
     expect(id).toBe(row.id);
     expect(mockQueryOne).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO command_operations'),
+      expect.stringContaining("CASE WHEN $8::varchar IN ('succeeded', 'failed', 'cancelled')"),
       expect.arrayContaining([row.device_id, 'direct', 'REBOOT', 'submitted'])
     );
   });
