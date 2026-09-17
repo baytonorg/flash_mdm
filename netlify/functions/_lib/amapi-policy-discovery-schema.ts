@@ -2,7 +2,7 @@
 // Refresh deliberately with `npm run amapi-schema:update` and review the schema diff.
 export const AMAPI_POLICY_DISCOVERY_SCHEMA = {
   "source": "https://androidmanagement.googleapis.com/$discovery/rest?version=v1",
-  "revision": "20260910",
+  "revision": "20260916",
   "root": "Policy",
   "schemas": {
     "AdvancedSecurityOverrides": {
@@ -1237,6 +1237,14 @@ export const AMAPI_POLICY_DISCOVERY_SCHEMA = {
         },
         "autoTimeRequired": {
           "type": "boolean"
+        },
+        "backupService": {
+          "type": "string",
+          "enum": [
+            "BACKUP_SERVICE_UNSPECIFIED",
+            "BACKUP_SERVICE_DISABLED",
+            "BACKUP_SERVICE_USER_CHOICE"
+          ]
         },
         "blockApplicationsEnabled": {
           "type": "boolean"
