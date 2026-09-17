@@ -1971,6 +1971,17 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
             ]}
           />
           <EnumField
+            label="Backup Service"
+            description="Controls access to the device backup service on fully managed devices running Android 8 or later. User choice allows the user to turn backups on or off; it does not force backups on."
+            value={getPath(config, 'backupService') ?? 'BACKUP_SERVICE_UNSPECIFIED'}
+            onChange={(v) => onChange('backupService', v)}
+            options={[
+              { value: 'BACKUP_SERVICE_UNSPECIFIED', label: 'Unspecified (disabled by default)' },
+              { value: 'BACKUP_SERVICE_DISABLED', label: 'Disabled', description: 'Backups are disabled and the user cannot change this setting.' },
+              { value: 'BACKUP_SERVICE_USER_CHOICE', label: 'User choice', description: 'The user can enable or disable the backup service.' },
+            ]}
+          />
+          <EnumField
             label="Google Play Protect Verify Apps"
             description="Controls the Google Play Protect verify apps setting."
             value={getPath(config, 'advancedSecurityOverrides.googlePlayProtectVerifyApps') ?? 'GOOGLE_PLAY_PROTECT_VERIFY_APPS_UNSPECIFIED'}

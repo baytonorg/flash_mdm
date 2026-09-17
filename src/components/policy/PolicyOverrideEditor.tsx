@@ -27,6 +27,7 @@ const AMAPI_SECTIONS: Record<string, string> = {
   kioskCustomization: 'Kiosk Customisation',
   kioskCustomLauncherEnabled: 'Kiosk Launcher',
   advancedSecurityOverrides: 'Advanced Security',
+  backupService: 'Backup Service',
   personalUsagePolicies: 'Personal Usage',
   crossProfilePolicies: 'Cross Profile',
   openNetworkConfiguration: 'Network Config',
@@ -128,6 +129,7 @@ const AMAPI_KEY_TO_FORM_CATEGORY: Record<string, string> = {
   defaultApplicationSettings: 'applications',
 
   // security
+  backupService: 'security',
   encryptionPolicy: 'security',
   cameraAccess: 'deviceSettings',
   cameraDisabled: 'security',

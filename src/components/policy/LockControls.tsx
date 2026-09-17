@@ -17,6 +17,7 @@ const LOCKABLE_SECTIONS: Record<string, string> = {
   policyEnforcementRules: 'Enforcement Rules',
   kioskCustomization: 'Kiosk Customisation',
   advancedSecurityOverrides: 'Advanced Security',
+  backupService: 'Backup Service',
   personalUsagePolicies: 'Personal Usage',
   crossProfilePolicies: 'Cross Profile',
   openNetworkConfiguration: 'Network Config',
