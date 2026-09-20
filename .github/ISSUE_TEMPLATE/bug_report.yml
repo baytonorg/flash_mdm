@@ -1,0 +1,32 @@
+name: Bug report
+description: Report a reproducible problem in Flash MDM.
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include credentials, device identifiers, customer data, or security vulnerabilities. See SECURITY.md for private vulnerability reporting.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the observed and expected behaviour.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. …\n2. …\n3. …"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Flash MDM version or commit
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include non-sensitive browser, OS, deployment mode, and AMAPI management-mode information.
