@@ -3,6 +3,16 @@ import { buildAmapiCommandPayload, AmapiCommandValidationError } from '../amapi-
 import { AMAPI_ISSUE_COMMAND_TYPES } from '../device-commands.js';
 
 describe('buildAmapiCommandPayload', () => {
+  it('passes a valid optional command duration through to AMAPI', () => {
+    expect(buildAmapiCommandPayload('LOCK', { duration: '90.5s' }))
+      .toEqual({ type: 'LOCK', duration: '90.5s' });
+  });
+
+  it('rejects an invalid command duration', () => {
+    expect(() => buildAmapiCommandPayload('LOCK', { duration: '90' }))
+      .toThrow('params.duration must be a non-negative protobuf duration');
+  });
+
   it('builds START_LOST_MODE with UserFacingMessage wrappers', () => {
     const payload = buildAmapiCommandPayload('START_LOST_MODE', {
       organization: 'Acme IT',
@@ -153,6 +163,9 @@ describe('buildAmapiCommandPayload', () => {
         type: 'FUTURE_COMMAND',
         wipeDataFlags: ['WIPE_RESET_PROTECTION_DATA'],
       });
+
+    expect(buildAmapiCommandPayload('FUTURE_COMMAND', { duration: ' 600s ' }, { allowUnknown: true }))
+      .toEqual({ type: 'FUTURE_COMMAND', duration: '600s' });
   });
 
   it('accepts raw nested params for workflow/bulk compatibility', () => {

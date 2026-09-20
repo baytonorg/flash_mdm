@@ -193,6 +193,22 @@ export default function ActionSelector({ value, onChange }: ActionSelectorProps)
               )}
             </div>
           ))}
+          {selectedCommandType && (
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1" htmlFor="workflow-command-duration">
+                Command expiry
+              </label>
+              <input
+                id="workflow-command-duration"
+                type="text"
+                value={String(commandData.duration ?? '')}
+                onChange={(event) => handleCommandDataChange('duration', event.target.value)}
+                placeholder="600s"
+                className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
+              />
+              <p className="mt-1 text-xs text-gray-500">Optional protobuf duration. AMAPI defaults to 10 minutes when omitted.</p>
+            </div>
+          )}
           {selectedCommandType === 'START_LOST_MODE' && (
             <p className="text-xs text-gray-500">
               Provide a message, phone number, email address, or street address. Organization alone cannot start lost mode.

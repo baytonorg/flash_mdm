@@ -41,6 +41,7 @@ const CATEGORIES: CategoryDef[] = [
   { id: 'kioskMode', label: 'Kiosk Mode', icon: Monitor, scenarios: ['fm'] },
   { id: 'complianceRules', label: 'Compliance Rules', icon: Scale },
   { id: 'crossProfile', label: 'Cross-Profile', icon: ArrowLeftRight },
+  { id: 'crossDevice', label: 'Cross-Device', icon: ArrowLeftRight },
   { id: 'location', label: 'Location', icon: MapPin },
   { id: 'advanced', label: 'Advanced', icon: Wrench },
 ];

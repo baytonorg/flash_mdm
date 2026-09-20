@@ -8,6 +8,7 @@ import { useSetPolicyLocks } from '@/api/queries/policies';
  */
 const LOCKABLE_SECTIONS: Record<string, string> = {
   applications: 'Applications',
+  autofillPolicy: 'Autofill Policy',
   passwordPolicies: 'Password Policies',
   permissionGrants: 'Permission Grants',
   statusReportingSettings: 'Status Reporting',
@@ -20,6 +21,7 @@ const LOCKABLE_SECTIONS: Record<string, string> = {
   backupService: 'Backup Service',
   personalUsagePolicies: 'Personal Usage',
   crossProfilePolicies: 'Cross Profile',
+  crossDevicePolicies: 'Cross-Device',
   openNetworkConfiguration: 'Network Config',
   deviceConnectivityManagement: 'Connectivity',
   privateDnsSettings: 'Private DNS',
@@ -35,7 +37,6 @@ const LOCKABLE_SECTIONS: Record<string, string> = {
   factoryResetDisabled: 'Factory Reset',
   addUserDisabled: 'Add User',
   mountPhysicalMediaDisabled: 'Physical Media',
-  usbDataAccess: 'USB Data Access',
   vpnConfigDisabled: 'VPN Config',
   systemUpdate: 'System Update',
   displaySettings: 'Display Settings',

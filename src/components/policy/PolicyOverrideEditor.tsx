@@ -15,6 +15,7 @@ import PolicyFormSection from '@/components/policy/PolicyFormSection';
  */
 const AMAPI_SECTIONS: Record<string, string> = {
   applications: 'Applications',
+  autofillPolicy: 'Autofill Policy',
   passwordPolicies: 'Password Policies',
   passwordRequirements: 'Password Requirements (Legacy)',
   permissionGrants: 'Permission Grants',
@@ -30,6 +31,7 @@ const AMAPI_SECTIONS: Record<string, string> = {
   backupService: 'Backup Service',
   personalUsagePolicies: 'Personal Usage',
   crossProfilePolicies: 'Cross Profile',
+  crossDevicePolicies: 'Cross-Device',
   openNetworkConfiguration: 'Network Config',
   deviceConnectivityManagement: 'Connectivity',
   deviceRadioState: 'Radio State',
@@ -37,7 +39,6 @@ const AMAPI_SECTIONS: Record<string, string> = {
   recommendedGlobalProxy: 'Global Proxy',
   wifiConfigsLockdownEnabled: 'WiFi Lockdown',
   bluetoothConfigDisabled: 'Bluetooth',
-  cellBroadcastsConfigAccess: 'Cell Broadcast',
   credentialProviderPolicyDefault: 'Credential Provider',
   printingPolicy: 'Printing',
   displaySettings: 'Display Settings',
@@ -53,7 +54,6 @@ const AMAPI_SECTIONS: Record<string, string> = {
   addUserDisabled: 'Add User',
   mountPhysicalMediaDisabled: 'Physical Media',
   usbFileTransferDisabled: 'USB Transfer',
-  usbDataAccess: 'USB Data Access',
   vpnConfigDisabled: 'VPN Config',
   systemUpdate: 'System Update',
   minimumApiLevel: 'Minimum API Level',
@@ -114,7 +114,6 @@ const AMAPI_KEY_TO_FORM_CATEGORY: Record<string, string> = {
   networkEscapeHatchEnabled: 'network',
   autoDateAndTimeZone: 'network',
   wifiConfigsLockdownEnabled: 'network',
-  cellBroadcastsConfigAccess: 'network',
   deviceRadioState: 'network',
   privateDnsSettings: 'network',
   recommendedGlobalProxy: 'network',
@@ -125,6 +124,7 @@ const AMAPI_KEY_TO_FORM_CATEGORY: Record<string, string> = {
   playStoreMode: 'applications',
   appAutoUpdatePolicy: 'applications',
   appFunctions: 'applications',
+  autofillPolicy: 'applications',
   applications: 'applications',
   defaultApplicationSettings: 'applications',
 
@@ -136,7 +136,6 @@ const AMAPI_KEY_TO_FORM_CATEGORY: Record<string, string> = {
   microphoneAccess: 'deviceSettings',
   funDisabled: 'deviceSettings',
   advancedSecurityOverrides: 'security',
-  usbDataAccess: 'security',
   usbFileTransferDisabled: 'security',
   privateKeySelectionEnabled: 'security',
   choosePrivateKeyRules: 'security',
@@ -168,8 +167,9 @@ const AMAPI_KEY_TO_FORM_CATEGORY: Record<string, string> = {
   // complianceRules
   policyEnforcementRules: 'complianceRules',
 
-  // crossProfile
+  // cross-profile and cross-device
   crossProfilePolicies: 'crossProfile',
+  crossDevicePolicies: 'crossDevice',
 
   // location
   locationMode: 'location',
@@ -211,6 +211,7 @@ const CATEGORY_ORDER: Array<{ id: string; label: string }> = [
   { id: 'kioskMode', label: 'Kiosk Mode' },
   { id: 'complianceRules', label: 'Compliance Rules' },
   { id: 'crossProfile', label: 'Cross-Profile' },
+  { id: 'crossDevice', label: 'Cross-Device' },
   { id: 'location', label: 'Location' },
   { id: 'advanced', label: 'Advanced' },
 ];

@@ -1541,6 +1541,17 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
               { value: 'APP_FUNCTIONS_ALLOWED', label: 'Allowed' },
             ]}
           />
+          <EnumField
+            label="Autofill Policy"
+            description="Allow users to choose an autofill service, or disable autofill on managed devices."
+            value={getPath(config, 'autofillPolicy') ?? 'AUTOFILL_POLICY_UNSPECIFIED'}
+            onChange={(v) => onChange('autofillPolicy', v)}
+            options={[
+              { value: 'AUTOFILL_POLICY_UNSPECIFIED', label: 'Unspecified' },
+              { value: 'AUTOFILL_USER_CHOICE', label: 'User Choice' },
+              { value: 'AUTOFILL_DISABLED', label: 'Disabled' },
+            ]}
+          />
           {false && <RepeaterField
             label="Applications"
             description="List of managed applications and their settings."
@@ -2840,6 +2851,41 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
                 placeholder="com.example.notificationlistener"
               />
             )}
+          />
+        </div>
+      );
+
+    // ---------------------------------------------------------------
+    // CROSS-DEVICE
+    // ---------------------------------------------------------------
+    case 'crossDevice':
+      return (
+        <div>
+          <h3 className="text-lg font-semibold text-gray-900 mb-1">Cross-Device</h3>
+          <p className="text-sm text-gray-500 mb-6">Control streaming between nearby managed devices.</p>
+          <EnumField
+            label="Nearby App Streaming"
+            description="Control whether apps can stream between nearby devices."
+            value={getPath(config, 'crossDevicePolicies.nearbyAppStreaming') ?? 'NEARBY_APP_STREAMING_UNSPECIFIED'}
+            onChange={(v) => onChange('crossDevicePolicies.nearbyAppStreaming', v)}
+            options={[
+              { value: 'NEARBY_APP_STREAMING_UNSPECIFIED', label: 'Unspecified' },
+              { value: 'NEARBY_APP_STREAMING_USER_CHOICE', label: 'User Choice' },
+              { value: 'NEARBY_APP_STREAMING_DISABLED', label: 'Disabled' },
+              { value: 'NEARBY_APP_STREAMING_USER_CHOICE_SAME_MANAGED_ACCOUNT', label: 'User Choice (Same Managed Account)' },
+            ]}
+          />
+          <EnumField
+            label="Nearby Notification Streaming"
+            description="Control whether notifications can stream between nearby devices."
+            value={getPath(config, 'crossDevicePolicies.nearbyNotificationStreaming') ?? 'NEARBY_NOTIFICATION_STREAMING_UNSPECIFIED'}
+            onChange={(v) => onChange('crossDevicePolicies.nearbyNotificationStreaming', v)}
+            options={[
+              { value: 'NEARBY_NOTIFICATION_STREAMING_UNSPECIFIED', label: 'Unspecified' },
+              { value: 'NEARBY_NOTIFICATION_STREAMING_USER_CHOICE', label: 'User Choice' },
+              { value: 'NEARBY_NOTIFICATION_STREAMING_DISABLED', label: 'Disabled' },
+              { value: 'NEARBY_NOTIFICATION_STREAMING_USER_CHOICE_SAME_MANAGED_ACCOUNT', label: 'User Choice (Same Managed Account)' },
+            ]}
           />
         </div>
       );
