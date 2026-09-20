@@ -54,6 +54,11 @@ const WIPE_DATA_FLAG_OPTIONS: Array<{ value: string; label: string; description:
   },
 ];
 
+const ISSUE_COMMAND_TYPES = new Set([
+  'LOCK', 'RESET_PASSWORD', 'REBOOT', 'RELINQUISH_OWNERSHIP', 'CLEAR_APP_DATA',
+  'START_LOST_MODE', 'STOP_LOST_MODE', 'ADD_ESIM', 'REMOVE_ESIM', 'REQUEST_DEVICE_INFO', 'WIPE',
+]);
+
 const COMMANDS: CommandOption[] = [
   {
     value: 'LOCK',
@@ -242,6 +247,9 @@ export default function CommandModal({
       if (selectedCommand === 'WIPE' && wipeDataFlags.length > 0) {
         commandParams.wipeDataFlags = wipeDataFlags;
       }
+      if (ISSUE_COMMAND_TYPES.has(selectedCommand) && fieldValues.duration?.trim()) {
+        commandParams.duration = fieldValues.duration.trim();
+      }
       if (isBulk) {
         return apiClient.post<{ message: string; job_count?: number }>('/api/devices/bulk', {
           device_ids: deviceIds,
@@ -413,6 +421,24 @@ export default function CommandModal({
                   )}
                 </div>
               ))}
+
+              {command && ISSUE_COMMAND_TYPES.has(selectedCommand) && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    Command expiry
+                  </label>
+                  <input
+                    type="text"
+                    value={fieldValues.duration || ''}
+                    onChange={(e) =>
+                      setFieldValues((prev) => ({ ...prev, duration: e.target.value }))
+                    }
+                    placeholder="600s"
+                    className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm placeholder:text-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
+                  />
+                  <p className="mt-1 text-xs text-muted">Optional protobuf duration (for example, 600s). AMAPI defaults to 10 minutes when omitted.</p>
+                </div>
+              )}
 
               {selectedCommand === 'WIPE' && (
                 <div className="rounded-lg border border-border bg-surface px-3 py-2">

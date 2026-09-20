@@ -153,6 +153,11 @@ const CATEGORY_HELP: Record<string, { title: string; description: string; docLin
     description:
       'Manage how data flows between work and personal profiles including copy/paste, data sharing intents, work contacts visibility in personal apps, and widget placement.',
   },
+  crossDevice: {
+    title: 'Cross-Device',
+    description:
+      'Control app and notification streaming between nearby managed devices.',
+  },
   location: {
     title: 'Location',
     description:

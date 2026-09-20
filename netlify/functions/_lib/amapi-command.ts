@@ -31,6 +31,17 @@ function toNonEmptyString(value: unknown): string | undefined {
   return trimmed || undefined;
 }
 
+function toDuration(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  const duration = toNonEmptyString(value);
+  if (!duration || !/^\d+(?:\.\d{1,9})?s$/.test(duration)) {
+    throw new AmapiCommandValidationError(
+      'Command params.duration must be a non-negative protobuf duration such as 600s or 90.5s'
+    );
+  }
+  return duration;
+}
+
 function toUserFacingMessage(value: unknown): { defaultMessage: string } | undefined {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     const nested = toNonEmptyString((value as Record<string, unknown>).defaultMessage);
@@ -47,7 +58,11 @@ export function buildAmapiCommandPayload(
 ): Record<string, unknown> {
   const { allowUnknown = false } = options;
   const input = asObject(params);
-  const commandBody: Record<string, unknown> = { type };
+  const duration = toDuration(input.duration);
+  const commandBody: Record<string, unknown> = {
+    type,
+    ...(duration ? { duration } : {}),
+  };
 
   switch (type) {
     case 'LOCK':
@@ -195,7 +210,7 @@ export function buildAmapiCommandPayload(
       if (!allowUnknown) {
         throw new AmapiCommandValidationError(`Unsupported command type: ${type}`);
       }
-      const { type: _ignoredType, ...rest } = input;
+      const { type: _ignoredType, duration: _ignoredDuration, ...rest } = input;
       return { ...commandBody, ...rest };
     }
   }
