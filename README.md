@@ -2,7 +2,7 @@
 
 An Android device management platform built on Google's [Android Management API](https://developers.google.com/android/management) (AMAPI). It lets you manage Android devices - set policies, deploy apps, track locations, run automated workflows, and more - all from a web dashboard.
 
-Flash MDM runs on [Netlify](https://netlify.com) with a React frontend and a serverless Node.js backend backed by Postgres.
+The maintained Flash deployment runs on a VPS in LXD containers behind Caddy at [flash-mdm.bayton.org](https://flash-mdm.bayton.org). Its public marketing and case-study site is [flash-mdm.de.bayton.net](https://flash-mdm.de.bayton.net). Netlify remains an optional development and compatibility path.
 
 ## What you'll need
 
@@ -10,7 +10,7 @@ Before you start, you'll need accounts on the following services (all have free 
 
 | Service | What it's for | Sign up |
 |---------|--------------|---------|
-| **Netlify** | Hosts the app, runs the backend, provides the database | [netlify.com](https://netlify.com) |
+| **VPS or VM** | Runs the application, PostgreSQL, and a TLS reverse proxy | The included installer configures a Debian or Ubuntu host |
 | **Google Cloud** | Connects to Android devices via the Management API | [console.cloud.google.com](https://console.cloud.google.com) |
 | **Resend** | Sends emails (login links, invitations, alerts) | [resend.com](https://resend.com) |
 | **Stripe** | Handles billing and licence management (optional) | [stripe.com](https://stripe.com) |
@@ -24,7 +24,7 @@ You'll also need **Node.js 20 or newer** installed on your computer. You can dow
 Open a terminal and run:
 
 ```bash
-git clone https://github.com/jasonbayton/flash_mdm.git
+git clone https://github.com/baytonorg/flash_mdm.git
 cd flash_mdm
 npm install
 ```
@@ -43,7 +43,7 @@ Now open `.env` in a text editor and fill in the values. Each variable is explai
 
 ### 3. Set up the database
 
-**On Netlify (recommended):** The database is provided automatically when you enable Netlify DB on your site. Migrations (database setup scripts) run automatically on each deploy.
+**On a VPS (recommended):** The installer provisions PostgreSQL, runs migrations, and configures the application service. It is the maintained deployment path.
 
 **For local development:** If you have a local Postgres database, start the app with `npx netlify dev` and then run migrations via the built-in endpoint:
 
@@ -70,24 +70,23 @@ The app will be available at `http://localhost:8888` (full stack) or `http://loc
 
 > **Optional:** If you want to protect bootstrap registration with a secret (e.g. on a publicly accessible server), set `BOOTSTRAP_SECRET` in your `.env` before registering. The first registration will then require an `x-bootstrap-secret` HTTP header matching that value - which means you'll need to register via `curl` or an API client rather than the web UI. Remove `BOOTSTRAP_SECRET` after the first user is created.
 
-## Deploying to Netlify
+## Deploying to a VPS
 
-1. Push your fork to GitHub.
-2. In Netlify, click **"Add new site" > "Import an existing project"** and select your repository.
-3. Netlify will detect `netlify.toml` and configure the build automatically.
-4. Go to **Site Settings > Environment Variables** and add all the variables from your `.env` file.
-5. Enable **Netlify DB** on your site (Site Settings > Database).
-6. Trigger a deploy - the database migrations will run automatically.
+Use the maintained installer to provision a Debian or Ubuntu host with PostgreSQL, Caddy, the Flash runtime, migrations, and scheduled jobs:
 
-For a more detailed walkthrough, see the [step-by-step deployment guide](./docs/deployment/netlify-step-by-step.md).
+```bash
+curl -fsSL https://raw.githubusercontent.com/baytonorg/flash_mdm/main/install.sh | bash
+```
+
+For manual deployment, automated releases, and recovery guidance, see [VPS deployment details](#vps-deployment) and the [deployment documentation](./docs/deployment/overview.md).
 
 ## Environment variables
 
-Copy `.env.example` to `.env` for local development. On Netlify, set these in **Site Settings > Environment Variables**.
+Copy `.env.example` to `.env` for local development. On a VPS, store production values in the root-owned environment file managed by the installer.
 
 | Variable | Required | What it does |
 |----------|----------|--------------|
-| `DATABASE_URL` | Automatic on Netlify | Connection string for your Postgres database |
+| `DATABASE_URL` | Yes | Connection string for your Postgres database |
 | `ENCRYPTION_MASTER_KEY` | Yes | A secret key used to encrypt sensitive data in the database. Generate one by running: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 | `RESEND_API_KEY` | Yes | Your API key from [Resend](https://resend.com) (for sending emails) |
 | `RESEND_FROM_EMAIL` | No | Custom "from" email address (e.g. `noreply@yourdomain.com`) |
@@ -97,7 +96,7 @@ Copy `.env.example` to `.env` for local development. On Netlify, set these in **
 | `INTERNAL_FUNCTION_SECRET` | Yes | Secret for internal function-to-function calls. Generate one the same way as `MIGRATION_SECRET` |
 | `PUBSUB_SHARED_SECRET` | Recommended | A secret string to authenticate incoming device notifications from Google. Pick any strong random string |
 | `VITE_GOOGLE_MAPS_API_KEY` | For geofencing | A Google Maps JavaScript API key (for the map views) |
-| `URL` | For non-Netlify | The public URL of your deployment (e.g. `https://mdm.example.com`). Set automatically on Netlify |
+| `URL` | Yes | The public URL of your deployment (e.g. `https://mdm.example.com`) |
 | `BOOTSTRAP_SECRET` | First run only | Temporary secret to create the first admin account (remove after setup) |
 
 ### Setting up Google Cloud (Android Management API)
@@ -218,12 +217,7 @@ All API endpoints live under `/api/` and are documented with Swagger. Once the a
 
 The `website/` folder contains a standalone [Astro](https://astro.build) site - a marketing / landing page for Flash MDM. It's entirely optional and isn't required to run the platform.
 
-If you'd like to deploy it:
-
-1. In Netlify, create a **separate site** (don't add it to the main Flash MDM site).
-2. Set the **base directory** to `website/` in the site's build settings.
-3. Netlify will pick up `website/netlify.toml` automatically - build command and publish directory are already configured.
-4. Deploy. That's it.
+The maintained public instance is served from [flash-mdm.de.bayton.net](https://flash-mdm.de.bayton.net). The previous Netlify URL is retained as a static redirect only. The source lives in the [public repository](https://github.com/baytonorg/flash_mdm), under `website/`.
 
 For local development:
 
@@ -235,9 +229,9 @@ npm run dev
 
 If you don't need a landing page, you can safely ignore or delete the `website/` folder - nothing else in the project depends on it.
 
-## Deploy outside of Netlify
+## VPS deployment
 
-Flash MDM is built on Netlify, but the backend code is largely platform-agnostic. Every API handler uses the standard web [Request/Response API](https://developer.mozilla.org/en-US/docs/Web/API/Request) rather than a Netlify- or Express-specific format, which means the core logic runs on any Node.js-compatible runtime with relatively little adaptation.
+Flash MDM runs natively on a VPS. It retains a small Netlify adapter layer for local development and optional alternate deployments, while the backend uses the standard web [Request/Response API](https://developer.mozilla.org/en-US/docs/Web/API/Request) and is largely platform-agnostic.
 
 ### Automated installer (recommended)
 
@@ -529,7 +523,7 @@ GitHub Actions validates pull requests and pushes to `main` with lint, build, ge
 
 The [`docs/`](./docs/) directory has detailed documentation on every aspect of the platform:
 
-- [Deployment step-by-step](./docs/deployment/netlify-step-by-step.md) - full walkthrough from zero to running instance
+- [Deployment overview](./docs/deployment/overview.md) - VPS, automated release, recovery, and legacy Netlify deployment guidance
 - [Security overview](./docs/security/overview.md) - authentication, access control, encryption, and hardening
 - [API endpoints reference](./docs/reference/endpoints.md) - full endpoint inventory
 - [Environment variables](./docs/reference/environment-variables.md) - complete env var reference
