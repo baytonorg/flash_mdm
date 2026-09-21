@@ -2,7 +2,7 @@
 
 An Android device management platform built on Google's [Android Management API](https://developers.google.com/android/management) (AMAPI). It lets you manage Android devices - set policies, deploy apps, track locations, run automated workflows, and more - all from a web dashboard.
 
-The maintained Flash deployment runs on a VPS in LXD containers behind Caddy at [flash-mdm.bayton.org](https://flash-mdm.bayton.org). Its public marketing and case-study site is [flash-mdm.de.bayton.net](https://flash-mdm.de.bayton.net). Netlify remains an optional development and compatibility path.
+The maintained Flash deployment runs on a VPS in LXD containers behind Caddy at [flash-mdm.bayton.org](https://flash-mdm.bayton.org). Its public marketing and case-study site is [flash.bayton.org](https://flash.bayton.org). Netlify remains an optional development and compatibility path.
 
 ## What you'll need
 
@@ -217,7 +217,7 @@ All API endpoints live under `/api/` and are documented with Swagger. Once the a
 
 The `website/` folder contains a standalone [Astro](https://astro.build) site - a marketing / landing page for Flash MDM. It's entirely optional and isn't required to run the platform.
 
-The maintained public instance is served from [flash-mdm.de.bayton.net](https://flash-mdm.de.bayton.net). The previous Netlify URL is retained as a static redirect only. The source lives in the [public repository](https://github.com/baytonorg/flash_mdm), under `website/`.
+The maintained public instance is served from [flash.bayton.org](https://flash.bayton.org). The legacy Netlify URL is retained as a static redirect, and [flash-mdm.de.bayton.net](https://flash-mdm.de.bayton.net) remains available. The source lives in the [public repository](https://github.com/baytonorg/flash_mdm), under `website/`.
 
 For local development:
 
