@@ -5,6 +5,12 @@
 [build.environment]
   NODE_VERSION = "22"
 
+[[redirects]]
+  from = "/*"
+  to = "https://flash-mdm.de.bayton.net/:splat"
+  status = 301
+  force = true
+
 [[headers]]
   for = "/_assets/*"
   [headers.values]
