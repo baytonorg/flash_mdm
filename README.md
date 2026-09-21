@@ -217,7 +217,7 @@ All API endpoints live under `/api/` and are documented with Swagger. Once the a
 
 The `website/` folder contains a standalone [Astro](https://astro.build) site - a marketing / landing page for Flash MDM. It's entirely optional and isn't required to run the platform.
 
-The maintained public instance is served from [flash.bayton.org](https://flash.bayton.org). The legacy Netlify URL is retained as a static redirect, and [flash-mdm.de.bayton.net](https://flash-mdm.de.bayton.net) remains available. The source lives in the [public repository](https://github.com/baytonorg/flash_mdm), under `website/`.
+The maintained public instance is served from [flash.bayton.org](https://flash.bayton.org). The legacy Netlify URL is retained as a static redirect. The source lives in the [public repository](https://github.com/baytonorg/flash_mdm), under `website/`.
 
 For local development:
 
