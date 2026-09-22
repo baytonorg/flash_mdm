@@ -48,6 +48,7 @@ For deeper information on architecture, deployment, security, operations, and de
 | [device-apps.md](backend/lib/device-apps.md) | Extracts and normalizes device application inventory from an AMAPI device snapshot |
 | [device-commands.md](backend/lib/device-commands.md) | Shared command catalogs, alias normalization, and enum guards for device command handling |
 | [device-command-permissions.md](backend/lib/device-command-permissions.md) | Maps device commands to permission actions, distinguishing standard from destructive commands |
+| [enterprise-upgrade.md](backend/lib/enterprise-upgrade.md) | Normalizes AMAPI enterprise upgrade status and eligibility fields |
 | [google-auth.md](backend/lib/google-auth.md) | Google OAuth2 token minting for AMAPI access and OAuth URL generation for consent flow |
 | [haversine.md](backend/lib/haversine.md) | Haversine distance calculation, circular geofence check, and polygon point-in-polygon test |
 | [helpers.md](backend/lib/helpers.md) | Common HTTP request/response utilities: JSON responses, CSRF, UUID validation, body parsing |
@@ -55,6 +56,8 @@ For deeper information on architecture, deployment, security, operations, and de
 | [internal-auth.md](backend/lib/internal-auth.md) | Authenticates internal/scheduled function calls using a shared secret |
 | [licensing.md](backend/lib/licensing.md) | Core licensing engine: seat entitlements, licensing snapshots, enrollment block enforcement |
 | [licensing-reconcile.md](backend/lib/licensing-reconcile.md) | Background reconciliation scanning environments for licence overage and enforcement actions |
+| [log-safety.md](backend/lib/log-safety.md) | Redacts secrets, tokens, and sensitive nested fields before logging error payloads |
+| [outbound-webhook.md](backend/lib/outbound-webhook.md) | Executes outbound webhook requests after DNS-aware SSRF validation with timeout and redirect blocking |
 | [password-policy.md](backend/lib/password-policy.md) | Password length constraints used for validation across the application |
 | [platform-settings.md](backend/lib/platform-settings.md) | Reads and writes global platform settings from the `platform_settings` singleton row |
 | [policy-derivatives.md](backend/lib/policy-derivatives.md) | Manages per-scope AMAPI policy derivatives with variable resolution and AMAPI patch orchestration |

@@ -42,7 +42,7 @@ As-built, Flash MDM uses a shared secret (`INTERNAL_FUNCTION_SECRET`) to authent
 This list is intentionally high-level; details live in code and will be expanded with a per-job runbook.
 
 - `sync-process-background`
-  - Process Pub/Sub ingestion jobs and apply state updates.
+  - Process Pub/Sub ingestion jobs, bulk device commands, queued webhooks, enterprise upgrade status refreshes, and related AMAPI state updates.
 
 - `sync-reconcile-scheduled`
   - Full state reconciliation against AMAPI.
@@ -54,7 +54,7 @@ This list is intentionally high-level; details live in code and will be expanded
   - Fire time-based triggers.
 
 - `geofence-check-scheduled`
-  - Check device locations against configured geofences.
+  - Check device locations against configured geofences and enqueue webhook side effects for background execution.
 
 - `cleanup-scheduled`
   - Expire sessions/tokens and enforce data retention windows.
@@ -98,6 +98,15 @@ This list is intentionally high-level; details live in code and will be expanded
   the continuation token, waits 5 seconds between pages, and stops after a
   match, the relevant time window is passed, history ends, or 250 pages. It
   matches by device, command type, and request time and never replays a command.
+- **External side effects:** outbound webhook jobs are revalidated immediately before egress and should remain behind the shared outbound webhook helper.
+- **AMAPI catch-up:** manual device re-import can enqueue one job per AMAPI device, so large environments should be watched for `job_queue` growth after re-import.
+
+## 4) Evidence table
+
+| Claim | Evidence | Confidence |
+|---|---|---|
+| `sync-process-background` handles queued webhooks through the shared outbound helper. | `netlify/functions/sync-process-background.ts`; `netlify/functions/_lib/outbound-webhook.ts` | high |
+| Manual device re-import queues `process_enrollment` jobs that are later consumed by the background worker. | `netlify/functions/environment-enterprise.ts`; `netlify/functions/sync-process-background.ts` | high |
 
 See also:
 

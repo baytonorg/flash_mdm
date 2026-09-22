@@ -59,8 +59,20 @@ Netlify deployment or under the `flashmdm-cron` journal tag on VPS.
   response or transport failure and was deliberately not replayed.
 - Database connection saturation
 - Scheduled function errors (search logs for `error` or `fatal error` suffixes)
+- Webhook egress failures from queued geofence jobs
+- Manual AMAPI device re-import queue growth after `environment.device_reconcile_import.queued`
+- Enterprise upgrade status sync failures or repeated AMAPI enterprise detail errors
 
-## 4) Suggested alerts (operator)
+## 4) Log safety
+
+Some error paths use `sanitizeErrorForLog()` before writing to process logs. This currently covers Flashi chat, chat history, and download handlers. Treat this as a targeted safeguard only: new logging in provider/API integration code should still avoid raw credential-bearing payloads, and handlers that must log structured provider errors should use the shared sanitizer.
+
+| Claim | Evidence | Confidence |
+|---|---|---|
+| Flashi error logs use the shared log sanitizer. | `netlify/functions/_lib/log-safety.ts`; `netlify/functions/flashagent-chat.ts`; `netlify/functions/flashagent-chat-history.ts`; `netlify/functions/flashagent-download.ts` | high |
+| The sanitizer behaviour is covered by unit tests. | `netlify/functions/_lib/__tests__/log-safety.test.ts` | high |
+
+## 5) Suggested alerts (operator)
 
 - Sustained 5xx rate
 - Repeated webhook verification failures
@@ -73,8 +85,10 @@ Netlify deployment or under the `flashmdm-cron` journal tag on VPS.
 - `command_operations` rows stuck in `delivery_uncertain` or `reconciling`,
   `command_reconcile` dead jobs, and `device.command.reconciliation_unresolved`
   audit events
+- Unexpected spikes in queued outbound webhook failures
+- AMAPI re-import jobs remaining pending/dead after a manual device import
 
-## 5) AMAPI retry and recovery contract
+## 6) AMAPI retry and recovery contract
 
 - Read-only AMAPI requests retry HTTP 502, 503, 504, and transport failures with
   capped exponential backoff and jitter.

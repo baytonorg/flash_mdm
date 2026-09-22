@@ -27,14 +27,31 @@ SSRF protections for outbound/webhook URL validation (`netlify/functions/_lib/we
 - IPv6-mapped IPv4 addresses are unwrapped before checking.
 - Geofence webhooks are validated both at save-time and again immediately before outbound egress from background workers.
 - Outbound webhook fetches enforce `redirect: 'error'` to block redirect-based SSRF bypasses.
+- Queued outbound webhook jobs should use `executeValidatedOutboundWebhook()` rather than calling `fetch()` directly; this centralizes DNS-aware validation, redirect blocking, JSON request construction, and timeout handling.
 
-## 4) Secrets at rest
+| Claim | Evidence | Confidence |
+|---|---|---|
+| Webhook egress is revalidated immediately before network fetch. | `netlify/functions/_lib/outbound-webhook.ts`; `netlify/functions/_lib/webhook-ssrf.ts`; `netlify/functions/sync-process-background.ts` | high |
+| Redirect-based SSRF bypasses are blocked for queued webhook jobs. | `netlify/functions/_lib/outbound-webhook.ts`; `netlify/functions/_lib/__tests__/outbound-webhook.test.ts` | high |
+
+## 4) Log safety
+
+The Flashi endpoints sanitize selected error payloads before logging through `sanitizeErrorForLog()`. The sanitizer redacts secret-like key names, bearer tokens, Stripe-style secret keys, JWT-looking strings, and common inline `key=value`/`key: value` assignments. It also walks `Error` objects, arrays, and nested objects with a depth cap.
+
+This is a defence-in-depth control for error paths; it does not make arbitrary object logging safe. New handlers that may log provider errors, LLM/tool errors, authorization headers, API keys, or credential-bearing payloads should either avoid logging the raw value or pass it through `sanitizeErrorForLog()` first.
+
+| Claim | Evidence | Confidence |
+|---|---|---|
+| The sanitizer redacts token/key patterns and nested sensitive keys. | `netlify/functions/_lib/log-safety.ts`; `netlify/functions/_lib/__tests__/log-safety.test.ts` | high |
+| Current explicit consumers are Flashi chat/history/download handlers. | `netlify/functions/flashagent-chat.ts`; `netlify/functions/flashagent-chat-history.ts`; `netlify/functions/flashagent-download.ts` | high |
+
+## 5) Secrets at rest
 
 Sensitive values (TOTP secrets, backup codes, Google service account credentials) are encrypted using AES-256-GCM before storage. The encryption envelope format is `v1.<iv>.<tag>.<ciphertext>` (base64url). Domain-specific AAD is derived per secret type to prevent cross-domain ciphertext reuse.
 
 Source: `netlify/functions/_lib/crypto.ts`
 
-## 5) HTTP headers
+## 6) HTTP headers
 
 Security headers are configured in `netlify.toml`:
 
