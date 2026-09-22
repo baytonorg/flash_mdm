@@ -1,10 +1,10 @@
-flash-mdm.de.bayton.net {
+flash.bayton.org {
 	import common_headers
 	import static_error_pages
 	encode zstd gzip
 
 	log {
-		output file /var/log/caddy/flash-mdm.de.bayton.net.log {
+		output file /var/log/caddy/flash.bayton.org.log {
 			roll_size 10mb
 			roll_keep 5
 			roll_keep_for 720h
