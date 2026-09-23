@@ -41,9 +41,17 @@ A scoped user (access_scope = `’scoped’`) can only see and manage resources 
 - **Environment listing**: scoped users see only their assigned environments — the environment-crud handler filters by `environment_memberships` rather than returning all workspace environments.
 - **User listing**: scoped users see only users who share at least one of their environments, not the full workspace roster. The `workspace-users` handler computes this limited view when the caller lacks workspace-level `read` permission.
 - **User management**: a scoped user with an environment-level `owner` or `admin` role can invite and manage users within that environment. The `acting_environment_id` parameter scopes management operations to a specific environment.
+- **Access updates**: workspace-scoped managers can rewrite a user's workspace/scoped access and direct environment/group assignments. Environment-scoped managers can only update scoped assignments within the `acting_environment_id` and cannot overwrite users inherited from workspace scope.
+- **Bulk operations**: workspace-scoped managers can bulk remove users or bulk overwrite role/access assignments. Bulk mutations are per-target and report partial success/failure; self-modification is blocked.
 - **Settings access**: environment-level settings (e.g. enterprise binding, enrollment config) are gated by the user’s environment role, not their workspace role.
 - **Signup links**: environment-scoped signup links force `default_access_scope = ‘scoped’`, ensuring new users inherit scoped access.
 - **Customer setup exception**: when a scoped `setup` user creates their first environment, they are automatically promoted to a scoped `owner` of that environment.
+
+| Claim | Evidence | Confidence |
+|---|---|---|
+| Scoped user listings are filtered through shared environment/group assignments and return `limited_view`. | `netlify/functions/workspace-users.ts`; `netlify/functions/__tests__/workspace-users-access.test.ts` | high |
+| Bulk user operations block self-modification and report per-target outcomes. | `netlify/functions/workspace-users.ts`; `netlify/functions/__tests__/workspace-users-bulk.test.ts` | high |
+| Environment-scoped access managers are limited to the acting environment and cannot overwrite workspace-inherited users. | `netlify/functions/workspace-users.ts`; `netlify/functions/__tests__/workspace-users-access.test.ts` | high |
 
 ### Role hierarchy
 

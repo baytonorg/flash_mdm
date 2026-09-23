@@ -37,6 +37,11 @@ This page describes the core external systems Flash MDM depends on.
 - URLs are validated with DNS-aware SSRF checks before egress.
 - Geofence webhook URLs are validated at save-time and revalidated again immediately before outbound execution.
 - Outbound fetches use redirect blocking (`redirect: 'error'`).
+- Queued geofence webhook jobs execute through `executeValidatedOutboundWebhook()`, which also applies a bounded abort timeout and JSON request defaults.
+
+| Claim | Evidence | Confidence |
+|---|---|---|
+| Geofence webhook jobs are executed by the background processor through the shared outbound webhook helper. | `netlify/functions/sync-process-background.ts`; `netlify/functions/_lib/outbound-webhook.ts` | high |
 
 ## Stripe (billing/licensing)
 
@@ -77,6 +82,17 @@ This page describes the core external systems Flash MDM depends on.
 - Used by Flashi for real-time enterprise data queries, but available as a standalone feature.
 - Strict read-only tool allowlist: `list_devices`, `get_device`, `list_policies`, `get_policy`, `get_application`, `list_web_apps`, `get_web_app`.
 - Enterprise binding validation: every tool call must reference the environment's bound enterprise.
+
+## AMAPI enterprise upgrade and re-import operations
+
+- Bound environments can query AMAPI enterprise details and cache `enterprise_upgrade_status` under `environments.enterprise_features`.
+- Only `MANAGED_GOOGLE_PLAY_ACCOUNTS_ENTERPRISE` enterprises are treated as eligible for Workspace enterprise upgrade URL generation.
+- Operators can trigger a manual device re-import, which pages through AMAPI devices and enqueues one `process_enrollment` job per discovered device.
+
+| Claim | Evidence | Confidence |
+|---|---|---|
+| Upgrade status is normalized by a shared helper and cached in environment features. | `netlify/functions/_lib/enterprise-upgrade.ts`; `netlify/functions/environment-enterprise.ts`; `netlify/functions/sync-process-background.ts` | high |
+| Manual device re-import queues `process_enrollment` jobs for AMAPI device names. | `netlify/functions/environment-enterprise.ts` | high |
 
 ## Netlify
 

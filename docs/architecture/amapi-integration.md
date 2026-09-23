@@ -63,7 +63,22 @@ Related code:
 - `netlify/functions/sync-process-background.ts`
 - `netlify/functions/sync-reconcile-scheduled.ts`
 
-## 6) Rate limiting
+## 6) Enterprise upgrade and device re-import
+
+Bound environments expose an enterprise operations endpoint for three AMAPI-adjacent actions:
+
+- `get_upgrade_status` fetches the AMAPI enterprise resource, normalizes upgrade eligibility, and stores the result in `environments.enterprise_features.enterprise_upgrade_status`.
+- `generate_upgrade_url` calls AMAPI `enterprises:generateEnterpriseUpgradeUrl` only when the enterprise is a managed Google Play Accounts enterprise.
+- `reconcile_device_import` pages through AMAPI devices and enqueues `process_enrollment` jobs so local state can catch up when devices exist upstream but are missing locally.
+
+These operations require `environment.manage_settings` permission on the target environment.
+
+| Claim | Evidence | Confidence |
+|---|---|---|
+| Upgrade eligibility is derived from AMAPI `enterpriseType`. | `netlify/functions/_lib/enterprise-upgrade.ts`; `netlify/functions/environment-enterprise.ts` | high |
+| Device re-import uses queued background processing rather than doing all local import work in the HTTP request. | `netlify/functions/environment-enterprise.ts`; `netlify/functions/sync-process-background.ts` | high |
+
+## 7) Rate limiting
 
 AMAPI is rate-limited and can return transient failures.
 
@@ -81,7 +96,7 @@ Related code:
 - `netlify/functions/_lib/amapi.ts`
 - `netlify/functions/deployment-jobs.ts` (batching comments)
 
-## 7) Failure modes (operator + engineer checklist)
+## 8) Failure modes (operator + engineer checklist)
 
 Common failure modes to document/monitor:
 
@@ -90,6 +105,8 @@ Common failure modes to document/monitor:
 - Pub/Sub delivery failures or auth misconfiguration
 - Background processor backlog growth
 - Policy patch failures causing partial sync
+- Enterprise upgrade status refresh failures
+- Manual re-import queue growth after large AMAPI device scans
 
 Observability:
 
@@ -103,7 +120,7 @@ Observability:
   interactive page depth. Delivery-uncertain rows are reconciled asynchronously
   through a bounded, rate-limited, read-only page-token cursor.
 
-## 8) Security considerations
+## 9) Security considerations
 
 - Pub/Sub webhook should be authenticated (`PUBSUB_SHARED_SECRET`).
 - Inputs that trigger outbound requests must be SSRF-hardened.
