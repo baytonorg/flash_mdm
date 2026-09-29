@@ -2,6 +2,8 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 const DISCOVERY_URL = 'https://androidmanagement.googleapis.com/$discovery/rest?version=v1';
+const DISCOVERY_FETCH_URL = process.env.AMAPI_DISCOVERY_URL ?? DISCOVERY_URL;
+const DEFAULT_DISCOVERY_FETCH_ATTEMPTS = 8;
 const DEFAULT_OUTPUT = 'netlify/functions/_lib/amapi-policy-discovery-schema.ts';
 
 function parseArgs(args) {
@@ -16,11 +18,33 @@ function parseArgs(args) {
   return options;
 }
 
-async function loadDiscovery(input) {
-  if (input) return JSON.parse(await readFile(resolve(input), 'utf8'));
-  const response = await fetch(DISCOVERY_URL);
+function discoveryFetchAttempts() {
+  const configured = Number.parseInt(process.env.AMAPI_DISCOVERY_FETCH_ATTEMPTS ?? '', 10);
+  if (!Number.isInteger(configured)) return DEFAULT_DISCOVERY_FETCH_ATTEMPTS;
+  return Math.min(20, Math.max(1, configured));
+}
+
+async function fetchDiscovery() {
+  const response = await fetch(DISCOVERY_FETCH_URL, { cache: 'no-store' });
   if (!response.ok) throw new Error(`Failed to fetch AMAPI Discovery: HTTP ${response.status}`);
   return response.json();
+}
+
+async function loadDiscoveries(input) {
+  if (input) return [JSON.parse(await readFile(resolve(input), 'utf8'))];
+  const results = await Promise.allSettled(
+    Array.from({ length: discoveryFetchAttempts() }, fetchDiscovery),
+  );
+  const discoveries = results
+    .filter((result) => result.status === 'fulfilled')
+    .map((result) => result.value);
+  if (discoveries.length === 0) {
+    throw new AggregateError(
+      results.map((result) => result.reason),
+      'All AMAPI Discovery requests failed',
+    );
+  }
+  return discoveries;
 }
 
 function shrinkDescriptor(value) {
@@ -82,17 +106,46 @@ function renderModule(schema) {
     + `export const AMAPI_POLICY_DISCOVERY_SCHEMA = ${JSON.stringify(schema, null, 2)} as const;\n`;
 }
 
+function extractRenderedRevision(source) {
+  return /"revision": "(\d{8})"/.exec(source)?.[1] ?? null;
+}
+
+function newestSchema(discoveries) {
+  return discoveries
+    .map(buildPinnedSchema)
+    .sort((left, right) => left.revision.localeCompare(right.revision))
+    .at(-1);
+}
+
 const options = parseArgs(process.argv.slice(2));
 const outputPath = resolve(options.output);
-const rendered = renderModule(buildPinnedSchema(await loadDiscovery(options.input)));
+const schema = newestSchema(await loadDiscoveries(options.input));
+const rendered = renderModule(schema);
+const existing = await readFile(outputPath, 'utf8').catch((err) => {
+  if (err?.code === 'ENOENT') return null;
+  throw err;
+});
+const existingRevision = existing ? extractRenderedRevision(existing) : null;
 
 if (options.check) {
-  const existing = await readFile(outputPath, 'utf8');
+  if (!existing) throw new Error(`${options.output} does not exist`);
   if (existing !== rendered) {
+    if (existingRevision && existingRevision > schema.revision) {
+      console.log(
+        `AMAPI policy schema revision ${existingRevision} is newer than all sampled live responses (${schema.revision}); refusing to downgrade`,
+      );
+      process.exit(0);
+    }
     throw new Error(`${options.output} is not aligned with the current AMAPI Discovery document`);
   }
   console.log(`AMAPI policy schema is current (${options.output})`);
 } else {
+  if (existingRevision && existingRevision > schema.revision) {
+    console.log(
+      `AMAPI policy schema revision ${existingRevision} is newer than all sampled live responses (${schema.revision}); refusing to downgrade`,
+    );
+    process.exit(0);
+  }
   await writeFile(outputPath, rendered);
   console.log(`Updated ${options.output}`);
 }

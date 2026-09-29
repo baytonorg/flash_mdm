@@ -12,7 +12,7 @@ describe('pinned AMAPI Discovery policy validation', () => {
     expect(AMAPI_POLICY_DISCOVERY_SOURCE).toBe(
       'https://androidmanagement.googleapis.com/$discovery/rest?version=v1'
     );
-    expect(AMAPI_POLICY_DISCOVERY_REVISION).toBe('20260917');
+    expect(AMAPI_POLICY_DISCOVERY_REVISION).toBe('20260928');
   });
 
   it('rejects unknown policy fields, nested fields, and enum values', () => {
@@ -40,6 +40,12 @@ describe('pinned AMAPI Discovery policy validation', () => {
       personalUsagePolicies: {
         cameraDisabled: true,
         personalPlayStoreMode: 'BLOCKLIST',
+        crossDevicePolicies: {
+          taskContinuityHandoff: 'TASK_CONTINUITY_HANDOFF_DISALLOWED',
+        },
+      },
+      crossDevicePolicies: {
+        taskContinuityHandoff: 'TASK_CONTINUITY_HANDOFF_ALLOWED',
       },
       deviceConnectivityManagement: {
         wifiRoamingPolicy: {

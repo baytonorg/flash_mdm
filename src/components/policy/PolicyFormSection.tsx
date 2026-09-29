@@ -2549,6 +2549,17 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
             value={getPath(config, 'personalUsagePolicies.screenCaptureDisabled') ?? false}
             onChange={(v) => onChange('personalUsagePolicies.screenCaptureDisabled', v)}
           />
+          <EnumField
+            label="Personal Task Continuity Handoff"
+            description="Control whether personal-profile tasks can be handed off between devices."
+            value={getPath(config, 'personalUsagePolicies.crossDevicePolicies.taskContinuityHandoff') ?? 'TASK_CONTINUITY_HANDOFF_UNSPECIFIED'}
+            onChange={(v) => onChange('personalUsagePolicies.crossDevicePolicies.taskContinuityHandoff', v)}
+            options={[
+              { value: 'TASK_CONTINUITY_HANDOFF_UNSPECIFIED', label: 'Unspecified' },
+              { value: 'TASK_CONTINUITY_HANDOFF_ALLOWED', label: 'Allowed' },
+              { value: 'TASK_CONTINUITY_HANDOFF_DISALLOWED', label: 'Disallowed' },
+            ]}
+          />
           <NumberField
             label="Max Days With Work Off"
             description="Maximum days the work profile can remain off before the device is blocked."
@@ -2885,6 +2896,17 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
               { value: 'NEARBY_NOTIFICATION_STREAMING_USER_CHOICE', label: 'User Choice' },
               { value: 'NEARBY_NOTIFICATION_STREAMING_DISABLED', label: 'Disabled' },
               { value: 'NEARBY_NOTIFICATION_STREAMING_USER_CHOICE_SAME_MANAGED_ACCOUNT', label: 'User Choice (Same Managed Account)' },
+            ]}
+          />
+          <EnumField
+            label="Task Continuity Handoff"
+            description="Control whether tasks can be handed off between devices."
+            value={getPath(config, 'crossDevicePolicies.taskContinuityHandoff') ?? 'TASK_CONTINUITY_HANDOFF_UNSPECIFIED'}
+            onChange={(v) => onChange('crossDevicePolicies.taskContinuityHandoff', v)}
+            options={[
+              { value: 'TASK_CONTINUITY_HANDOFF_UNSPECIFIED', label: 'Unspecified' },
+              { value: 'TASK_CONTINUITY_HANDOFF_ALLOWED', label: 'Allowed' },
+              { value: 'TASK_CONTINUITY_HANDOFF_DISALLOWED', label: 'Disallowed' },
             ]}
           />
         </div>

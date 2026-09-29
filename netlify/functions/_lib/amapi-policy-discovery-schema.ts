@@ -2,7 +2,7 @@
 // Refresh deliberately with `npm run amapi-schema:update` and review the schema diff.
 export const AMAPI_POLICY_DISCOVERY_SCHEMA = {
   "source": "https://androidmanagement.googleapis.com/$discovery/rest?version=v1",
-  "revision": "20260917",
+  "revision": "20260928",
   "root": "Policy",
   "schemas": {
     "AdvancedSecurityOverrides": {
@@ -528,6 +528,14 @@ export const AMAPI_POLICY_DISCOVERY_SCHEMA = {
             "NEARBY_NOTIFICATION_STREAMING_USER_CHOICE",
             "NEARBY_NOTIFICATION_STREAMING_DISABLED",
             "NEARBY_NOTIFICATION_STREAMING_USER_CHOICE_SAME_MANAGED_ACCOUNT"
+          ]
+        },
+        "taskContinuityHandoff": {
+          "type": "string",
+          "enum": [
+            "TASK_CONTINUITY_HANDOFF_UNSPECIFIED",
+            "TASK_CONTINUITY_HANDOFF_ALLOWED",
+            "TASK_CONTINUITY_HANDOFF_DISALLOWED"
           ]
         }
       }
@@ -1103,6 +1111,19 @@ export const AMAPI_POLICY_DISCOVERY_SCHEMA = {
         }
       }
     },
+    "PersonalCrossDevicePolicies": {
+      "type": "object",
+      "properties": {
+        "taskContinuityHandoff": {
+          "type": "string",
+          "enum": [
+            "TASK_CONTINUITY_HANDOFF_UNSPECIFIED",
+            "TASK_CONTINUITY_HANDOFF_ALLOWED",
+            "TASK_CONTINUITY_HANDOFF_DISALLOWED"
+          ]
+        }
+      }
+    },
     "PersonalUsagePolicies": {
       "type": "object",
       "properties": {
@@ -1122,6 +1143,9 @@ export const AMAPI_POLICY_DISCOVERY_SCHEMA = {
         },
         "cameraDisabled": {
           "type": "boolean"
+        },
+        "crossDevicePolicies": {
+          "$ref": "PersonalCrossDevicePolicies"
         },
         "maxDaysWithWorkOff": {
           "type": "integer",
