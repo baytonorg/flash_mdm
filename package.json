@@ -15,7 +15,7 @@
     "amapi-schema:check": "node scripts/generate-amapi-policy-schema.mjs --check",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "vitest run && node --test scripts/__tests__/amapi-schema-generator.test.mjs",
     "test:deploy-webhook": "node --test scripts/__tests__/vps-auto-deploy-webhook.test.mjs",
     "test:blob-migration": "node --test scripts/__tests__/blob-migration.test.mjs",
     "maintenance:rekey": "tsx scripts/rekey-encrypted-state.ts",
