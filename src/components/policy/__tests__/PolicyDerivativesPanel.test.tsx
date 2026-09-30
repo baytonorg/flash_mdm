@@ -143,4 +143,30 @@ describe('PolicyDerivativesPanel', () => {
       expect(mockUnassign).toHaveBeenCalledWith({ scope_type: 'group', scope_id: 'group_b' });
     });
   });
+
+  it('keeps wide derivative columns inside a keyboard-scrollable container', async () => {
+    mockApiGet.mockResolvedValue({
+      derivatives: [{
+        id: 'derivative-1',
+        scope_type: 'device',
+        scope_id: 'device-1',
+        scope_name: 'A representative device with a long display name',
+        amapi_name: 'enterprises/example/policies/a-very-long-resource-name-for-responsive-coverage',
+        payload_hash: 'hash',
+        status: 'production',
+        device_count: 1,
+        metadata: null,
+        last_synced_at: '2026-09-30T08:00:00Z',
+        created_at: '2026-09-30T08:00:00Z',
+        updated_at: '2026-09-30T08:00:00Z',
+      }],
+    });
+
+    renderPanel();
+
+    const scroller = await screen.findByLabelText('Policy derivatives table');
+    expect(scroller).toHaveClass('max-w-full', 'overflow-x-auto');
+    expect(scroller).toHaveAttribute('tabindex', '0');
+    expect(scroller.querySelector('table')).toHaveClass('min-w-[900px]');
+  });
 });

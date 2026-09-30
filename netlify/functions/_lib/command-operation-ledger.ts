@@ -277,11 +277,11 @@ export async function updateCommandOperationFromEvent(
   const error = getOperationError(operation);
   await execute(
     `UPDATE command_operations
-     SET status = $1,
+     SET status = $1::varchar,
          operation_done = $2,
          operation_error_code = $3,
          operation_error_message = $4,
-         resolved_at = CASE WHEN $1 IN ('succeeded', 'failed', 'cancelled') THEN now() ELSE resolved_at END,
+         resolved_at = CASE WHEN $1::varchar IN ('succeeded', 'failed', 'cancelled') THEN now() ELSE resolved_at END,
          updated_at = now()
      WHERE environment_id = $5 AND operation_name = $6`,
     [status, typeof operation.done === 'boolean' ? operation.done : null, error.code, error.message, environmentId, operationName]

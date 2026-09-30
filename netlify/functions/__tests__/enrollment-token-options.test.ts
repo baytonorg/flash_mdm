@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  AMAPI_MAX_ENROLLMENT_TOKEN_DURATION,
   normalizeAllowPersonalUsage,
   normalizeOneTimeUse,
   resolveEnrollmentDurationDays,
+  resolveEnrollmentTokenDuration,
 } from '../_lib/enrollment-token-options.ts';
 
 describe('enrollment-token-options', () => {
@@ -31,5 +33,23 @@ describe('enrollment-token-options', () => {
     expect(resolveEnrollmentDurationDays({ durationSeconds: 3600 })).toBe(1);
     expect(resolveEnrollmentDurationDays({ duration: '999999999s' })).toBe(365);
     expect(resolveEnrollmentDurationDays({})).toBe(30);
+  });
+
+  it('preserves the exact AMAPI maximum while keeping ordinary durations bounded', () => {
+    expect(resolveEnrollmentTokenDuration({ duration: AMAPI_MAX_ENROLLMENT_TOKEN_DURATION })).toEqual({
+      duration: AMAPI_MAX_ENROLLMENT_TOKEN_DURATION,
+      expiryDays: null,
+      isMaximum: true,
+    });
+    expect(resolveEnrollmentTokenDuration({ expiryDays: 14 })).toEqual({
+      duration: '1209600s',
+      expiryDays: 14,
+      isMaximum: false,
+    });
+    expect(resolveEnrollmentTokenDuration({ duration: 'invalid' })).toEqual({
+      duration: '2592000s',
+      expiryDays: 30,
+      isMaximum: false,
+    });
   });
 });

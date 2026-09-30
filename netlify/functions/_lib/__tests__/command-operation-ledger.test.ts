@@ -24,6 +24,7 @@ import {
   recordCommandReconciliationFailure,
   recordSubmittedCommandOperation,
   recordUncertainCommandOperation,
+  updateCommandOperationFromEvent,
 } from '../command-operation-ledger.js';
 
 const mockExecute = vi.mocked(execute);
@@ -90,6 +91,27 @@ describe('command operation matching', () => {
 });
 
 describe('command operation persistence', () => {
+  it('uses one explicit SQL type when a COMMAND event resolves ledger status', async () => {
+    await updateCommandOperationFromEvent(row.environment_id, {
+      name: 'enterprises/e1/devices/d1/operations/1789027200000',
+      done: true,
+      response: { '@type': 'IssueCommandResponse' },
+      metadata: { type: 'REBOOT' },
+    });
+
+    expect(mockExecute).toHaveBeenCalledWith(
+      expect.stringContaining('SET status = $1::varchar'),
+      [
+        'succeeded',
+        true,
+        null,
+        null,
+        row.environment_id,
+        'enterprises/e1/devices/d1/operations/1789027200000',
+      ]
+    );
+  });
+
   it('persists successful operation names with device, type, source, and request time', async () => {
     mockQueryOne.mockResolvedValue({ id: row.id } as never);
     const id = await recordSubmittedCommandOperation({

@@ -25,7 +25,7 @@
 | `amapiCall`, `getAmapiErrorHttpStatus` | `_lib/amapi.js` | Create the enrollment token via the Android Management API |
 | `jsonResponse`, `errorResponse`, `parseJsonBody`, `getClientIp` | `_lib/helpers.js` | HTTP response utilities and request parsing |
 | `assertEnvironmentEnrollmentAllowed` | `_lib/licensing.js` | Licensing gate -- ensures the environment has not exceeded its enrollment limit |
-| `normalizeAllowPersonalUsage`, `normalizeOneTimeUse`, `resolveEnrollmentDurationDays` | `_lib/enrollment-token-options.js` | Normalize enrollment token parameters (personal usage aliases, one-time flag, and duration formats) |
+| `normalizeAllowPersonalUsage`, `normalizeOneTimeUse`, `resolveEnrollmentTokenDuration` | `_lib/enrollment-token-options.js` | Normalize enrollment token parameters, including the shared exact AMAPI maximum duration |
 
 ## Key Logic
 
@@ -33,9 +33,9 @@
 2. If a `group_id` is provided, validates it belongs to the environment.
 3. Resolves the effective AMAPI policy by walking the group hierarchy (`group_closures`) upward to find the nearest `policy_assignment`, falling back to the environment-level assignment. Prefers group-specific `policy_derivatives` for immediate correct policy on enrollment.
 4. Calls `assertEnvironmentEnrollmentAllowed` to enforce licensing limits.
-5. Normalizes token options via `enrollment-token-options` library: duration accepts `expiryDays`, `durationDays`, or `duration`/`durationSeconds` (seconds string like `"604800s"` or bare number), clamped to 1-365 days (default 30); `allowPersonalUsage` accepts shorthand aliases (e.g. `"DEDICATED_DEVICE"`, `"ALLOWED"`); `oneTimeOnly` accepts boolean/string/number truthy values. Builds and sends a `POST` to the AMAPI `enrollmentTokens` endpoint with the resolved parameters and embedded `additionalData` containing the group ID.
+5. Normalizes token options via `enrollment-token-options`: ordinary duration accepts `expiryDays`, `durationDays`, or `duration`/`durationSeconds` and is clamped to 1-365 days (default 30). The exact shared AMAPI maximum `315576000000s` is preserved for the explicit maximum-duration mode. Personal usage and one-time aliases are normalized before the AMAPI request.
 6. Merges provisioning extras (Wi-Fi SSID/password/security, locale, timezone, skip flags) into the AMAPI-returned QR code JSON via `applyProvisioningExtrasToQrPayload`.
-7. Stores the token locally in `enrollment_tokens` and returns the token value, QR data, and metadata.
+7. Stores the token locally in `enrollment_tokens` and returns the token value, QR data, and metadata. A valid `expirationTimestamp` returned by AMAPI is authoritative, and is required for maximum-duration tokens.
 8. On failure, logs a `create_failed` audit event and returns the AMAPI error status or 502.
 
 ## API Surface

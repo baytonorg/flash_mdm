@@ -9,6 +9,8 @@
 | `normalizeAllowPersonalUsage` | `(input: unknown) => NormalizedPersonalUsage` | Maps personal usage string aliases to canonical AMAPI enum values |
 | `normalizeOneTimeUse` | `(input: unknown) => boolean` | Coerces various truthy/falsy representations to a boolean |
 | `resolveEnrollmentDurationDays` | `(input: { expiryDays?, durationDays?, duration?, durationSeconds?, defaultDays? }) => number` | Resolves token duration from multiple input formats to a clamped day count (1-365) |
+| `resolveEnrollmentTokenDuration` | `(input) => ResolvedEnrollmentTokenDuration` | Preserves the exact AMAPI maximum duration or returns a bounded ordinary duration |
+| `AMAPI_MAX_ENROLLMENT_TOKEN_DURATION` | `315576000000s` | Shared finite maximum used by ordinary and zero-touch token paths |
 | `NormalizedPersonalUsage` | Type alias | `'PERSONAL_USAGE_UNSPECIFIED' \| 'PERSONAL_USAGE_ALLOWED' \| 'PERSONAL_USAGE_DISALLOWED' \| 'PERSONAL_USAGE_DISALLOWED_USERLESS'` |
 
 ## Key Logic
@@ -39,7 +41,7 @@ Resolves token expiry from the first matching field in priority order:
 3. `duration` / `durationSeconds` — either a seconds string (e.g. `"604800s"`) or a bare number (interpreted as seconds), converted to days via `ceil(seconds / 86400)`
 4. `defaultDays` fallback (defaults to 30 if omitted)
 
-All values are clamped to 1-365 days.
+Ordinary values are clamped to 1-365 days. The exact shared AMAPI maximum value is preserved as a separate maximum-duration mode rather than converted to JavaScript days.
 
 ## Internal Functions
 

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useEffectEvent } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { apiClient } from '@/api/client';
 import { useContextStore } from '@/stores/context';
-import { Loader2, Copy, Check, Plus } from 'lucide-react';
+import { Loader2, Copy, Check, Plus, Eye, EyeOff } from 'lucide-react';
 import EnrollmentQrPreview from './EnrollmentQrPreview';
 
 export interface TokenCreatorProps {
@@ -48,6 +48,8 @@ const DEFAULT_PROVISIONING_EXTRAS: ProvisioningExtrasForm = {
 };
 
 const NO_GROUP_VALUE = '__NO_GROUP__';
+const MAXIMUM_DURATION_VALUE = 'maximum';
+const AMAPI_MAX_ENROLLMENT_TOKEN_DURATION = '315576000000s';
 
 function applyProvisioningExtrasToQrPayload(
   rawQrData: string,
@@ -97,6 +99,21 @@ function applyProvisioningExtrasToQrPayload(
   return JSON.stringify(payload);
 }
 
+function redactProvisioningSecretsForDisplay(rawQrData: string): string {
+  if (!rawQrData) return rawQrData;
+  try {
+    const parsed = JSON.parse(rawQrData) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return rawQrData;
+    const payload = { ...(parsed as Record<string, unknown>) };
+    if ('android.app.extra.PROVISIONING_WIFI_PASSWORD' in payload) {
+      payload['android.app.extra.PROVISIONING_WIFI_PASSWORD'] = '[hidden]';
+    }
+    return JSON.stringify(payload);
+  } catch {
+    return rawQrData;
+  }
+}
+
 export default function TokenCreator({ open, onClose, onCreated }: TokenCreatorProps) {
   const { activeEnvironment, groups } = useContextStore();
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -111,6 +128,8 @@ export default function TokenCreator({ open, onClose, onCreated }: TokenCreatorP
   const [oneTimeUse, setOneTimeUse] = useState(false);
   const [personalUsage, setPersonalUsage] = useState('PERSONAL_USAGE_UNSPECIFIED');
   const [expiryDays, setExpiryDays] = useState('30');
+  const [durationMode, setDurationMode] = useState<'days' | 'maximum'>('days');
+  const [showWifiPassword, setShowWifiPassword] = useState(false);
   const [provisioningExtras, setProvisioningExtras] = useState<ProvisioningExtrasForm>(
     DEFAULT_PROVISIONING_EXTRAS
   );
@@ -127,7 +146,9 @@ export default function TokenCreator({ open, onClose, onCreated }: TokenCreatorP
         group_id: effectiveGroupId || undefined,
         one_time_use: oneTimeUse,
         allow_personal_usage: personalUsage,
-        expiry_days: Number(expiryDays) || 30,
+        ...(durationMode === MAXIMUM_DURATION_VALUE
+          ? { duration: AMAPI_MAX_ENROLLMENT_TOKEN_DURATION }
+          : { expiry_days: Number(expiryDays) || 30 }),
         provisioning_extras: provisioningExtras,
       });
     },
@@ -143,6 +164,8 @@ export default function TokenCreator({ open, onClose, onCreated }: TokenCreatorP
     setOneTimeUse(false);
     setPersonalUsage('PERSONAL_USAGE_UNSPECIFIED');
     setExpiryDays('30');
+    setDurationMode('days');
+    setShowWifiPassword(false);
     setProvisioningExtras(DEFAULT_PROVISIONING_EXTRAS);
     setCreatedToken(null);
     setCopied(false);
@@ -186,6 +209,7 @@ export default function TokenCreator({ open, onClose, onCreated }: TokenCreatorP
     createdToken?.enrollment_token?.qrCode ||
     '';
   const effectiveQrData = applyProvisioningExtrasToQrPayload(qrData, provisioningExtras);
+  const displayQrData = redactProvisioningSecretsForDisplay(effectiveQrData);
 
   return (
     <div
@@ -253,7 +277,7 @@ export default function TokenCreator({ open, onClose, onCreated }: TokenCreatorP
                       Show QR payload
                     </summary>
                     <div className="mt-2 font-mono text-xs break-all max-h-48 overflow-y-auto">
-                      {effectiveQrData}
+                      {displayQrData}
                     </div>
                   </details>
                 </div>
@@ -342,16 +366,32 @@ export default function TokenCreator({ open, onClose, onCreated }: TokenCreatorP
               {/* Expiry */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                  Expiry (days)
+                  Token duration
                 </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="365"
-                  value={expiryDays}
-                  onChange={(e) => setExpiryDays(e.target.value)}
+                <select
+                  aria-label="Token duration"
+                  value={durationMode}
+                  onChange={(e) => setDurationMode(e.target.value as 'days' | 'maximum')}
                   className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
-                />
+                >
+                  <option value="days">Custom duration in days</option>
+                  <option value={MAXIMUM_DURATION_VALUE}>Maximum duration (effectively no expiry)</option>
+                </select>
+                {durationMode === 'days' ? (
+                  <input
+                    aria-label="Expiry days"
+                    type="number"
+                    min="1"
+                    max="365"
+                    value={expiryDays}
+                    onChange={(e) => setExpiryDays(e.target.value)}
+                    className="mt-2 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
+                  />
+                ) : (
+                  <p className="mt-2 text-xs text-muted">
+                    Android Management API uses its finite maximum duration, approximately 10,000 years.
+                  </p>
+                )}
               </div>
 
               {/* Provisioning extras (QR provisioning payload customisation) */}
@@ -369,6 +409,7 @@ export default function TokenCreator({ open, onClose, onCreated }: TokenCreatorP
                       Locale
                     </label>
                     <input
+                      aria-label="Locale"
                       type="text"
                       value={provisioningExtras.locale}
                       onChange={(e) =>
@@ -399,6 +440,7 @@ export default function TokenCreator({ open, onClose, onCreated }: TokenCreatorP
                       Wi-Fi SSID
                     </label>
                     <input
+                      aria-label="Wi-Fi SSID"
                       type="text"
                       value={provisioningExtras.wifiSsid}
                       onChange={(e) =>
@@ -414,6 +456,7 @@ export default function TokenCreator({ open, onClose, onCreated }: TokenCreatorP
                       Wi-Fi Security
                     </label>
                     <select
+                      aria-label="Wi-Fi Security"
                       value={provisioningExtras.wifiSecurityType}
                       onChange={(e) =>
                         setProvisioningExtras((prev) => ({
@@ -433,20 +476,34 @@ export default function TokenCreator({ open, onClose, onCreated }: TokenCreatorP
                     <label className="block text-xs font-medium text-gray-700 mb-1">
                       Wi-Fi Password
                     </label>
-                    <input
-                      type="text"
-                      value={provisioningExtras.wifiPassword}
-                      onChange={(e) =>
-                        setProvisioningExtras((prev) => ({ ...prev, wifiPassword: e.target.value }))
-                      }
-                      disabled={provisioningExtras.wifiSecurityType === 'NONE'}
-                      placeholder={
-                        provisioningExtras.wifiSecurityType === 'NONE'
-                          ? 'Not required for open network'
-                          : 'Network password'
-                      }
-                      className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm placeholder:text-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:opacity-50"
-                    />
+                    <div className="relative">
+                      <input
+                        aria-label="Wi-Fi Password"
+                        type={showWifiPassword ? 'text' : 'password'}
+                        autoComplete="new-password"
+                        value={provisioningExtras.wifiPassword}
+                        onChange={(e) =>
+                          setProvisioningExtras((prev) => ({ ...prev, wifiPassword: e.target.value }))
+                        }
+                        disabled={provisioningExtras.wifiSecurityType === 'NONE'}
+                        placeholder={
+                          provisioningExtras.wifiSecurityType === 'NONE'
+                            ? 'Not required for open network'
+                            : 'Network password'
+                        }
+                        className="w-full rounded-lg border border-border bg-surface px-3 py-2 pr-10 text-sm placeholder:text-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:opacity-50"
+                      />
+                      <button
+                        type="button"
+                        aria-label={showWifiPassword ? 'Hide Wi-Fi password' : 'Show Wi-Fi password'}
+                        aria-pressed={showWifiPassword}
+                        disabled={provisioningExtras.wifiSecurityType === 'NONE'}
+                        onClick={() => setShowWifiPassword((visible) => !visible)}
+                        className="absolute inset-y-0 right-0 inline-flex w-10 items-center justify-center text-muted hover:text-gray-700 disabled:opacity-40"
+                      >
+                        {showWifiPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
                   </div>
                 </div>
 

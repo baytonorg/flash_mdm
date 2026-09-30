@@ -49,6 +49,14 @@ function clampDays(value: number): number {
   return Math.max(1, Math.min(365, Math.trunc(value)));
 }
 
+export const AMAPI_MAX_ENROLLMENT_TOKEN_DURATION = '315576000000s';
+
+export interface ResolvedEnrollmentTokenDuration {
+  duration: string;
+  expiryDays: number | null;
+  isMaximum: boolean;
+}
+
 function parseDurationSecondsFromDurationValue(input: unknown): number | null {
   if (typeof input === 'number' && Number.isFinite(input)) {
     return Math.max(1, Math.trunc(input));
@@ -91,4 +99,30 @@ export function resolveEnrollmentDurationDays(input: {
     ? input.defaultDays
     : 30;
   return clampDays(fallback);
+}
+
+export function resolveEnrollmentTokenDuration(input: {
+  expiryDays?: unknown;
+  durationDays?: unknown;
+  duration?: unknown;
+  durationSeconds?: unknown;
+  defaultDays?: number;
+}): ResolvedEnrollmentTokenDuration {
+  if (
+    typeof input.duration === 'string'
+    && input.duration.trim() === AMAPI_MAX_ENROLLMENT_TOKEN_DURATION
+  ) {
+    return {
+      duration: AMAPI_MAX_ENROLLMENT_TOKEN_DURATION,
+      expiryDays: null,
+      isMaximum: true,
+    };
+  }
+
+  const expiryDays = resolveEnrollmentDurationDays(input);
+  return {
+    duration: `${expiryDays * 24 * 60 * 60}s`,
+    expiryDays,
+    isMaximum: false,
+  };
 }
