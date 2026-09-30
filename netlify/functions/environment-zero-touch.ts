@@ -7,7 +7,11 @@ import { amapiCall, getAmapiErrorHttpStatus } from './_lib/amapi.js';
 import { jsonResponse, errorResponse, parseJsonBody, getSearchParams, getClientIp } from './_lib/helpers.js';
 import { logAudit } from './_lib/audit.js';
 import { assertEnvironmentEnrollmentAllowed } from './_lib/licensing.js';
-import { normalizeAllowPersonalUsage } from './_lib/enrollment-token-options.js';
+import {
+  AMAPI_MAX_ENROLLMENT_TOKEN_DURATION,
+  normalizeAllowPersonalUsage,
+  toPostgresTimestampPrecision,
+} from './_lib/enrollment-token-options.js';
 import {
   applyProvisioningExtrasToQrPayload,
   normalizeProvisioningExtrasInput,
@@ -29,7 +33,6 @@ interface AmapiEnrollmentToken {
 }
 
 const SENSITIVE_KEY_PATTERN = /(password|certificate|private[_-]?key|secret|token|credential)/i;
-const ZERO_TOUCH_ENROLLMENT_TOKEN_DURATION = '315576000000s';
 const ANDROID_DEVICE_POLICY_DPC_ID = 'com.google.android.apps.work.clouddpc';
 const ANDROID_DEVICE_POLICY_COMPONENT = `${ANDROID_DEVICE_POLICY_DPC_ID}/.receivers.CloudDeviceAdminReceiver`;
 const ANDROID_DEVICE_POLICY_SIGNATURE_CHECKSUM = 'I5YvS0O5hXY46mb01BlRjq4oJJGs2kuUcHvVkAPEXlg';
@@ -128,7 +131,7 @@ async function createEnrollmentTokenForZeroTouch(opts: {
 
   const amapiBody: Record<string, unknown> = {
     oneTimeOnly: false,
-    duration: ZERO_TOUCH_ENROLLMENT_TOKEN_DURATION,
+    duration: AMAPI_MAX_ENROLLMENT_TOKEN_DURATION,
   };
   // AMAPI rejects PERSONAL_USAGE_UNSPECIFIED when explicitly provided; omit the field for default behavior.
   if (allowPersonalUsage !== 'PERSONAL_USAGE_UNSPECIFIED') {
@@ -155,6 +158,7 @@ async function createEnrollmentTokenForZeroTouch(opts: {
     throw new Error('AMAPI did not return a valid enrollment token expiration timestamp');
   }
   const expirationTimestamp = amapiToken.expirationTimestamp;
+  const databaseExpirationTimestamp = toPostgresTimestampPrecision(expirationTimestamp);
 
   const mergedQrData = applyProvisioningExtrasToQrPayload(amapiToken.qrCode || null, opts.provisioningExtras ?? null);
   const tokenId = randomUUID();
@@ -163,8 +167,8 @@ async function createEnrollmentTokenForZeroTouch(opts: {
   await execute(
     `INSERT INTO enrollment_tokens
       (id, environment_id, group_id, name, amapi_name, amapi_value, qr_data,
-       one_time_use, allow_personal_usage, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+       one_time_use, allow_personal_usage, expires_at, amapi_expiration_timestamp)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
     [
       tokenId,
       opts.environmentId,
@@ -175,6 +179,7 @@ async function createEnrollmentTokenForZeroTouch(opts: {
       mergedQrData,
       false,
       allowPersonalUsage,
+      databaseExpirationTimestamp,
       expirationTimestamp,
     ]
   );
@@ -233,7 +238,9 @@ export default async (request: Request, _context: Context) => {
         amapi_value: string | null;
       }>(
         `SELECT et.id, et.name, et.group_id, g.name AS group_name,
-                et.one_time_use, et.allow_personal_usage, et.expires_at, et.amapi_value
+                et.one_time_use, et.allow_personal_usage,
+                COALESCE(et.amapi_expiration_timestamp, et.expires_at::text) AS expires_at,
+                et.amapi_value
          FROM enrollment_tokens et
          LEFT JOIN groups g ON g.id = et.group_id
          WHERE et.environment_id = $1

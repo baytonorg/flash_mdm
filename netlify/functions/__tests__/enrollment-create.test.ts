@@ -17,7 +17,7 @@ import { queryOne, execute } from '../_lib/db.js';
 import { requireAuth } from '../_lib/auth.js';
 import { requireEnvironmentPermission } from '../_lib/rbac.js';
 import { amapiCall } from '../_lib/amapi.js';
-import handler from '../enrollment-create.ts';
+import handler, { applyProvisioningExtrasToQrPayload } from '../enrollment-create.ts';
 
 const mockQueryOne = vi.mocked(queryOne);
 const mockExecute = vi.mocked(execute);
@@ -44,6 +44,22 @@ describe('POST /api/enrolment/create', () => {
       value: 'tok-1',
       qrCode: '{"android.app.extra.PROVISIONING_ENROLLMENT_TOKEN":"tok-1"}',
     } as never);
+  });
+
+  it('preserves secured Wi-Fi payloads and omits passwords for open networks', () => {
+    const secured = JSON.parse(applyProvisioningExtrasToQrPayload('{}', {
+      wifiSsid: 'Setup network',
+      wifiSecurityType: 'WPA',
+      wifiPassword: 'not-a-real-secret',
+    })!);
+    expect(secured['android.app.extra.PROVISIONING_WIFI_PASSWORD']).toBe('not-a-real-secret');
+
+    const open = JSON.parse(applyProvisioningExtrasToQrPayload(JSON.stringify(secured), {
+      wifiSsid: 'Open network',
+      wifiSecurityType: 'NONE',
+      wifiPassword: 'must-not-remain',
+    })!);
+    expect(open).not.toHaveProperty('android.app.extra.PROVISIONING_WIFI_PASSWORD');
   });
 
   it('accepts duration aliases and boolean-like one_time_use values', async () => {
@@ -121,5 +137,37 @@ describe('POST /api/enrolment/create', () => {
     const insertValues = (mockExecute.mock.calls[0]?.[1] ?? []) as unknown[];
     expect(insertValues[2]).toBe('group-1');
     expect(insertValues[9]).toBe('PERSONAL_USAGE_DISALLOWED_USERLESS');
+  });
+
+  it('uses the exact maximum duration and persists the AMAPI-returned expiration', async () => {
+    mockQueryOne
+      .mockResolvedValueOnce({
+        id: 'env-1',
+        enterprise_name: 'enterprises/e1',
+        workspace_id: 'ws-1',
+      } as never)
+      .mockResolvedValueOnce({ gcp_project_id: 'proj-1' } as never)
+      .mockResolvedValueOnce(null as never);
+    mockAmapiCall.mockResolvedValueOnce({
+      name: 'enterprises/e1/enrollmentTokens/t-max',
+      value: 'redacted',
+      qrCode: '{}',
+      expirationTimestamp: '9999-12-31T23:59:59.999999999Z',
+    } as never);
+
+    const res = await handler(
+      makeRequest({
+        environment_id: 'env-1',
+        duration: '315576000000s',
+      }),
+      {} as never
+    );
+
+    expect(res.status).toBe(200);
+    const amapiBody = ((mockAmapiCall.mock.calls[0]?.[2] as { body?: Record<string, unknown> })?.body ?? {});
+    expect(amapiBody.duration).toBe('315576000000s');
+    const insertValues = (mockExecute.mock.calls[0]?.[1] ?? []) as unknown[];
+    expect(insertValues[10]).toBe('9999-12-31T23:59:59.999999Z');
+    expect(insertValues[11]).toBe('9999-12-31T23:59:59.999999999Z');
   });
 });

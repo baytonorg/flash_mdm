@@ -9,7 +9,8 @@ import { assertEnvironmentEnrollmentAllowed } from './_lib/licensing.js';
 import {
   normalizeAllowPersonalUsage,
   normalizeOneTimeUse,
-  resolveEnrollmentDurationDays,
+  resolveEnrollmentTokenDuration,
+  toPostgresTimestampPrecision,
 } from './_lib/enrollment-token-options.js';
 
 interface AmapiEnrollmentToken {
@@ -169,7 +170,7 @@ export default async (request: Request, _context: Context) => {
   }
 
   // Build the AMAPI enrollment token request
-  const expiryDays = resolveEnrollmentDurationDays({
+  const resolvedDuration = resolveEnrollmentTokenDuration({
     expiryDays: body.expiry_days,
     durationDays: body.duration_days,
     duration: body.duration,
@@ -178,9 +179,6 @@ export default async (request: Request, _context: Context) => {
   });
   const oneTimeUse = normalizeOneTimeUse(body.one_time_use);
   const allowPersonalUsage = normalizeAllowPersonalUsage(body.allow_personal_usage);
-  const expirationTimestamp = new Date(
-    Date.now() + expiryDays * 24 * 60 * 60 * 1000
-  ).toISOString();
 
   try {
     await assertEnvironmentEnrollmentAllowed(body.environment_id);
@@ -241,7 +239,7 @@ export default async (request: Request, _context: Context) => {
     }
 
     const amapiBody: Record<string, unknown> = {
-      duration: `${expiryDays * 24 * 60 * 60}s`,
+      duration: resolvedDuration.duration,
       oneTimeOnly: oneTimeUse,
     };
     // AMAPI rejects PERSONAL_USAGE_UNSPECIFIED when explicitly provided.
@@ -270,6 +268,20 @@ export default async (request: Request, _context: Context) => {
       }
     );
 
+    const returnedExpirationTimestamp = result.expirationTimestamp;
+    const hasValidReturnedExpiration = Boolean(
+      returnedExpirationTimestamp && !Number.isNaN(Date.parse(returnedExpirationTimestamp))
+    );
+    if (resolvedDuration.isMaximum && !hasValidReturnedExpiration) {
+      throw new Error('AMAPI did not return a valid enrollment token expiration timestamp');
+    }
+    const expirationTimestamp = hasValidReturnedExpiration
+      ? returnedExpirationTimestamp!
+      : new Date(
+        Date.now() + (resolvedDuration.expiryDays ?? 30) * 24 * 60 * 60 * 1000
+      ).toISOString();
+    const databaseExpirationTimestamp = toPostgresTimestampPrecision(expirationTimestamp);
+
     const normalizedProvisioningExtras = normalizeProvisioningExtrasInput(body.provisioning_extras);
     const mergedQrData = applyProvisioningExtrasToQrPayload(result.qrCode || null, normalizedProvisioningExtras);
 
@@ -280,8 +292,8 @@ export default async (request: Request, _context: Context) => {
     await execute(
       `INSERT INTO enrollment_tokens
         (id, environment_id, group_id, policy_id, name, amapi_name, amapi_value, qr_data,
-         one_time_use, allow_personal_usage, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+         one_time_use, allow_personal_usage, expires_at, amapi_expiration_timestamp)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [
         tokenId,
         body.environment_id,
@@ -293,6 +305,7 @@ export default async (request: Request, _context: Context) => {
         mergedQrData,
         oneTimeUse,
         allowPersonalUsage,
+        databaseExpirationTimestamp,
         expirationTimestamp,
       ]
     );
@@ -309,7 +322,8 @@ export default async (request: Request, _context: Context) => {
         group_id: normalizedGroupId,
         one_time_use: oneTimeUse,
         allow_personal_usage: allowPersonalUsage,
-        expiry_days: expiryDays,
+        expiry_days: resolvedDuration.expiryDays,
+        maximum_duration: resolvedDuration.isMaximum,
         has_provisioning_extras: Boolean(normalizedProvisioningExtras),
       },
       ip_address: getClientIp(request),

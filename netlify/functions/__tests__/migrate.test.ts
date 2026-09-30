@@ -83,6 +83,7 @@ const historicalMigrationNames = [
   '055_wifi_trusted_ca_certificates',
   '056_magic_links_email_text',
   '057_command_operation_ledger',
+  '058_enrollment_token_amapi_expiration',
 ] as const;
 
 function migrationRequest(): Request {
@@ -124,10 +125,10 @@ describe('migration manifest', () => {
       Array.from({ length: manifestIds.length }, (_, index) => String(index + 1).padStart(3, '0'))
     );
     expect(MIGRATIONS.map(({ name }) => name)).toEqual(historicalMigrationNames);
-    expect(MIGRATIONS.at(-1)?.name).toBe('057_command_operation_ledger');
+    expect(MIGRATIONS.at(-1)?.name).toBe('058_enrollment_token_amapi_expiration');
   });
 
-  it('applies migration 057 and records it in the same transaction', async () => {
+  it('applies migration 058 and records it in the same transaction', async () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [], rowCount: 0 })
       .mockResolvedValueOnce({
@@ -143,22 +144,21 @@ describe('migration manifest', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      summary: { total: 57, applied: 1, skipped: 56, errors: 0 },
+      summary: { total: 58, applied: 1, skipped: 57, errors: 0 },
       results: expect.arrayContaining([
-        { name: '057_command_operation_ledger', status: 'applied' },
+        { name: '058_enrollment_token_amapi_expiration', status: 'applied' },
       ]),
     });
     const statements = mockQuery.mock.calls.map(([sql]) => String(sql).trim());
     expect(statements.at(-4)).toBe('BEGIN');
-    expect(statements.at(-3)).toContain('CREATE TABLE command_operations');
-    expect(statements.at(-3)).toContain("'command_reconcile',\n  co.environment_id");
+    expect(statements.at(-3)).toContain('ADD COLUMN IF NOT EXISTS amapi_expiration_timestamp TEXT');
     expect(statements.at(-2)).toBe('INSERT INTO _migrations (name) VALUES ($1)');
     expect(statements.at(-1)).toBe('COMMIT');
-    expect(mockQuery.mock.calls.at(-2)?.[1]).toEqual(['057_command_operation_ledger']);
+    expect(mockQuery.mock.calls.at(-2)?.[1]).toEqual(['058_enrollment_token_amapi_expiration']);
     expect(mockEnd).toHaveBeenCalledOnce();
   });
 
-  it('is idempotent when migration 057 is already recorded', async () => {
+  it('is idempotent when migration 058 is already recorded', async () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [], rowCount: 0 })
       .mockResolvedValueOnce({
@@ -170,13 +170,13 @@ describe('migration manifest', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      summary: { total: 57, applied: 0, skipped: 57, errors: 0 },
+      summary: { total: 58, applied: 0, skipped: 58, errors: 0 },
     });
     expect(mockQuery).toHaveBeenCalledTimes(2);
     expect(mockEnd).toHaveBeenCalledOnce();
   });
 
-  it('rolls back and does not record 057 when its SQL fails', async () => {
+  it('rolls back and does not record 058 when its SQL fails', async () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [], rowCount: 0 })
       .mockResolvedValueOnce({
@@ -193,10 +193,10 @@ describe('migration manifest', () => {
     expect({ status: response.status, payload }).toMatchObject({
       status: 500,
       payload: {
-        summary: { total: 57, applied: 0, skipped: 56, errors: 1 },
+        summary: { total: 58, applied: 0, skipped: 57, errors: 1 },
         results: expect.arrayContaining([
           {
-            name: '057_command_operation_ledger',
+            name: '058_enrollment_token_amapi_expiration',
             status: 'error',
             error: 'simulated migration failure',
           },

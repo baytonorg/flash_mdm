@@ -101,7 +101,10 @@ export default async (request: Request, _context: Context) => {
       expires_at: string | null;
       created_at: string;
     }>(
-      'SELECT * FROM enrollment_tokens WHERE id = $1',
+      `SELECT et.*,
+              COALESCE(et.amapi_expiration_timestamp, et.expires_at::text) AS expires_at
+       FROM enrollment_tokens et
+       WHERE et.id = $1`,
       [tokenId]
     );
 

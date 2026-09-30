@@ -2153,6 +2153,8 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
     // ---------------------------------------------------------------
     case 'systemUpdates':
       {
+      const systemUpdateType = getPath(config, 'systemUpdate.type') ?? 'SYSTEM_UPDATE_TYPE_UNSPECIFIED';
+      const isWindowed = systemUpdateType === 'WINDOWED';
       const startMinutes = normalizeMinutesOfDay(getPath(config, 'systemUpdate.startMinutes') ?? 0);
       const endMinutes = normalizeMinutesOfDay(getPath(config, 'systemUpdate.endMinutes') ?? 0);
       const maintenanceWindowDurationMinutes = getMaintenanceWindowDurationMinutes(startMinutes, endMinutes);
@@ -2174,8 +2176,14 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
           <EnumField
             label="System Update Type"
             description="The type of system update policy."
-            value={getPath(config, 'systemUpdate.type') ?? 'SYSTEM_UPDATE_TYPE_UNSPECIFIED'}
-            onChange={(v) => onChange('systemUpdate.type', v)}
+            value={systemUpdateType}
+            onChange={(v) => {
+              onChange('systemUpdate.type', v);
+              if (v !== 'WINDOWED') {
+                onChange('systemUpdate.startMinutes', undefined);
+                onChange('systemUpdate.endMinutes', undefined);
+              }
+            }}
             options={[
               { value: 'SYSTEM_UPDATE_TYPE_UNSPECIFIED', label: 'Unspecified', description: 'Follow default device behaviour.' },
               { value: 'AUTOMATIC', label: 'Automatic', description: 'Install automatically when available.' },
@@ -2183,25 +2191,27 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
               { value: 'POSTPONE', label: 'Postpone', description: 'Postpone for up to 30 days.' },
             ]}
           />
-          <div className="py-3">
+          {isWindowed ? <div className="py-3">
             <label className="block text-sm font-medium text-gray-900 mb-1">Window Start Time</label>
             <p className="text-xs text-gray-500 mb-2 leading-relaxed">
               Start time of the maintenance window (00:00-23:59). Only used with Windowed type.
             </p>
             <input
+              aria-label="Window Start Time"
               type="time"
               step={60}
               value={minutesToTimeInput(startMinutes)}
               onChange={(e) => onChange('systemUpdate.startMinutes', timeInputToMinutes(e.target.value))}
               className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
             />
-          </div>
-          <div className="py-3">
+          </div> : null}
+          {isWindowed ? <div className="py-3">
             <label className="block text-sm font-medium text-gray-900 mb-1">Window End Time</label>
             <p className="text-xs text-gray-500 mb-2 leading-relaxed">
               End time of the maintenance window (00:00-23:59). Only used with Windowed type.
             </p>
             <input
+              aria-label="Window End Time"
               type="time"
               step={60}
               value={minutesToTimeInput(endMinutes)}
@@ -2211,7 +2221,7 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
             {showDurationTip ? (
               <p className="mt-2 text-xs text-amber-700">Tip: 4 hours or less is better.</p>
             ) : null}
-          </div>
+          </div> : null}
 
           <RepeaterField
             label="Freeze Periods"

@@ -8,6 +8,7 @@ import { sendEmail, signinVerificationEmail } from './_lib/resend.js';
 import { logAudit } from './_lib/audit.js';
 import { jsonResponse, errorResponse, parseJsonBody, getClientIp } from './_lib/helpers.js';
 import { assertEnvironmentEnrollmentAllowed } from './_lib/licensing.js';
+import { toPostgresTimestampPrecision } from './_lib/enrollment-token-options.js';
 
 // --- Interfaces ---
 
@@ -456,11 +457,14 @@ export default async (request: Request, _context: Context) => {
 
       // Store locally for tracking
       const tokenId = crypto.randomUUID();
+      const expirationTimestamp = result.expirationTimestamp
+        ?? new Date(Date.now() + 3600_000).toISOString();
       await execute(
         `INSERT INTO enrollment_tokens
            (id, environment_id, group_id, policy_id, name, amapi_name, amapi_value,
-            qr_data, one_time_use, allow_personal_usage, signin_url, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+            qr_data, one_time_use, allow_personal_usage, signin_url, expires_at,
+            amapi_expiration_timestamp)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
         [
           tokenId,
           envContext.environmentId,
@@ -473,7 +477,8 @@ export default async (request: Request, _context: Context) => {
           true, // one_time_use
           config.allow_personal_usage,
           'signin_enroll', // marker for sign-in enrollment tokens
-          result.expirationTimestamp ?? new Date(Date.now() + 3600_000).toISOString(),
+          toPostgresTimestampPrecision(expirationTimestamp),
+          result.expirationTimestamp ?? null,
         ]
       );
 

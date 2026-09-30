@@ -395,7 +395,6 @@ describe('sync-process-background job queue processing', () => {
       expect.stringContaining('UPDATE device_commands SET'),
       ['SUCCEEDED', null, 'env1', 'enterprises/e1/devices/d1/operations/1772138119597']
     );
-
     const processedPubsubEvent = mockExecute.mock.calls.find(
       (call) =>
         typeof call[0] === 'string' &&

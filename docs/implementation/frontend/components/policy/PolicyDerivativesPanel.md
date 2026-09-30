@@ -42,7 +42,7 @@ The panel is split into four major sections:
 
 2. **Assignment Map** - Displays all current assignments for this policy across scopes (environment, group, device) with lock status badges and derivative device counts.
 
-3. **Derivatives Table** - Fetched via `GET /api/policies/derivatives`, shows each derivative's scope, target name, device count, override/variable badges, production status, and last sync time. A "Sync All" button triggers a `PUT /api/policies/update` with `push_to_amapi: true`.
+3. **Derivatives Table** - Fetched via `GET /api/policies/derivatives`, shows each derivative's scope, target name, device count, override/variable badges, production status, and last sync time. The table has its own keyboard-focusable horizontal scroll container and an explicit content width so every column remains reachable without widening the editor. A "Sync All" button triggers a `PUT /api/policies/update` with `push_to_amapi: true`.
 
 4. **Deployment** - Renders a `DeploymentProgress` component for the active deployment job.
 

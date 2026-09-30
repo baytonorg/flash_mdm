@@ -43,7 +43,7 @@ The modal has two states: **creation form** and **post-creation display**.
 - Group selector (defaults to shallowest group; "No group" option available)
 - One-time use toggle
 - Personal usage dropdown (unspecified, allowed, disallowed, dedicated/userless)
-- Expiry in days (1--365, default 30)
-- Provisioning Extras panel: locale, timezone, Wi-Fi SSID/password/security/hidden, skip encryption, skip education screens, leave all system apps enabled
+- Token duration: bounded custom days (1-365, default 30) or the finite AMAPI maximum labelled as effectively no expiry
+- Provisioning Extras panel: locale, timezone, Wi-Fi SSID/password/security/hidden, skip encryption, skip education screens, leave all system apps enabled. Wi-Fi passwords are masked by default with an accessible reveal control and are omitted for open networks.
 
-The mutation POSTs to `/api/enrolment/create` via `useMutation`. On success, the modal switches to the **post-creation display** showing: a success banner, the token value with copy button, and the QR code (rendered via `EnrollmentQrPreview`). The QR payload is enriched with provisioning extras via `applyProvisioningExtrasToQrPayload` before rendering. An expandable `<details>` element shows the raw QR payload. The modal supports Escape key and backdrop click to close.
+The mutation POSTs to `/api/enrolment/create` via `useMutation`. On success, the modal switches to the **post-creation display** showing: a success banner, the token value with copy button, and the QR code (rendered via `EnrollmentQrPreview`). The QR payload is enriched with provisioning extras via `applyProvisioningExtrasToQrPayload` before rendering. An expandable `<details>` element shows the payload with any Wi-Fi password redacted, while the QR itself retains the exact provisioning value. The modal supports Escape key and backdrop click to close.

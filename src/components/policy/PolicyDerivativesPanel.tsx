@@ -440,8 +440,8 @@ export default function PolicyDerivativesPanel({ policyId, policyName }: { polic
             </p>
           </div>
         ) : (
-          <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
-            <table className="min-w-full divide-y divide-gray-200">
+          <div className="max-w-full overflow-x-auto rounded-xl border border-gray-200 bg-white" tabIndex={0} aria-label="Policy derivatives table">
+            <table className="min-w-[900px] divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
