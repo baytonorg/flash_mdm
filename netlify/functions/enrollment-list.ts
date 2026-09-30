@@ -39,7 +39,8 @@ export default async (request: Request, _context: Context) => {
   }>(
     `SELECT et.id, et.environment_id, et.group_id, et.name, et.amapi_name,
             et.amapi_value, et.qr_data, et.one_time_use, et.allow_personal_usage,
-            et.expires_at, et.created_at,
+            COALESCE(et.amapi_expiration_timestamp, et.expires_at::text) AS expires_at,
+            et.created_at,
             g.name as group_name,
             ep.id as policy_id,
             ep.name as policy_name

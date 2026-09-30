@@ -11,6 +11,7 @@
 | `resolveEnrollmentDurationDays` | `(input: { expiryDays?, durationDays?, duration?, durationSeconds?, defaultDays? }) => number` | Resolves token duration from multiple input formats to a clamped day count (1-365) |
 | `resolveEnrollmentTokenDuration` | `(input) => ResolvedEnrollmentTokenDuration` | Preserves the exact AMAPI maximum duration or returns a bounded ordinary duration |
 | `AMAPI_MAX_ENROLLMENT_TOKEN_DURATION` | `315576000000s` | Shared finite maximum used by ordinary and zero-touch token paths |
+| `toPostgresTimestampPrecision` | `(timestamp: string) => string` | Truncates fractional seconds to PostgreSQL's six-digit precision without rounding the calendar date |
 | `NormalizedPersonalUsage` | Type alias | `'PERSONAL_USAGE_UNSPECIFIED' \| 'PERSONAL_USAGE_ALLOWED' \| 'PERSONAL_USAGE_DISALLOWED' \| 'PERSONAL_USAGE_DISALLOWED_USERLESS'` |
 
 ## Key Logic

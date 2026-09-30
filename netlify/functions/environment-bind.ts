@@ -692,7 +692,8 @@ async function cleanupEnterpriseReferences(environmentId: string): Promise<void>
 
     await client.query(
       `UPDATE enrollment_tokens
-       SET amapi_name = NULL, amapi_value = NULL, qr_data = NULL, updated_at = now()
+       SET amapi_name = NULL, amapi_value = NULL, qr_data = NULL,
+           amapi_expiration_timestamp = NULL, updated_at = now()
        WHERE environment_id = $1`,
       [environmentId]
     );

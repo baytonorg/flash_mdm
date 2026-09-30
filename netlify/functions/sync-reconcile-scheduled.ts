@@ -533,6 +533,7 @@ async function reconcileEnrollmentTokens(env: Environment): Promise<void> {
       `UPDATE enrollment_tokens
        SET amapi_value = NULL,
            qr_data = NULL,
+           amapi_expiration_timestamp = NULL,
            expires_at = COALESCE(LEAST(expires_at, now()), now()),
            updated_at = now()
        WHERE id = ANY($1::uuid[])`,

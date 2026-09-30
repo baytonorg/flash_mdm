@@ -10,6 +10,7 @@ import { assertEnvironmentEnrollmentAllowed } from './_lib/licensing.js';
 import {
   AMAPI_MAX_ENROLLMENT_TOKEN_DURATION,
   normalizeAllowPersonalUsage,
+  toPostgresTimestampPrecision,
 } from './_lib/enrollment-token-options.js';
 import {
   applyProvisioningExtrasToQrPayload,
@@ -157,6 +158,7 @@ async function createEnrollmentTokenForZeroTouch(opts: {
     throw new Error('AMAPI did not return a valid enrollment token expiration timestamp');
   }
   const expirationTimestamp = amapiToken.expirationTimestamp;
+  const databaseExpirationTimestamp = toPostgresTimestampPrecision(expirationTimestamp);
 
   const mergedQrData = applyProvisioningExtrasToQrPayload(amapiToken.qrCode || null, opts.provisioningExtras ?? null);
   const tokenId = randomUUID();
@@ -165,8 +167,8 @@ async function createEnrollmentTokenForZeroTouch(opts: {
   await execute(
     `INSERT INTO enrollment_tokens
       (id, environment_id, group_id, name, amapi_name, amapi_value, qr_data,
-       one_time_use, allow_personal_usage, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+       one_time_use, allow_personal_usage, expires_at, amapi_expiration_timestamp)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
     [
       tokenId,
       opts.environmentId,
@@ -177,6 +179,7 @@ async function createEnrollmentTokenForZeroTouch(opts: {
       mergedQrData,
       false,
       allowPersonalUsage,
+      databaseExpirationTimestamp,
       expirationTimestamp,
     ]
   );
@@ -235,7 +238,9 @@ export default async (request: Request, _context: Context) => {
         amapi_value: string | null;
       }>(
         `SELECT et.id, et.name, et.group_id, g.name AS group_name,
-                et.one_time_use, et.allow_personal_usage, et.expires_at, et.amapi_value
+                et.one_time_use, et.allow_personal_usage,
+                COALESCE(et.amapi_expiration_timestamp, et.expires_at::text) AS expires_at,
+                et.amapi_value
          FROM enrollment_tokens et
          LEFT JOIN groups g ON g.id = et.group_id
          WHERE et.environment_id = $1

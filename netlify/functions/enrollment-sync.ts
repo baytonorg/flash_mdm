@@ -4,6 +4,7 @@ import { requireEnvironmentPermission } from './_lib/rbac.js';
 import { amapiCall } from './_lib/amapi.js';
 import { logAudit } from './_lib/audit.js';
 import { jsonResponse, errorResponse, parseJsonBody, getClientIp } from './_lib/helpers.js';
+import { toPostgresTimestampPrecision } from './_lib/enrollment-token-options.js';
 
 const ENROLLMENT_TOKEN_RETENTION_GRACE_HOURS = 24;
 
@@ -99,8 +100,8 @@ export default async (request: Request) => {
           await client.query(
             `INSERT INTO enrollment_tokens
                (id, environment_id, name, amapi_name, amapi_value, qr_data,
-                one_time_use, allow_personal_usage, expires_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+                one_time_use, allow_personal_usage, expires_at, amapi_expiration_timestamp)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
             [
               crypto.randomUUID(),
               body.environment_id,
@@ -110,6 +111,9 @@ export default async (request: Request) => {
               token.qrCode ?? null,
               token.oneTimeOnly ?? false,
               token.allowPersonalUsage ?? 'PERSONAL_USAGE_ALLOWED',
+              token.expirationTimestamp
+                ? toPostgresTimestampPrecision(token.expirationTimestamp)
+                : null,
               token.expirationTimestamp ?? null,
             ]
           );
@@ -126,6 +130,7 @@ export default async (request: Request) => {
             `UPDATE enrollment_tokens
              SET amapi_value = NULL,
                  qr_data = NULL,
+                 amapi_expiration_timestamp = NULL,
                  expires_at = COALESCE(LEAST(expires_at, now()), now()),
                  updated_at = now()
              WHERE id = $1`,

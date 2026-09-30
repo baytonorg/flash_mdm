@@ -51,6 +51,15 @@ function clampDays(value: number): number {
 
 export const AMAPI_MAX_ENROLLMENT_TOKEN_DURATION = '315576000000s';
 
+/**
+ * PostgreSQL timestamptz stores at most six fractional-second digits. Truncate,
+ * rather than round, so AMAPI's maximum timestamp does not roll into year 10000.
+ * The original AMAPI string is stored separately for exact API round-tripping.
+ */
+export function toPostgresTimestampPrecision(timestamp: string): string {
+  return timestamp.replace(/(\.\d{6})\d+(Z|[+-]\d{2}:\d{2})$/i, '$1$2');
+}
+
 export interface ResolvedEnrollmentTokenDuration {
   duration: string;
   expiryDays: number | null;

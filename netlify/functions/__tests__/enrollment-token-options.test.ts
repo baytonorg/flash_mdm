@@ -6,6 +6,7 @@ import {
   normalizeOneTimeUse,
   resolveEnrollmentDurationDays,
   resolveEnrollmentTokenDuration,
+  toPostgresTimestampPrecision,
 } from '../_lib/enrollment-token-options.ts';
 
 describe('enrollment-token-options', () => {
@@ -51,5 +52,12 @@ describe('enrollment-token-options', () => {
       expiryDays: 30,
       isMaximum: false,
     });
+  });
+
+  it('truncates AMAPI nanoseconds to PostgreSQL precision without rolling the date', () => {
+    expect(toPostgresTimestampPrecision('9999-12-31T23:59:59.999999999Z'))
+      .toBe('9999-12-31T23:59:59.999999Z');
+    expect(toPostgresTimestampPrecision('2026-09-30T10:00:00.123Z'))
+      .toBe('2026-09-30T10:00:00.123Z');
   });
 });

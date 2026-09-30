@@ -10,6 +10,7 @@ import {
   normalizeAllowPersonalUsage,
   normalizeOneTimeUse,
   resolveEnrollmentTokenDuration,
+  toPostgresTimestampPrecision,
 } from './_lib/enrollment-token-options.js';
 
 interface AmapiEnrollmentToken {
@@ -279,6 +280,7 @@ export default async (request: Request, _context: Context) => {
       : new Date(
         Date.now() + (resolvedDuration.expiryDays ?? 30) * 24 * 60 * 60 * 1000
       ).toISOString();
+    const databaseExpirationTimestamp = toPostgresTimestampPrecision(expirationTimestamp);
 
     const normalizedProvisioningExtras = normalizeProvisioningExtrasInput(body.provisioning_extras);
     const mergedQrData = applyProvisioningExtrasToQrPayload(result.qrCode || null, normalizedProvisioningExtras);
@@ -290,8 +292,8 @@ export default async (request: Request, _context: Context) => {
     await execute(
       `INSERT INTO enrollment_tokens
         (id, environment_id, group_id, policy_id, name, amapi_name, amapi_value, qr_data,
-         one_time_use, allow_personal_usage, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+         one_time_use, allow_personal_usage, expires_at, amapi_expiration_timestamp)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [
         tokenId,
         body.environment_id,
@@ -303,6 +305,7 @@ export default async (request: Request, _context: Context) => {
         mergedQrData,
         oneTimeUse,
         allowPersonalUsage,
+        databaseExpirationTimestamp,
         expirationTimestamp,
       ]
     );

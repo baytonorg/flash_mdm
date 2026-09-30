@@ -167,6 +167,7 @@ describe('POST /api/enrolment/create', () => {
     const amapiBody = ((mockAmapiCall.mock.calls[0]?.[2] as { body?: Record<string, unknown> })?.body ?? {});
     expect(amapiBody.duration).toBe('315576000000s');
     const insertValues = (mockExecute.mock.calls[0]?.[1] ?? []) as unknown[];
-    expect(insertValues[10]).toBe('9999-12-31T23:59:59.999999999Z');
+    expect(insertValues[10]).toBe('9999-12-31T23:59:59.999999Z');
+    expect(insertValues[11]).toBe('9999-12-31T23:59:59.999999999Z');
   });
 });

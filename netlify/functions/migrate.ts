@@ -1906,6 +1906,13 @@ WHERE co.status = 'delivery_uncertain'
 ON CONFLICT DO NOTHING;
 `,
   },
+  {
+    name: '058_enrollment_token_amapi_expiration',
+    sql: `
+ALTER TABLE enrollment_tokens
+  ADD COLUMN IF NOT EXISTS amapi_expiration_timestamp TEXT;
+`,
+  },
 ];
 
 export default async function handler(request: Request, _context: Context) {

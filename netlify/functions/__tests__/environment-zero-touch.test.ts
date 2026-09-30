@@ -216,7 +216,8 @@ describe('environment-zero-touch', () => {
 
     const insertArgs = (mockExecute.mock.calls[0]?.[1] ?? []) as unknown[];
     expect(insertArgs[7]).toBe(false);
-    expect(insertArgs[9]).toBe('9999-12-31T23:59:59.999999999Z');
+    expect(insertArgs[9]).toBe('9999-12-31T23:59:59.999999Z');
+    expect(insertArgs[10]).toBe('9999-12-31T23:59:59.999999999Z');
     expect(body.enrollment_token?.expires_at).toBe('9999-12-31T23:59:59.999999999Z');
   });
 
