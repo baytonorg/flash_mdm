@@ -9,6 +9,11 @@ vi.mock('../_lib/db.js', () => ({
 
 vi.mock('../_lib/amapi.js', () => ({
   amapiCall: vi.fn(),
+  getAmapiErrorHttpStatus: (error: unknown) => {
+    if (!(error instanceof Error)) return null;
+    const match = /^AMAPI error \((\d{3})\):/.exec(error.message);
+    return match ? Number(match[1]) : null;
+  },
 }));
 
 vi.mock('../_lib/audit.js', () => ({
@@ -137,6 +142,44 @@ describe('sync-reconcile-scheduled', () => {
     expect(
       mockExecute.mock.calls.some((call) => String(call[0]).trim() === 'DELETE FROM enrollment_tokens WHERE id = ANY($1::uuid[])')
     ).toBe(false);
+  });
+
+  it('falls back to individual read-only token checks when AMAPI listing fails', async () => {
+    const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mockQuery
+      .mockResolvedValueOnce([{
+        id: 'env_1',
+        workspace_id: 'ws_1',
+        enterprise_name: 'enterprises/e1',
+        gcp_project_id: 'proj_1',
+      }] as never)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([
+        { id: 'tok_present', amapi_name: 'enterprises/e1/enrollmentTokens/present', expires_at: null },
+        { id: 'tok_missing', amapi_name: 'enterprises/e1/enrollmentTokens/missing', expires_at: null },
+      ] as never)
+      .mockResolvedValueOnce([] as never);
+
+    mockAmapiCall
+      .mockResolvedValueOnce({ devices: [], nextPageToken: undefined } as never)
+      .mockRejectedValueOnce(new Error('AMAPI error (500): Internal error encountered.') as never)
+      .mockResolvedValueOnce({ name: 'enterprises/e1/enrollmentTokens/present' } as never)
+      .mockRejectedValueOnce(new Error('AMAPI error (404): Not found') as never);
+
+    await handler(new Request('http://localhost/.netlify/functions/sync-reconcile-scheduled'), {} as never);
+
+    expect(mockAmapiCall).toHaveBeenNthCalledWith(
+      3,
+      'enterprises/e1/enrollmentTokens/present',
+      'ws_1',
+      expect.any(Object)
+    );
+    const retireCall = mockExecute.mock.calls.find((call) =>
+      String(call[0]).includes('UPDATE enrollment_tokens') &&
+      String(call[0]).includes('amapi_value = NULL')
+    );
+    expect(retireCall?.[1]).toEqual([['tok_missing']]);
+    consoleWarnSpy.mockRestore();
   });
 
   it('skips device soft-delete pass when AMAPI device pagination fails mid-stream', async () => {
