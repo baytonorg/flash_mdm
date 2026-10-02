@@ -1,5 +1,5 @@
 import { query, queryOne, execute, transaction } from './_lib/db.js';
-import { amapiCall } from './_lib/amapi.js';
+import { amapiCall, getAmapiErrorHttpStatus } from './_lib/amapi.js';
 import { logAudit } from './_lib/audit.js';
 import {
   resolveAmapiDeviceImei,
@@ -491,27 +491,47 @@ async function reconcileEnrollmentTokens(env: Environment): Promise<void> {
   }
 
   const amapiNames = new Set<string>();
-  let pageToken: string | undefined;
-  do {
-    const path = pageToken
-      ? `${env.enterprise_name}/enrollmentTokens?pageSize=100&pageToken=${encodeURIComponent(pageToken)}`
-      : `${env.enterprise_name}/enrollmentTokens?pageSize=100`;
+  const amapiOptions = {
+    projectId: env.gcp_project_id,
+    enterpriseName: env.enterprise_name,
+    resourceType: 'general',
+  };
+  try {
+    let pageToken: string | undefined;
+    do {
+      const path = pageToken
+        ? `${env.enterprise_name}/enrollmentTokens?pageSize=100&pageToken=${encodeURIComponent(pageToken)}`
+        : `${env.enterprise_name}/enrollmentTokens?pageSize=100`;
 
-    const response = await amapiCall<AmapiEnrollmentTokenListResponse>(
-      path,
-      env.workspace_id,
-      {
-        projectId: env.gcp_project_id,
-        enterpriseName: env.enterprise_name,
-        resourceType: 'general',
+      const response = await amapiCall<AmapiEnrollmentTokenListResponse>(
+        path,
+        env.workspace_id,
+        amapiOptions
+      );
+
+      for (const token of response.enrollmentTokens ?? []) {
+        if (token.name) amapiNames.add(token.name);
       }
+      pageToken = response.nextPageToken;
+    } while (pageToken);
+  } catch (listError) {
+    // AMAPI can return a valid first page followed by a persistently broken page
+    // token. Reconciliation only needs to establish whether each local token still
+    // exists, so fall back to read-only resource GETs. Any result other than a
+    // definite 404 remains uncertain and aborts retirement for this environment.
+    console.warn(
+      `Environment ${env.id}: enrollment token listing failed; checking ${remainingLocal.length} local tokens individually`
     );
-
-    for (const token of response.enrollmentTokens ?? []) {
-      if (token.name) amapiNames.add(token.name);
+    for (const row of remainingLocal) {
+      if (!row.amapi_name) continue;
+      try {
+        await amapiCall(row.amapi_name, env.workspace_id, amapiOptions);
+        amapiNames.add(row.amapi_name);
+      } catch (getError) {
+        if (getAmapiErrorHttpStatus(getError) !== 404) throw listError;
+      }
     }
-    pageToken = response.nextPageToken;
-  } while (pageToken);
+  }
 
   const activeLocal = remainingLocal.filter((row) => {
     if (!row.expires_at) return true;
