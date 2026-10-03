@@ -13,6 +13,7 @@ import { buildPolicyUpdateMask } from './_lib/policy-update-mask.js';
 import { sanitizeConfig } from './_lib/policy-recompile.js';
 import { buildGeneratedPolicyPayload } from './_lib/policy-generation.js';
 import { syncPolicyDerivativesForPolicy, getPolicyAmapiContext } from './_lib/policy-derivatives.js';
+import { deletePolicyDerivativeWhenUnused } from './_lib/policy-derivative-cleanup.js';
 import { jsonResponse, errorResponse, parseJsonBody, getClientIp, getSearchParams, isValidUuid } from './_lib/helpers.js';
 
 type BulkSelection = {
@@ -66,6 +67,70 @@ async function countDevicesUsingPolicy(policyId: string, environmentId: string):
     [policyId, environmentId]
   );
   return Number.parseInt(row?.count ?? '0', 10);
+}
+
+type PolicyForAmapiCleanup = {
+  id: string;
+  environment_id: string;
+  amapi_name: string | null;
+};
+
+async function cleanupPolicyAmapiResources(
+  policy: PolicyForAmapiCleanup
+): Promise<{ ok: true; derivatives_deleted: number } | { ok: false; reason: string }> {
+  const derivatives = await query<{
+    amapi_name: string;
+    scope_type: 'environment' | 'group' | 'device';
+    scope_id: string;
+  }>(
+    `SELECT amapi_name, scope_type, scope_id
+     FROM policy_derivatives
+     WHERE policy_id = $1 AND amapi_name IS NOT NULL`,
+    [policy.id]
+  );
+  const amapiContext = await getPolicyAmapiContext(policy.environment_id);
+  if (!amapiContext) {
+    if (derivatives.length > 0 || policy.amapi_name) {
+      return { ok: false, reason: 'AMAPI context is unavailable; policy retained for safe cleanup' };
+    }
+    return { ok: true, derivatives_deleted: 0 };
+  }
+
+  let derivativesDeleted = 0;
+  for (const derivative of derivatives) {
+    const result = await deletePolicyDerivativeWhenUnused({
+      environmentId: policy.environment_id,
+      scopeType: derivative.scope_type,
+      scopeId: derivative.scope_id,
+      amapiName: derivative.amapi_name,
+      amapiContext,
+    });
+    if (!result.deleted) {
+      const reason = result.reason === 'still_requested_or_applied'
+        ? 'A device still requests or applies this policy derivative; policy retained'
+        : 'AMAPI derivative cleanup is uncertain; policy retained for retry';
+      return { ok: false, reason };
+    }
+    derivativesDeleted += 1;
+  }
+
+  if (policy.amapi_name) {
+    const result = await deletePolicyDerivativeWhenUnused({
+      environmentId: policy.environment_id,
+      scopeType: 'environment',
+      scopeId: policy.environment_id,
+      amapiName: policy.amapi_name,
+      amapiContext,
+    });
+    if (!result.deleted) {
+      const reason = result.reason === 'still_requested_or_applied'
+        ? 'A device still requests or applies the base policy; policy retained'
+        : 'AMAPI base policy cleanup is uncertain; policy retained for retry';
+      return { ok: false, reason };
+    }
+  }
+
+  return { ok: true, derivatives_deleted: derivativesDeleted };
 }
 
 async function canViewPolicyInScopedEnvironment(
@@ -910,70 +975,21 @@ export default async (request: Request, context: Context) => {
       return errorResponse('Cannot delete policy: devices are still using it', 409);
     }
 
-    // ── Clean up AMAPI derivative resources before DB delete ──────────────
-    let amapiCleanup: Record<string, unknown> = {};
+    // Delete remote resources before their local cleanup records disappear.
+    // Any uncertain read or delete retains the policy and derivative rows.
+    let amapiCleanup: Awaited<ReturnType<typeof cleanupPolicyAmapiResources>>;
     try {
-      const amapiContext = await getPolicyAmapiContext(policy.environment_id);
-      if (amapiContext) {
-        const derivatives = await query<{ amapi_name: string }>(
-          'SELECT amapi_name FROM policy_derivatives WHERE policy_id = $1 AND amapi_name IS NOT NULL',
-          [action]
-        );
-
-        let deleted = 0;
-        const failures: string[] = [];
-        for (const d of derivatives) {
-          try {
-            await amapiCall(d.amapi_name, amapiContext.workspace_id, {
-              method: 'DELETE',
-              projectId: amapiContext.gcp_project_id,
-              enterpriseName: amapiContext.enterprise_name,
-              resourceType: 'policies',
-              resourceId: d.amapi_name.split('/').pop(),
-            });
-            deleted += 1;
-          } catch (err) {
-            const status = getAmapiErrorHttpStatus(err);
-            if (status === 404) {
-              deleted += 1; // already gone
-            } else {
-              failures.push(d.amapi_name);
-              console.warn('policy-crud: AMAPI derivative delete failed (non-fatal)', {
-                amapi_name: d.amapi_name,
-                error: err instanceof Error ? err.message : String(err),
-              });
-            }
-          }
-        }
-
-        // Also delete the base AMAPI policy if it exists
-        if (policy.amapi_name) {
-          try {
-            await amapiCall(policy.amapi_name, amapiContext.workspace_id, {
-              method: 'DELETE',
-              projectId: amapiContext.gcp_project_id,
-              enterpriseName: amapiContext.enterprise_name,
-              resourceType: 'policies',
-              resourceId: policy.amapi_name.split('/').pop(),
-            });
-          } catch (err) {
-            const status = getAmapiErrorHttpStatus(err);
-            if (status !== 404) {
-              console.warn('policy-crud: AMAPI base policy delete failed (non-fatal)', {
-                amapi_name: policy.amapi_name,
-                error: err instanceof Error ? err.message : String(err),
-              });
-            }
-          }
-        }
-
-        amapiCleanup = { derivatives_deleted: deleted, failures };
-      }
+      amapiCleanup = await cleanupPolicyAmapiResources(policy);
     } catch (err) {
-      console.warn('policy-crud: AMAPI cleanup failed (non-fatal)', {
+      console.warn('policy-crud: AMAPI cleanup check failed; policy retained', {
         policy_id: action,
         error: err instanceof Error ? err.message : String(err),
       });
+      return errorResponse('AMAPI cleanup check failed; policy retained for retry', 502);
+    }
+    if (!amapiCleanup.ok) {
+      const status = amapiCleanup.reason.includes('still requests or applies') ? 409 : 502;
+      return errorResponse(amapiCleanup.reason, status);
     }
 
     await execute('DELETE FROM policies WHERE id = $1', [action]);
@@ -1120,56 +1136,16 @@ async function performPolicyDelete(
   }
 
   try {
-    const amapiContext = await getPolicyAmapiContext(policy.environment_id);
-    if (amapiContext) {
-      const derivatives = await query<{ amapi_name: string }>(
-        'SELECT amapi_name FROM policy_derivatives WHERE policy_id = $1 AND amapi_name IS NOT NULL',
-        [policyId]
-      );
-      for (const d of derivatives) {
-        try {
-          await amapiCall(d.amapi_name, amapiContext.workspace_id, {
-            method: 'DELETE',
-            projectId: amapiContext.gcp_project_id,
-            enterpriseName: amapiContext.enterprise_name,
-            resourceType: 'policies',
-            resourceId: d.amapi_name.split('/').pop(),
-          });
-        } catch (err) {
-          const status = getAmapiErrorHttpStatus(err);
-          if (status !== 404) {
-            console.warn('policy-crud bulk delete: AMAPI derivative delete failed (non-fatal)', {
-              amapi_name: d.amapi_name,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
-        }
-      }
-      if (policy.amapi_name) {
-        try {
-          await amapiCall(policy.amapi_name, amapiContext.workspace_id, {
-            method: 'DELETE',
-            projectId: amapiContext.gcp_project_id,
-            enterpriseName: amapiContext.enterprise_name,
-            resourceType: 'policies',
-            resourceId: policy.amapi_name.split('/').pop(),
-          });
-        } catch (err) {
-          const status = getAmapiErrorHttpStatus(err);
-          if (status !== 404) {
-            console.warn('policy-crud bulk delete: AMAPI base delete failed (non-fatal)', {
-              amapi_name: policy.amapi_name,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
-        }
-      }
+    const cleanup = await cleanupPolicyAmapiResources(policy);
+    if (!cleanup.ok) {
+      return { ok: false, error: cleanup.reason };
     }
   } catch (err) {
-    console.warn('policy-crud bulk delete: AMAPI cleanup failed (non-fatal)', {
+    console.warn('policy-crud bulk delete: AMAPI cleanup check failed; policy retained', {
       policy_id: policyId,
       error: err instanceof Error ? err.message : String(err),
     });
+    return { ok: false, error: 'AMAPI cleanup check failed; policy retained for retry' };
   }
 
   await execute('DELETE FROM policies WHERE id = $1', [policyId]);

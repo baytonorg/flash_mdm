@@ -62,6 +62,7 @@ const mockAmapiCall = vi.mocked(amapiCall);
 describe('POST /api/policies/bulk', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockQuery.mockResolvedValue([] as never);
     mockRequireAuth.mockResolvedValue({ user: { id: 'user-1' } } as never);
     mockRequireEnvironmentResourcePermission.mockResolvedValue(undefined as never);
   });

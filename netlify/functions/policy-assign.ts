@@ -15,6 +15,7 @@ import {
   ensurePolicyDerivativeForScope,
   listAffectedDevicesForPolicyContext,
 } from './_lib/policy-derivatives.js';
+import { deletePolicyDerivativeWhenUnused } from './_lib/policy-derivative-cleanup.js';
 import { jsonResponse, errorResponse, parseJsonBody, getClientIp, getSearchParams } from './_lib/helpers.js';
 import { preparePolicyBaseForDerivativeGeneration } from './_lib/policy-merge.js';
 
@@ -356,6 +357,14 @@ export default async (request: Request, context: Context) => {
       'SELECT policy_id FROM policy_assignments WHERE scope_type = $1 AND scope_id = $2',
       [body.scope_type, body.scope_id]
     );
+    const oldDerivative = oldAssignment
+      ? await queryOne<{ amapi_name: string | null }>(
+          `SELECT amapi_name
+           FROM policy_derivatives
+           WHERE policy_id = $1 AND scope_type = $2 AND scope_id = $3`,
+          [oldAssignment.policy_id, body.scope_type, body.scope_id]
+        )
+      : null;
 
     // Capture affected devices BEFORE deleting the assignment (M6 fix).
     // After the delete, the assignment row is gone so the cascade query finds nothing.
@@ -465,22 +474,42 @@ export default async (request: Request, context: Context) => {
             }
           }
 
-          // Clean up orphaned derivative for the removed scope
-          try {
+          let derivativeCleanup: Record<string, unknown> = { deleted: false, reason: 'not_found' };
+          if (!oldDerivative?.amapi_name) {
             await execute(
               'DELETE FROM policy_derivatives WHERE policy_id = $1 AND scope_type = $2 AND scope_id = $3',
               [oldAssignment.policy_id, body.scope_type, body.scope_id]
             );
-          } catch (err) {
-            console.warn('policy-unassign: derivative cleanup failed (non-fatal)', {
-              policy_id: oldAssignment.policy_id,
-              scope_type: body.scope_type,
-              scope_id: body.scope_id,
-              error: err instanceof Error ? err.message : String(err),
+            derivativeCleanup = { deleted: true, reason: 'no_remote_resource', checked_devices: 0 };
+          } else if (deviceFailures.length > 0) {
+            derivativeCleanup = {
+              deleted: false,
+              reason: 'device_resync_failed',
+              checked_devices: 0,
+            };
+          } else {
+            const result = await deletePolicyDerivativeWhenUnused({
+              environmentId: envId,
+              scopeType: body.scope_type,
+              scopeId: body.scope_id,
+              amapiName: oldDerivative.amapi_name,
+              amapiContext,
             });
+            derivativeCleanup = result;
+            if (result.deleted) {
+              await execute(
+                'DELETE FROM policy_derivatives WHERE policy_id = $1 AND scope_type = $2 AND scope_id = $3',
+                [oldAssignment.policy_id, body.scope_type, body.scope_id]
+              );
+            }
           }
 
-          amapiSync = { synced: true, devices_synced: devicesSynced, device_failures: deviceFailures };
+          amapiSync = {
+            synced: true,
+            devices_synced: devicesSynced,
+            device_failures: deviceFailures,
+            derivative_cleanup: derivativeCleanup,
+          };
         }
       } catch (err) {
         amapiSync = { synced: false, error: err instanceof Error ? err.message : 'Unknown error' };
