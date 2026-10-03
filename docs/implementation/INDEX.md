@@ -61,6 +61,7 @@ For deeper information on architecture, deployment, security, operations, and de
 | [password-policy.md](backend/lib/password-policy.md) | Password length constraints used for validation across the application |
 | [platform-settings.md](backend/lib/platform-settings.md) | Reads and writes global platform settings from the `platform_settings` singleton row |
 | [policy-derivatives.md](backend/lib/policy-derivatives.md) | Manages per-scope AMAPI policy derivatives with variable resolution and AMAPI patch orchestration |
+| [policy-derivative-cleanup.md](backend/lib/policy-derivative-cleanup.md) | Deletes obsolete derivatives only after AMAPI requested/applied policy checks |
 | [policy-generation.md](backend/lib/policy-generation.md) | Generates final AMAPI policy payload by merging base config with scoped deployments and overrides |
 | [policy-locks.md](backend/lib/policy-locks.md) | Manages hierarchical policy lock state and RBAC checks for lock/override modifications |
 | [policy-merge.md](backend/lib/policy-merge.md) | Shared helpers for merging ONC (Wi-Fi) and APN network deployments into policy config |

@@ -38,6 +38,7 @@
 | `sanitizeConfig` | `_lib/policy-recompile.js` | Strip invalid/dangerous fields from policy config |
 | `buildGeneratedPolicyPayload` | `_lib/policy-generation.js` | Generate the full AMAPI policy payload with layered overrides |
 | `syncPolicyDerivativesForPolicy`, `getPolicyAmapiContext` | `_lib/policy-derivatives.js` | Derivative sync and AMAPI context resolution |
+| `deletePolicyDerivativeWhenUnused` | `_lib/policy-derivative-cleanup.js` | Verify requested/applied policy state before remote derivative deletion |
 | `jsonResponse`, `errorResponse`, `parseJsonBody`, `getClientIp`, `getSearchParams`, `isValidUuid` | `_lib/helpers.js` | HTTP response helpers, request parsing, UUID validation |
 
 ## Key Logic
@@ -63,7 +64,8 @@
 
 ### Delete (DELETE /:id)
 - Blocks deletion if devices are still using the policy or if it is the Default policy.
-- Cleans up AMAPI derivative resources (DELETE calls) and the base AMAPI policy before deleting the local DB row.
+- Reads scoped device policy state from AMAPI before deleting each derivative or base policy.
+- Deletes the local DB row only after remote cleanup succeeds or returns a definite 404. Active use returns 409; uncertain reads or deletes return 502 and retain local cleanup records.
 
 ### Bulk (POST /bulk)
 - Supports operations: `copy`, `delete`, `set_draft`, `set_production`, `push_to_amapi`.

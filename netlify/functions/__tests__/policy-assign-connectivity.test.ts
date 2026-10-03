@@ -22,8 +22,11 @@ vi.mock('../_lib/policy-derivatives.js', () => ({
   ensurePolicyDerivativeForScope: vi.fn(),
   listAffectedDevicesForPolicyContext: vi.fn(),
 }));
+vi.mock('../_lib/policy-derivative-cleanup.js', () => ({
+  deletePolicyDerivativeWhenUnused: vi.fn(),
+}));
 
-import { queryOne, transaction } from '../_lib/db.js';
+import { execute, queryOne, transaction } from '../_lib/db.js';
 import { requireAuth } from '../_lib/auth.js';
 import { requireEnvironmentResourcePermission } from '../_lib/rbac.js';
 import { canModifyLocks } from '../_lib/policy-locks.js';
@@ -33,9 +36,11 @@ import {
   listAffectedDevicesForPolicyContext,
   syncPolicyDerivativesForPolicy,
 } from '../_lib/policy-derivatives.js';
+import { deletePolicyDerivativeWhenUnused } from '../_lib/policy-derivative-cleanup.js';
 import handler from '../policy-assign.js';
 
 const mockQueryOne = vi.mocked(queryOne);
+const mockExecute = vi.mocked(execute);
 const mockTransaction = vi.mocked(transaction);
 const mockRequireAuth = vi.mocked(requireAuth);
 const mockRequireEnvironmentPermission = vi.mocked(requireEnvironmentResourcePermission);
@@ -44,6 +49,7 @@ const mockGetPolicyAmapiContext = vi.mocked(getPolicyAmapiContext);
 const mockListAffectedDevices = vi.mocked(listAffectedDevicesForPolicyContext);
 const mockSyncPolicyDerivatives = vi.mocked(syncPolicyDerivativesForPolicy);
 const mockAssignPolicyToDevice = vi.mocked(assignPolicyToDeviceWithDerivative);
+const mockDeleteDerivativeWhenUnused = vi.mocked(deletePolicyDerivativeWhenUnused);
 
 describe('policy assignment connectivity preservation', () => {
   beforeEach(() => {
@@ -58,6 +64,11 @@ describe('policy assignment connectivity preservation', () => {
     });
     mockListAffectedDevices.mockResolvedValue([]);
     mockSyncPolicyDerivatives.mockResolvedValue({} as never);
+    mockDeleteDerivativeWhenUnused.mockResolvedValue({
+      deleted: true,
+      reason: 'deleted',
+      checked_devices: 1,
+    });
     mockTransaction.mockImplementation(async (fn) => fn({
       query: vi.fn().mockResolvedValue({ rows: [], rowCount: 1 }),
     } as never));
@@ -107,6 +118,7 @@ describe('policy assignment connectivity preservation', () => {
       .mockResolvedValueOnce({ id: 'env_1' } as never)
       .mockResolvedValueOnce({ policy_id: 'old_policy' } as never)
       .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce(null as never)
       .mockResolvedValueOnce({ group_id: null, policy_id: 'new_policy' } as never)
       .mockResolvedValueOnce(null as never)
       .mockResolvedValueOnce({
@@ -155,5 +167,82 @@ describe('policy assignment connectivity preservation', () => {
         },
       },
     }));
+  });
+
+  it('deletes the local derivative row only after safe remote cleanup succeeds', async () => {
+    mockQueryOne
+      .mockResolvedValueOnce({ environment_id: 'env_1' } as never)
+      .mockResolvedValueOnce({ policy_id: 'old_policy' } as never)
+      .mockResolvedValueOnce({ amapi_name: 'enterprises/e1/policies/old-device' } as never)
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce({ group_id: null, policy_id: 'new_policy' } as never)
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce({ config: { cameraDisabled: false } } as never);
+    mockTransaction.mockImplementation(async (fn) => fn({
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('SELECT id, amapi_name FROM devices')) {
+          return {
+            rows: [{ id: 'device_1', amapi_name: 'enterprises/e1/devices/d1' }],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+    } as never));
+    mockAssignPolicyToDevice.mockResolvedValue({} as never);
+
+    const response = await handler(new Request('http://localhost/api/policies/unassign', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ scope_type: 'device', scope_id: 'device_1' }),
+    }), {} as never);
+
+    expect(response.status).toBe(200);
+    expect(mockDeleteDerivativeWhenUnused).toHaveBeenCalledWith(expect.objectContaining({
+      environmentId: 'env_1',
+      scopeType: 'device',
+      scopeId: 'device_1',
+      amapiName: 'enterprises/e1/policies/old-device',
+    }));
+    expect(mockExecute).toHaveBeenCalledWith(
+      expect.stringContaining('DELETE FROM policy_derivatives'),
+      ['old_policy', 'device', 'device_1']
+    );
+  });
+
+  it('retains the local derivative row when remote cleanup is uncertain', async () => {
+    mockDeleteDerivativeWhenUnused.mockResolvedValueOnce({
+      deleted: false,
+      reason: 'device_check_uncertain',
+      checked_devices: 0,
+    });
+    mockQueryOne
+      .mockResolvedValueOnce({ environment_id: 'env_1' } as never)
+      .mockResolvedValueOnce({ policy_id: 'old_policy' } as never)
+      .mockResolvedValueOnce({ amapi_name: 'enterprises/e1/policies/old-device' } as never)
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce({ group_id: null, policy_id: 'new_policy' } as never)
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce({ config: {} } as never);
+    mockTransaction.mockImplementation(async (fn) => fn({
+      query: vi.fn(async (sql: string) => sql.includes('SELECT id, amapi_name FROM devices')
+        ? { rows: [{ id: 'device_1', amapi_name: 'enterprises/e1/devices/d1' }], rowCount: 1 }
+        : { rows: [], rowCount: 1 }),
+    } as never));
+    mockAssignPolicyToDevice.mockResolvedValue({} as never);
+
+    const response = await handler(new Request('http://localhost/api/policies/unassign', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ scope_type: 'device', scope_id: 'device_1' }),
+    }), {} as never);
+
+    expect(response.status).toBe(200);
+    expect(mockExecute).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({
+      amapi_sync: {
+        derivative_cleanup: { deleted: false, reason: 'device_check_uncertain' },
+      },
+    });
   });
 });

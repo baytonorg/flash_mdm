@@ -26,6 +26,7 @@
 | `canModifyLocks` | `_lib/policy-locks.js` | Check if user can set/modify lock state on assignments |
 | `logAudit` | `_lib/audit.js` | Audit log entries |
 | `assignPolicyToDeviceWithDerivative`, `syncPolicyDerivativesForPolicy`, `getPolicyAmapiContext`, `ensurePolicyDerivativeForScope`, `listAffectedDevicesForPolicyContext` | `_lib/policy-derivatives.js` | AMAPI derivative policy generation and device sync |
+| `deletePolicyDerivativeWhenUnused` | `_lib/policy-derivative-cleanup.js` | Fail-closed remote derivative cleanup after requested/applied-policy checks |
 | `jsonResponse`, `errorResponse`, `parseJsonBody`, `getClientIp`, `getSearchParams` | `_lib/helpers.js` | HTTP response helpers and request parsing |
 
 ## Key Logic
@@ -42,7 +43,8 @@
 1. Captures affected devices BEFORE deleting the assignment row (otherwise the cascade query finds nothing).
 2. Deletes the `policy_assignments` row; for device scope, clears `devices.policy_id`.
 3. Re-syncs each affected device to its new effective policy (walks the cascade via `findEffectivePolicyForDevice`).
-4. Cleans up orphaned `policy_derivatives` rows for the removed scope.
+4. Reads each affected device from AMAPI and deletes the remote derivative only after no device still requests or applies it.
+5. Deletes the local derivative row only after a successful remote delete or definite 404. Uncertain reads, deletes, or device re-sync failures retain it for retry.
 
 ### List Assignments (GET /assignments)
 1. Returns all assignments for an environment, respecting group-scoped RBAC (scoped users only see assignments relevant to their groups).

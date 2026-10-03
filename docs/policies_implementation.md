@@ -250,6 +250,8 @@ When a policy is unassigned:
 1. Affected devices are captured **before** the assignment is deleted
 2. The assignment row is removed
 3. Each affected device is re-resolved to its new effective policy (may fall back to a parent group or environment assignment)
+4. Flash reads the affected devices from AMAPI and deletes the obsolete remote derivative only after none still request or apply it
+5. A 404 completes cleanup, while any uncertain device read or derivative delete retains the local derivative row for a safe later retry or policy deletion
 
 ### A child can always assign a different policy
 
