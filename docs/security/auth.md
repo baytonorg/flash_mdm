@@ -18,6 +18,22 @@ Flash MDM supports three login methods:
 
 Source: `netlify/functions/_lib/auth.ts`, `netlify/functions/auth-login.ts`
 
+## API key lifecycle
+
+API key expiry is optional. A key created without an expiry remains active until
+an authorised operator explicitly revokes it. Flash MDM records creation,
+last-used, expiry, and revocation metadata, but it does not automatically expire,
+revoke, rotate, disable, replace, or delete a key because it is old, unused, or
+has no expiry.
+
+Operators should treat no-expiry and long-unused keys as reporting signals. Review
+their role and scope through the API key settings and audit log, then make any
+lifecycle change as a separate deliberate operator action. Monitoring and routine
+maintenance should remain read-only and must not expose key material.
+
+Source: `netlify/functions/api-key-crud.ts`, `netlify/functions/_lib/auth.ts`,
+`netlify/functions/cleanup-scheduled.ts`
+
 ## CSRF protection
 
 Session-authenticated mutation requests (POST/PUT/PATCH/DELETE) must pass both checks:

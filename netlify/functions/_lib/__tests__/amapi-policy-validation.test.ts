@@ -18,6 +18,20 @@ describe('amapi-policy-validation', () => {
     ]));
   });
 
+  it('accepts OS_NOT_PERMITTED in a non-compliance detail condition', () => {
+    const result = validateAmapiPolicyPayload({
+      minimumApiLevel: 36,
+      complianceRules: [{
+        nonComplianceDetailCondition: {
+          settingName: 'minimumApiLevel',
+          nonComplianceReason: 'OS_NOT_PERMITTED',
+        },
+      }],
+    });
+
+    expect(result.errors).toHaveLength(0);
+  });
+
   it('rejects setupAction launch app when app is not REQUIRED_FOR_SETUP', () => {
     const result = validateAmapiPolicyPayload({
       applications: [{ packageName: 'com.example.app', installType: 'FORCE_INSTALLED' }],
