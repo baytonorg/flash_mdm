@@ -2,7 +2,7 @@
 // Refresh deliberately with `npm run amapi-schema:update` and review the schema diff.
 export const AMAPI_POLICY_DISCOVERY_SCHEMA = {
   "source": "https://androidmanagement.googleapis.com/$discovery/rest?version=v1",
-  "revision": "20261001",
+  "revision": "20261006",
   "root": "Policy",
   "schemas": {
     "AdvancedSecurityOverrides": {
@@ -935,6 +935,7 @@ export const AMAPI_POLICY_DISCOVERY_SCHEMA = {
             "PENDING",
             "APP_INCOMPATIBLE",
             "APP_NOT_UPDATED",
+            "OS_NOT_PERMITTED",
             "DEVICE_INCOMPATIBLE",
             "APP_SIGNING_CERT_MISMATCH",
             "PROJECT_NOT_PERMITTED"
