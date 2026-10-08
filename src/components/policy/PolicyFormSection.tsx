@@ -813,7 +813,13 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
     // ---------------------------------------------------------------
     // SCREEN LOCK
     // ---------------------------------------------------------------
-    case 'screenLock':
+    case 'screenLock': {
+      const screenTimeoutMode = getPath(config, 'displaySettings.screenTimeoutSettings.screenTimeoutMode')
+        ?? 'SCREEN_TIMEOUT_MODE_UNSPECIFIED';
+      const screenTimeoutEnabled = screenTimeoutMode === 'SCREEN_TIMEOUT_ENFORCED';
+      const screenBrightnessMode = getPath(config, 'displaySettings.screenBrightnessSettings.screenBrightnessMode')
+        ?? 'SCREEN_BRIGHTNESS_MODE_UNSPECIFIED';
+      const screenBrightnessEnabled = ['BRIGHTNESS_AUTOMATIC', 'BRIGHTNESS_FIXED'].includes(screenBrightnessMode);
       return (
         <div>
           <h3 className="text-lg font-semibold text-gray-900 mb-1">Screen Lock</h3>
@@ -848,8 +854,13 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
           <EnumField
             label="Screen Timeout Mode"
             description="Controls whether the user can change screen timeout."
-            value={getPath(config, 'displaySettings.screenTimeoutSettings.screenTimeoutMode') ?? 'SCREEN_TIMEOUT_MODE_UNSPECIFIED'}
-            onChange={(v) => onChange('displaySettings.screenTimeoutSettings.screenTimeoutMode', v)}
+            value={screenTimeoutMode}
+            onChange={(v) => {
+              onChange('displaySettings.screenTimeoutSettings.screenTimeoutMode', v);
+              if (v !== 'SCREEN_TIMEOUT_ENFORCED') {
+                onChange('displaySettings.screenTimeoutSettings.screenTimeout', undefined);
+              }
+            }}
             options={[
               { value: 'SCREEN_TIMEOUT_MODE_UNSPECIFIED', label: 'Unspecified' },
               { value: 'SCREEN_TIMEOUT_USER_CHOICE', label: 'User Choice' },
@@ -859,15 +870,21 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
           <TextField
             label="Screen Timeout Duration"
             description="Duration string for enforced screen timeout (for example 30s, 2m)."
-            value={getPath(config, 'displaySettings.screenTimeoutSettings.screenTimeout') ?? ''}
+            value={screenTimeoutEnabled ? (getPath(config, 'displaySettings.screenTimeoutSettings.screenTimeout') ?? '') : ''}
             onChange={(v) => onChange('displaySettings.screenTimeoutSettings.screenTimeout', v)}
             placeholder="e.g. 30s"
+            disabled={!screenTimeoutEnabled}
           />
           <EnumField
             label="Screen Brightness Mode"
             description="Controls whether brightness is user-controlled, automatic, or fixed."
-            value={getPath(config, 'displaySettings.screenBrightnessSettings.screenBrightnessMode') ?? 'SCREEN_BRIGHTNESS_MODE_UNSPECIFIED'}
-            onChange={(v) => onChange('displaySettings.screenBrightnessSettings.screenBrightnessMode', v)}
+            value={screenBrightnessMode}
+            onChange={(v) => {
+              onChange('displaySettings.screenBrightnessSettings.screenBrightnessMode', v);
+              if (!['BRIGHTNESS_AUTOMATIC', 'BRIGHTNESS_FIXED'].includes(v)) {
+                onChange('displaySettings.screenBrightnessSettings.screenBrightness', undefined);
+              }
+            }}
             options={[
               { value: 'SCREEN_BRIGHTNESS_MODE_UNSPECIFIED', label: 'Unspecified' },
               { value: 'BRIGHTNESS_USER_CHOICE', label: 'User Choice' },
@@ -877,11 +894,13 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
           />
           <NumberField
             label="Screen Brightness (1-255)"
-            description="Used with automatic/fixed brightness modes. 0 leaves brightness unset."
-            value={getPath(config, 'displaySettings.screenBrightnessSettings.screenBrightness') ?? 0}
+            description="Used with automatic or fixed brightness modes."
+            value={screenBrightnessEnabled ? (getPath(config, 'displaySettings.screenBrightnessSettings.screenBrightness') ?? '') : ''}
             onChange={(v) => onChange('displaySettings.screenBrightnessSettings.screenBrightness', v)}
-            min={0}
+            onClear={() => onChange('displaySettings.screenBrightnessSettings.screenBrightness', undefined)}
+            min={1}
             max={255}
+            disabled={!screenBrightnessEnabled}
           />
           <div className="mb-6">
             <label className="block text-sm font-medium text-gray-700 mb-1">Keyguard Disabled Features</label>
@@ -921,6 +940,7 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
           </div>
         </div>
       );
+    }
 
     // ---------------------------------------------------------------
     // DEVICE SETTINGS
@@ -1097,7 +1117,15 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
     // ---------------------------------------------------------------
     // NETWORK
     // ---------------------------------------------------------------
-    case 'network':
+    case 'network': {
+      const alwaysOnVpnPackageName = getPath(config, 'alwaysOnVpnPackage.packageName') ?? '';
+      const hasAlwaysOnVpnPackage = typeof alwaysOnVpnPackageName === 'string' && alwaysOnVpnPackageName.trim().length > 0;
+      const privateDnsMode = getPath(config, 'deviceConnectivityManagement.privateDnsSettings.privateDnsMode')
+        ?? getPath(config, 'privateDnsSettings.privateDnsMode')
+        ?? 'PRIVATE_DNS_MODE_UNSPECIFIED';
+      const privateDnsHostEnabled = privateDnsMode === 'PRIVATE_DNS_SPECIFIED_HOST';
+      const recommendedProxyHost = getPath(config, 'recommendedGlobalProxy.host') ?? '';
+      const recommendedProxyPortEnabled = typeof recommendedProxyHost === 'string' && recommendedProxyHost.trim().length > 0;
       return (
         <div>
           <h3 className="text-lg font-semibold text-gray-900 mb-1">Network</h3>
@@ -1144,15 +1172,19 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
           <TextField
             label="Always-On VPN Package"
             description="Package name of the VPN app used for always-on VPN."
-            value={getPath(config, 'alwaysOnVpnPackage.packageName') ?? ''}
-            onChange={(v) => onChange('alwaysOnVpnPackage.packageName', v)}
+            value={alwaysOnVpnPackageName}
+            onChange={(v) => {
+              onChange('alwaysOnVpnPackage.packageName', v);
+              if (!v.trim()) onChange('alwaysOnVpnPackage.lockdownEnabled', undefined);
+            }}
             placeholder="com.example.vpn"
           />
           <BooleanField
             label="Always-On VPN Lockdown"
             description="Block networking when the VPN is disconnected."
-            value={getPath(config, 'alwaysOnVpnPackage.lockdownEnabled') ?? false}
+            value={hasAlwaysOnVpnPackage ? (getPath(config, 'alwaysOnVpnPackage.lockdownEnabled') ?? false) : false}
             onChange={(v) => onChange('alwaysOnVpnPackage.lockdownEnabled', v)}
+            disabled={!hasAlwaysOnVpnPackage}
           />
           <EnumField
             label="Preferential Network Service"
@@ -1430,12 +1462,14 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
           <EnumField
             label="Private DNS Mode"
             description="Controls the device's global private DNS setting. `Specified Host` requires a hostname below."
-            value={
-              getPath(config, 'deviceConnectivityManagement.privateDnsSettings.privateDnsMode')
-              ?? getPath(config, 'privateDnsSettings.privateDnsMode')
-              ?? 'PRIVATE_DNS_MODE_UNSPECIFIED'
-            }
-            onChange={(v) => onChange('deviceConnectivityManagement.privateDnsSettings.privateDnsMode', v)}
+            value={privateDnsMode}
+            onChange={(v) => {
+              onChange('deviceConnectivityManagement.privateDnsSettings.privateDnsMode', v);
+              if (v !== 'PRIVATE_DNS_SPECIFIED_HOST') {
+                onChange('deviceConnectivityManagement.privateDnsSettings.privateDnsHost', undefined);
+                onChange('privateDnsSettings.privateDnsHost', undefined);
+              }
+            }}
             options={[
               { value: 'PRIVATE_DNS_MODE_UNSPECIFIED', label: 'Unspecified (User Choice)' },
               { value: 'PRIVATE_DNS_USER_CHOICE', label: 'User Choice' },
@@ -1447,30 +1481,39 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
             label="Private DNS Host"
             description="Hostname for the private DNS server. Set only when Private DNS Mode is `Specified Host`."
             value={
-              getPath(config, 'deviceConnectivityManagement.privateDnsSettings.privateDnsHost')
-              ?? getPath(config, 'privateDnsSettings.privateDnsHost')
-              ?? ''
+              privateDnsHostEnabled
+                ? (getPath(config, 'deviceConnectivityManagement.privateDnsSettings.privateDnsHost')
+                  ?? getPath(config, 'privateDnsSettings.privateDnsHost')
+                  ?? '')
+                : ''
             }
             onChange={(v) => onChange('deviceConnectivityManagement.privateDnsSettings.privateDnsHost', v.trim())}
             placeholder="dns.example.com"
+            disabled={!privateDnsHostEnabled}
           />
           <TextField
             label="Recommended Global Proxy Host"
             description="The host of the recommended global HTTP proxy."
-            value={getPath(config, 'recommendedGlobalProxy.host') ?? ''}
-            onChange={(v) => onChange('recommendedGlobalProxy.host', v)}
+            value={recommendedProxyHost}
+            onChange={(v) => {
+              onChange('recommendedGlobalProxy.host', v);
+              if (!v.trim()) onChange('recommendedGlobalProxy.port', undefined);
+            }}
             placeholder="proxy.example.com"
           />
           <NumberField
             label="Recommended Global Proxy Port"
             description="The port of the recommended global HTTP proxy."
-            value={getPath(config, 'recommendedGlobalProxy.port') ?? 0}
+            value={recommendedProxyPortEnabled ? (getPath(config, 'recommendedGlobalProxy.port') ?? '') : ''}
             onChange={(v) => onChange('recommendedGlobalProxy.port', v)}
-            min={0}
+            onClear={() => onChange('recommendedGlobalProxy.port', undefined)}
+            min={1}
             max={65535}
+            disabled={!recommendedProxyPortEnabled}
           />
         </div>
       );
+    }
 
     // ---------------------------------------------------------------
     // APPLICATIONS
