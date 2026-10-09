@@ -73,16 +73,6 @@ export default async (_request: Request, _context: Context) => {
     );
     results.stale_totp_pending_secrets = staleTotpSetup.rowCount;
 
-    // Revoke expired API keys (keys may have no expiry and should remain active).
-    const expiredApiKeys = await execute(
-      `UPDATE api_keys
-       SET revoked_at = now()
-       WHERE revoked_at IS NULL
-         AND expires_at IS NOT NULL
-         AND expires_at < now()`
-    );
-    results.expired_api_keys = expiredApiKeys.rowCount;
-
     // Retain audit logs for a bounded period (default 30 days)
     results.deleted_audit_log_rows = await deleteInBatches(
       'audit_log',
