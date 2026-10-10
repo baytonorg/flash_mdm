@@ -115,7 +115,12 @@ export default function Login() {
             ? 'Complete sign-in from your magic link by entering your authenticator code.'
             : 'Enter the code from your authenticator app.'}
         </p>
+        <label htmlFor="login-totp" className="block text-sm font-medium text-gray-700">
+          Authenticator code
+        </label>
         <input
+          id="login-totp"
+          name="totp"
           type="text"
           inputMode="numeric"
           autoComplete="one-time-code"
@@ -143,9 +148,12 @@ export default function Login() {
       {mode === 'choose' && (
         <form onSubmit={handleMagicLink} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <label htmlFor="login-email" className="block text-sm font-medium text-gray-700 mb-1">Email</label>
             <input
+              id="login-email"
+              name="email"
               type="email"
+              autoComplete="email"
               required
               pattern="^[^\s@]+@[^\s@]+\.[^\s@]{2,}$"
               value={email}
@@ -169,9 +177,12 @@ export default function Login() {
       {mode === 'password' && (
         <form onSubmit={handlePasswordLogin} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <label htmlFor="login-email" className="block text-sm font-medium text-gray-700 mb-1">Email</label>
             <input
+              id="login-email"
+              name="email"
               type="email"
+              autoComplete="email"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -179,9 +190,12 @@ export default function Login() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+            <label htmlFor="login-password" className="block text-sm font-medium text-gray-700 mb-1">Password</label>
             <input
+              id="login-password"
+              name="password"
               type="password"
+              autoComplete="current-password"
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
