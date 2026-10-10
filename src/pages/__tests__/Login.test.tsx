@@ -44,11 +44,8 @@ function renderLogin(initialEntry: string) {
 }
 
 function fillPasswordLoginForm() {
-  const emailInput = document.querySelector('input[type="email"]');
-  const passwordInput = document.querySelector('input[type="password"]');
-  if (!emailInput || !passwordInput) {
-    throw new Error('Password login form inputs not found');
-  }
+  const emailInput = screen.getByRole('textbox', { name: 'Email' });
+  const passwordInput = screen.getByLabelText('Password');
   fireEvent.change(emailInput, { target: { value: 'user@example.com' } });
   fireEvent.change(passwordInput, { target: { value: 'Password123!' } });
 }
@@ -57,6 +54,22 @@ describe('Login', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedGet.mockResolvedValue({ invite_only_registration: false });
+  });
+
+  it('associates stable names and labels with every sign-in field', async () => {
+    const { unmount } = renderLogin('/login');
+
+    const magicLinkEmail = screen.getByRole('textbox', { name: 'Email' });
+    expect(magicLinkEmail).toHaveAttribute('id', 'login-email');
+    expect(magicLinkEmail).toHaveAttribute('name', 'email');
+
+    fireEvent.click(screen.getByRole('button', { name: /sign in with password instead/i }));
+    expect(screen.getByRole('textbox', { name: 'Email' })).toHaveAttribute('name', 'email');
+    expect(screen.getByLabelText('Password')).toHaveAttribute('name', 'password');
+
+    unmount();
+    renderLogin('/login?mfa_pending=tok_123');
+    expect(await screen.findByLabelText('Authenticator code')).toHaveAttribute('name', 'totp');
   });
 
   it('preserves valid in-app redirects after password login', async () => {
