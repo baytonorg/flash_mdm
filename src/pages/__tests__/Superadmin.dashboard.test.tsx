@@ -98,6 +98,10 @@ describe('SuperadminDashboard plan catalog', () => {
     render(<SuperadminDashboard />);
 
     expect(screen.getByText('Platform Plan Catalogue')).toBeInTheDocument();
+    const tableScroller = screen.getByLabelText('Platform plan catalogue table');
+    expect(tableScroller).toHaveClass('max-w-full', 'overflow-x-auto');
+    expect(tableScroller).toHaveAttribute('tabindex', '0');
+    expect(tableScroller.querySelector('table')).toHaveClass('min-w-[680px]');
     expect(screen.getByDisplayValue('Pro')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Create Stripe Price' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Add + Stripe Price' })).toBeInTheDocument();
