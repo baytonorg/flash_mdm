@@ -874,11 +874,16 @@ export default function Licenses() {
                 </div>
               </div>
 
-              <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+              <div className="max-w-full rounded-xl border border-gray-200 bg-white overflow-hidden">
                 <div className="px-6 py-4 border-b border-gray-100">
                   <h3 className="text-sm font-semibold text-gray-900">Environment usage and compliance</h3>
                 </div>
-                <table className="w-full">
+                <div
+                  className="max-w-full overflow-x-auto"
+                  tabIndex={0}
+                  aria-label="Environment usage and compliance table"
+                >
+                <table className="w-full min-w-[680px]">
                   <thead>
                     <tr className="border-b border-gray-100 bg-gray-50/50">
                       <th className="text-left text-xs font-medium text-gray-500 px-6 py-3">Environment</th>
@@ -913,6 +918,7 @@ export default function Licenses() {
                     )}
                   </tbody>
                 </table>
+                </div>
               </div>
 
               <div className="rounded-xl border border-gray-200 bg-white">

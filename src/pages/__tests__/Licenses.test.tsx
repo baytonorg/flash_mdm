@@ -158,6 +158,11 @@ describe('Licenses page role gating', () => {
 
     render(<Licenses />);
 
+    const tableScroller = screen.getByLabelText('Environment usage and compliance table');
+    expect(tableScroller).toHaveClass('max-w-full', 'overflow-x-auto');
+    expect(tableScroller).toHaveAttribute('tabindex', '0');
+    expect(tableScroller.querySelector('table')).toHaveClass('min-w-[680px]');
+
     expect(screen.queryByText('Read-only licensing view. Billing actions require workspace admin or owner access.')).not.toBeInTheDocument();
     expect(screen.getByText('Payment and history')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Pay with Stripe' })).toBeInTheDocument();

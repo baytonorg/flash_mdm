@@ -641,7 +641,11 @@ export function SuperadminDashboard() {
               <option value="hidden">Hidden only</option>
             </select>
           </div>
-          <div className="overflow-x-auto">
+          <div
+            className="max-w-full overflow-x-auto"
+            tabIndex={0}
+            aria-label="Platform plan catalogue table"
+          >
             <table className="w-full min-w-[680px]">
               <thead>
                 <tr className="border-b border-gray-100">
@@ -1231,17 +1235,22 @@ export function SuperadminWorkspaces() {
         </p>
       )}
 
-      <div className="flex gap-6">
+      <div className="flex flex-col gap-6 xl:flex-row">
         {/* Workspace list */}
-        <div className="flex-1">
-          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="min-w-0 flex-1">
+          <div className="max-w-full bg-white rounded-xl border border-gray-200 overflow-hidden">
             {listLoading ? (
               <div className="p-12 text-center">
                 <Loader2 className="w-6 h-6 animate-spin text-gray-400 mx-auto" />
               </div>
             ) : (
               <>
-                <table className="w-full">
+                <div
+                  className="max-w-full overflow-x-auto"
+                  tabIndex={0}
+                  aria-label="Workspaces table"
+                >
+                <table className="w-full min-w-[840px]">
                   <thead>
                     <tr className="border-b border-gray-100">
                       <th className="text-left text-xs font-medium text-gray-500 uppercase px-6 py-3">Workspace</th>
@@ -1285,6 +1294,7 @@ export function SuperadminWorkspaces() {
                     ))}
                   </tbody>
                 </table>
+                </div>
 
                 {/* Pagination */}
                 {totalPages > 1 && (
@@ -1320,7 +1330,7 @@ export function SuperadminWorkspaces() {
 
         {/* Detail panel */}
         {selectedId && (
-          <div className="w-96 shrink-0">
+          <div className="w-full shrink-0 xl:w-96">
             {detailLoading ? (
               <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
                 <Loader2 className="w-6 h-6 animate-spin text-gray-400 mx-auto" />
@@ -2168,14 +2178,19 @@ export function SuperadminUsers() {
         </div>
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className="max-w-full bg-white rounded-xl border border-gray-200 overflow-hidden">
         {isLoading ? (
           <div className="p-12 text-center">
             <Loader2 className="w-6 h-6 animate-spin text-gray-400 mx-auto" />
           </div>
         ) : (
           <>
-            <table className="w-full">
+            <div
+              className="max-w-full overflow-x-auto"
+              tabIndex={0}
+              aria-label="Users table"
+            >
+            <table className="w-full min-w-[1100px]">
               <thead>
                 <tr className="border-b border-gray-100">
                   <th className="text-left text-xs font-medium text-gray-500 uppercase px-6 py-3">User</th>
@@ -2314,6 +2329,7 @@ export function SuperadminUsers() {
                 )}
               </tbody>
             </table>
+            </div>
 
             {data && data.total > data.per_page && (
               <div className="flex items-center justify-between px-6 py-3 border-t border-gray-100">
