@@ -33,7 +33,7 @@
     "@vis.gl/react-google-maps": "^1.10.1",
     "chart.js": "^4.5.1",
     "clsx": "^2.1.1",
-    "dompurify": "^3.4.14",
+    "dompurify": "^3.4.17",
     "dotenv": "^17.4.2",
     "google-auth-library": "^10.9.1",
     "hono": "^4.13.5",
