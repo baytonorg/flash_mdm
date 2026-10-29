@@ -450,32 +450,6 @@ export default function PlatformUpdatesSection({ config, onChange }: PlatformUpd
       <h3 className="text-lg font-semibold text-gray-900">Platform Updates</h3>
       <p className="mt-1 text-sm text-gray-500">Control OEM OS, Google Play system, and Google system-service updates.</p>
 
-      <section className="mt-5 rounded-xl border border-teal-200 bg-teal-50 p-4">
-        <h4 className="text-sm font-semibold text-teal-950">Which control should I use?</h4>
-        <ul className="mt-2 list-disc space-y-2 pl-4 text-xs text-teal-950">
-          <li><span className="font-semibold">OEM over-the-air updates, including OS upgrades and security-patch level updates:</span> configure System update policy below.</li>
-          <li><span className="font-semibold">Google Play system updates (Mainline) and Google system services:</span> create UUC rules for those targets.</li>
-          <li><span className="font-semibold">Fine-grained OEM update rules on supported company-owned devices:</span> create UUC rules for major OS updates or minor and security-patch updates, then clear System update policy.</li>
-        </ul>
-        <p className="mt-3 text-xs font-medium text-teal-950">Using both is valid, but the controls are not combined. System update policy controls OEM updates, including security-patch level updates. UUC can still control Mainline and Google system services. UUC rules for OEM updates have no effect until System update policy is cleared.</p>
-      </section>
-
-      <section className="mt-4 rounded-xl border border-blue-200 bg-blue-50 p-4">
-        <h4 className="text-sm font-semibold text-blue-950">Device eligibility</h4>
-        <p className="mt-1 text-xs text-blue-900">UUC is supported only on company-owned devices. Fully managed devices need Android 13 or later for Google targets and Google OTA OS updates. COPE devices need Android 15 or later. OS updates from other OEMs need Android 17 or later in either management mode.</p>
-        <p className="mt-2 text-xs text-blue-800">Policies are not enforced during setup, and early updates can begin before Android Device Policy receives the policy.</p>
-      </section>
-
-      <section className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
-        <h4 className="text-sm font-semibold text-amber-950">Important behaviour</h4>
-        <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-amber-900">
-          <li>Mainline is controlled as one update. UUC governs only the start of its download and cannot stop a download that has already begun.</li>
-          <li>For updates delivered through Google Play, Block stops automatic updates only. Users can still update manually. Google Play Store and Android Device Policy updates are exempt.</li>
-          <li>OEM updates can bundle Mainline modules and Google system services, so applying the OEM update can also update those components.</li>
-          <li>Apply-stage control is best-effort. Some updates apply immediately after download, and a user-initiated reboot can apply a downloaded update.</li>
-        </ul>
-      </section>
-
       <section className="mt-5 rounded-xl border border-gray-200 bg-gray-50 p-4">
         <h4 className="text-sm font-semibold text-gray-900">Effective control overview</h4>
         <p className="mt-1 text-xs text-gray-500">Configured policy authority by target. Device, Android version, management mode and OEM support can further limit UUC.</p>
@@ -495,12 +469,12 @@ export default function PlatformUpdatesSection({ config, onChange }: PlatformUpd
         </div>
       </section>
 
-      {systemUpdateConfigured && rules.length > 0 && (
+      {systemUpdateConfigured && hasShadowedTargets && (
         <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
           <div className="flex gap-2"><AlertTriangle className="mt-0.5 h-4 w-4 flex-none" /><div>
             <p className="font-semibold">System update policy and UUC coexist</p>
             <p className="mt-1 text-xs">This is valid, but the settings do not layer or refine one another. System update policy remains authoritative for OEM OS targets. UUC targets are marked individually where shadowed.</p>
-            {hasShadowedTargets && <p className="mt-1 text-xs font-medium">At least one UUC rule is partly or fully shadowed.</p>}
+            <p className="mt-1 text-xs font-medium">At least one UUC rule is partly or fully shadowed.</p>
             {systemUpdateType === 'WINDOWED' && <p className="mt-1 text-xs">Windowed system update policy also affects Google Play app update timing.</p>}
           </div></div>
         </div>
@@ -519,28 +493,17 @@ export default function PlatformUpdatesSection({ config, onChange }: PlatformUpd
           }} className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-accent/90 disabled:bg-gray-300"><Plus className="h-4 w-4" />Add rule</button>
         </div>
 
-        <div className="mt-4 grid gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-600 md:grid-cols-3">
-          <div className="md:col-span-3">
-            <p className="font-semibold text-gray-800">Maximum delay after an update becomes available</p>
-            <p className="mt-1">Android limits how long Block, and User prompt where supported, can delay each type of update.</p>
-          </div>
-          <div><span className="block font-semibold text-gray-800">Up to 5 days</span>Google system services and individual Google system apps</div>
-          <div><span className="block font-semibold text-gray-800">Up to 25 days</span>Google Play system updates and OS updates without an API-level change</div>
-          <div><span className="block font-semibold text-gray-800">Up to 180 days, or 90 days on COPE</span>OS updates with an API-level change</div>
-          <p className="md:col-span-3">When the limit is reached, Block and User prompt stop delaying the update and the update client resumes its normal behaviour. The timer restarts when the device discovers a new update. For updates delivered through Google Play, Block prevents automatic updates only.</p>
-        </div>
-
         {systemUpdateConfigured && (
-          <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3">
+          <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <p className="text-sm font-medium text-blue-900">Migration assistant</p>
-                <p className="text-xs text-blue-800">Generate review-only candidates. Nothing clears System update policy automatically.</p>
+                <p className="text-sm font-medium text-gray-900">Migration assistant</p>
+                <p className="text-xs text-gray-600">Generate review-only candidates. Nothing removes System update policy automatically.</p>
               </div>
-              <button type="button" onClick={() => setMigrationPreview(buildSystemUpdateMigrationCandidates(config))} className="rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-xs font-medium text-blue-800 hover:bg-blue-100">Generate candidate rules</button>
+              <button type="button" onClick={() => setMigrationPreview(buildSystemUpdateMigrationCandidates(config))} className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100">Generate candidate rules</button>
             </div>
             {migrationPreview && (
-              <div className="mt-3 rounded border border-blue-200 bg-white p-3">
+              <div className="mt-3 rounded border border-gray-200 bg-white p-3">
                 <p className="text-xs font-semibold text-gray-900">Candidate preview</p>
                 {migrationPreview.warnings.map((warning) => <p key={warning} className="mt-1 text-xs text-amber-700">{warning}</p>)}
                 {migrationPreview.rules.map((rule, index) => <p key={rule.id} className="mt-2 text-xs text-gray-700"><span className="font-medium">{getUucRuleDisplayName(rule, index)}:</span> {describeUucRule(rule)}</p>)}
@@ -549,7 +512,7 @@ export default function PlatformUpdatesSection({ config, onChange }: PlatformUpd
                     setRules([...rules, ...migrationPreview.rules]);
                     setExpandedRuleIndex(rules.length);
                     setMigrationPreview(null);
-                  }} className="mt-3 rounded-lg bg-blue-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-800 disabled:bg-gray-300">Add candidates for editing</button>
+                  }} className="mt-3 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-accent/90 disabled:bg-gray-300">Add candidates for editing</button>
                 )}
               </div>
             )}
@@ -599,20 +562,6 @@ export default function PlatformUpdatesSection({ config, onChange }: PlatformUpd
         )}
       </section>
 
-      {systemUpdateConfigured && (
-        <div className="mt-6 rounded-lg border border-red-200 bg-red-50 p-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-medium text-red-900">Clear System update policy</p>
-              <p className="text-xs text-red-700">Separate explicit action. OEM UUC targets cannot become authoritative until this field is absent and the device supports them.</p>
-            </div>
-            <button type="button" onClick={() => {
-              if (!window.confirm('Clear System update policy? Review UUC coverage first. This changes which policy controls OEM OS updates.')) return;
-              onChange('systemUpdate', undefined);
-            }} className="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100">Clear System update policy</button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

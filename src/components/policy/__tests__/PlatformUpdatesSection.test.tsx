@@ -55,10 +55,9 @@ describe('PlatformUpdatesSection', () => {
     );
 
     expect(screen.getByRole('heading', { name: 'Platform Updates' })).toBeInTheDocument();
-    expect(screen.getByText('Which control should I use?')).toBeInTheDocument();
-    expect(screen.getByText(/Using both is valid/)).toHaveTextContent('the controls are not combined');
-    expect(screen.getByText(/Using both is valid/)).toHaveTextContent('System update policy controls OEM updates, including security-patch level updates.');
-    expect(screen.getByText(/Using both is valid/)).toHaveTextContent('UUC rules for OEM updates have no effect until System update policy is cleared.');
+    expect(screen.queryByText('Which control should I use?')).not.toBeInTheDocument();
+    expect(screen.queryByText('Device eligibility')).not.toBeInTheDocument();
+    expect(screen.queryByText('Important behaviour')).not.toBeInTheDocument();
     const majorRow = screen.getAllByText('Major OS updates')[0]?.closest<HTMLElement>('div[class*="grid"]');
     const mainlineRow = screen.getAllByText('Google Play system updates')[0]?.closest<HTMLElement>('div[class*="grid"]');
     expect(majorRow).not.toBeNull();
@@ -81,6 +80,29 @@ describe('PlatformUpdatesSection', () => {
       targets: [],
       outcome: { outcomeType: 'OUTCOME_TYPE_UNSPECIFIED' },
     }]);
+  });
+
+  it('does not show a coexistence warning when UUC targets only Google-delivered updates', () => {
+    render(
+      <PlatformUpdatesSection
+        config={{
+          systemUpdate: { type: 'AUTOMATIC' },
+          unifiedUpdatePolicy: {
+            rules: [{
+              id: 'mainline-only',
+              targets: [{ targetType: 'GOOGLE_PLAY_SYSTEM_UPDATE' }],
+              outcome: { outcomeType: 'BLOCK' },
+            }],
+          },
+        }}
+        onChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText('System update policy and UUC coexist')).not.toBeInTheDocument();
+    const mainlineRow = screen.getAllByText('Google Play system updates')[0]?.closest<HTMLElement>('div[class*="grid"]');
+    expect(mainlineRow).not.toBeNull();
+    expect(within(mainlineRow!).getByText('Unified update controls')).toBeInTheDocument();
   });
 
   it('previews migration candidates before adding them and leaves systemUpdate intact', () => {
@@ -107,25 +129,6 @@ describe('PlatformUpdatesSection', () => {
       ]),
     );
     expect(onChange).not.toHaveBeenCalledWith('systemUpdate', undefined);
-  });
-
-  it('requires confirmation before clearing System update policy', () => {
-    const onChange = vi.fn();
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
-    render(
-      <PlatformUpdatesSection
-        config={{ systemUpdate: { type: 'AUTOMATIC' } }}
-        onChange={onChange}
-      />,
-    );
-
-    const clearButton = screen.getByRole('button', { name: 'Clear System update policy' });
-    fireEvent.click(clearButton);
-    expect(onChange).not.toHaveBeenCalledWith('systemUpdate', undefined);
-
-    fireEvent.click(clearButton);
-    expect(confirm).toHaveBeenCalledTimes(2);
-    expect(onChange).toHaveBeenCalledWith('systemUpdate', undefined);
   });
 
   it('gates OS-only inputs for non-OS targets', () => {
@@ -202,7 +205,7 @@ describe('PlatformUpdatesSection', () => {
     expect(screen.getByText(/Stage selection applies only to the OEM OS targets/)).toBeInTheDocument();
   });
 
-  it('discloses UUC operational limits and zero upper-age semantics', () => {
+  it('keeps rule-specific zero upper-age semantics beside the relevant input', () => {
     render(
       <PlatformUpdatesSection
         config={{
@@ -220,8 +223,6 @@ describe('PlatformUpdatesSection', () => {
     );
 
     expandRule();
-    expect(screen.getByText(/Mainline is controlled as one update/)).toBeInTheDocument();
-    expect(screen.getByText(/Google Play Store and Android Device Policy updates are exempt/)).toBeInTheDocument();
     expect(screen.getByText('Leave blank for no maximum. Android also treats zero as no maximum.')).toBeInTheDocument();
     expect(screen.getByText(/A maximum update age of 0 means no maximum/)).toBeInTheDocument();
   });
