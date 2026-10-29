@@ -35,7 +35,7 @@ vi.mock('@/api/queries/enrollment', () => ({
       qr_data: null,
       token_value: null,
       allow_personal_usage: false,
-      expiry: null,
+      expires_at: '2026-11-05T13:12:23Z',
       created_at: '2026-01-01T00:00:00Z',
     }],
     isLoading: false,
@@ -104,6 +104,12 @@ describe('Enrollment tokens bulk actions', () => {
     await user.click(screen.getByRole('button', { name: 'Delete' }));
 
     expect(mocks.bulkMutate).not.toHaveBeenCalled();
+  });
+
+  it('renders the API expires_at field instead of treating the token as non-expiring', () => {
+    render(<EnrollmentTokens />);
+
+    expect(screen.queryByText('Never')).not.toBeInTheDocument();
   });
 
   it('shows a token deletion error and clears mutation state when dismissed', async () => {

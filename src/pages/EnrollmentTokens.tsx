@@ -35,6 +35,10 @@ function isExpired(dateStr: string | null): boolean {
   return new Date(dateStr) < new Date();
 }
 
+function getTokenExpiry(token: EnrollmentToken): string | null {
+  return token.expiry ?? token.expires_at ?? null;
+}
+
 export default function EnrollmentTokens() {
   const { activeEnvironment } = useContextStore();
   const queryClient = useQueryClient();
@@ -272,7 +276,8 @@ export default function EnrollmentTokens() {
             </thead>
             <tbody>
               {tokens.map((token) => {
-                const expired = isExpired(token.expiry ?? null);
+                const expiry = getTokenExpiry(token);
+                const expired = isExpired(expiry);
                 return (
                   <tr
                     key={token.id}
@@ -335,7 +340,7 @@ export default function EnrollmentTokens() {
                       <div className="flex items-center gap-1.5">
                         {expired && <Clock className="h-3.5 w-3.5 text-red-500" />}
                         <span className={expired ? 'text-red-600 font-medium' : 'text-gray-700'}>
-                          {token.expiry ? formatDate(token.expiry) : 'Never'}
+                          {expiry ? formatDate(expiry) : 'Never'}
                         </span>
                         {expired && (
                           <span className="text-xs text-red-500 font-medium">Expired</span>
@@ -465,8 +470,8 @@ export default function EnrollmentTokens() {
                   </div>
                   <div className="rounded-lg border border-border bg-surface-secondary px-3 py-2">
                     <div className="text-xs text-muted">Expires</div>
-                    <div className={isExpired(selectedToken.expiry ?? null) ? 'font-medium text-red-600' : 'font-medium text-gray-900'}>
-                      {selectedToken.expiry ? formatDate(selectedToken.expiry) : 'Never'}
+                    <div className={isExpired(getTokenExpiry(selectedToken)) ? 'font-medium text-red-600' : 'font-medium text-gray-900'}>
+                      {getTokenExpiry(selectedToken) ? formatDate(getTokenExpiry(selectedToken)) : 'Never'}
                     </div>
                   </div>
                   <div className="rounded-lg border border-border bg-surface-secondary px-3 py-2">
