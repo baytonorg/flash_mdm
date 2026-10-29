@@ -12,6 +12,7 @@ import {
   durationToDays,
   getEffectiveControlOverview,
   getRuleEditorIssues,
+  getRuleEditorWarnings,
   getUucRules,
   hasConfiguredSystemUpdate,
   inputToDate,
@@ -115,9 +116,9 @@ function UucRuleEditor({
   onRemove: () => void;
 }) {
   const issues = getRuleEditorIssues(rule, index, rules);
+  const warnings = getRuleEditorWarnings(rule);
   const targetTypes = new Set((rule.targets ?? []).map((target) => target.targetType));
   const hasOsTarget = (rule.targets ?? []).some((target) => isOsTarget(target.targetType));
-  const hasNonOsTarget = (rule.targets ?? []).some((target) => !isOsTarget(target.targetType));
   const singleApp = (rule.targets ?? []).find((target) => target.targetType === 'SINGLE_APP');
 
   const toggleTarget = (targetType: PlatformUpdateTargetType, checked: boolean) => {
@@ -127,7 +128,7 @@ function UucRuleEditor({
         : { targetType }]
       : (rule.targets ?? []).filter((target) => target.targetType !== targetType);
     let outcome = rule.outcome;
-    if (outcome?.outcomeType === 'USER_PROMPT' && (nextTargets.length === 0 || nextTargets.some((target) => !isOsTarget(target.targetType)))) {
+    if (outcome?.outcomeType === 'USER_PROMPT' && !nextTargets.some((target) => isOsTarget(target.targetType))) {
       outcome = { outcomeType: 'OUTCOME_TYPE_UNSPECIFIED' };
     }
     const nextHasOsTarget = nextTargets.some((target) => isOsTarget(target.targetType));
@@ -163,6 +164,13 @@ function UucRuleEditor({
         </div>
       )}
 
+      {warnings.length > 0 && (
+        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+          <p className="font-semibold">Behaviour to review</p>
+          <ul className="mt-1 list-disc pl-4">{warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
+        </div>
+      )}
+
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <div>
           <label className="mb-1 block text-sm font-medium text-gray-900">Rule ID</label>
@@ -188,9 +196,10 @@ function UucRuleEditor({
           >
             <option value="OUTCOME_TYPE_UNSPECIFIED">Choose an outcome</option>
             <option value="BLOCK">Block</option>
-            <option value="USER_PROMPT" disabled={!hasOsTarget || hasNonOsTarget}>User prompt (OS targets only)</option>
+            <option value="USER_PROMPT" disabled={!hasOsTarget}>User prompt (OS targets only)</option>
             <option value="FORCE">Force</option>
           </select>
+          <p className="mt-1 text-xs text-gray-500">Force starts the evaluated action immediately. User prompt is effective only for OS targets. Block and user prompt remain subject to Android's maximum deferral limits.</p>
         </div>
       </div>
 
@@ -226,13 +235,14 @@ function UucRuleEditor({
               placeholder="com.google.android.webview"
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
             />
+            <p className="mt-1 text-xs text-gray-500">AMAPI accepts only apps that belong to Google system services. Flash validates the package-name format, and AMAPI validates eligibility.</p>
           </div>
         )}
       </fieldset>
 
       <fieldset className="mt-4">
         <legend className="text-sm font-medium text-gray-900">Evaluation stages</legend>
-        <p className="mt-1 text-xs text-gray-500">Optional. Empty means all stages. Stages are honoured only for OEM OS targets.</p>
+        <p className="mt-1 text-xs text-gray-500">Optional. Empty means all stages. Stages are honoured only for OEM OS targets. Apply-stage control is best-effort and cannot prevent every user-initiated reboot or immediately applied update.</p>
         <div className="mt-2 flex flex-wrap gap-4">
           {(['STAGE_DOWNLOAD', 'STAGE_APPLY'] as UucStage[]).map((stage) => (
             <label key={stage} className="flex items-center gap-2 text-sm text-gray-700">
@@ -241,13 +251,11 @@ function UucRuleEditor({
             </label>
           ))}
         </div>
-        {!hasOsTarget && (rule.stages?.length ?? 0) > 0 && <p className="mt-2 text-xs text-amber-700">These stages are ignored because this rule has no OEM OS target.</p>}
-        {hasOsTarget && hasNonOsTarget && (rule.stages?.length ?? 0) > 0 && <p className="mt-2 text-xs text-amber-700">Stages apply only to the OS targets in this mixed rule.</p>}
       </fieldset>
 
       <fieldset className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
-        <legend className="px-1 text-sm font-medium text-gray-900">Predicate, all fields are AND-combined</legend>
-        <p className="mb-3 text-xs text-gray-500">Leave every condition empty for an always-true rule.</p>
+        <legend className="px-1 text-sm font-medium text-gray-900">Conditions (all must match)</legend>
+        <p className="mb-3 text-xs text-gray-500">Leave all conditions blank to apply this rule at all times.</p>
 
         <div>
           <p className="text-xs font-medium text-gray-700">Days of week</p>
@@ -275,7 +283,7 @@ function UucRuleEditor({
           <HourSelect label="Time lower bound" value={rule.predicate?.timeOfDayLowerBound?.hours} onChange={(hours) => onUpdate(updatePredicate(rule, 'timeOfDayLowerBound', hours === undefined ? undefined : { hours }))} />
           <HourSelect label="Time upper bound" value={rule.predicate?.timeOfDayUpperBound?.hours} onChange={(hours) => onUpdate(updatePredicate(rule, 'timeOfDayUpperBound', hours === undefined ? undefined : { hours }))} />
         </div>
-        <p className="mt-1 text-xs text-gray-500">Whole hours only. Overnight windows require separate rules.</p>
+        <p className="mt-1 text-xs text-gray-500">Device local time, whole hours only. The lower hour is included and the upper hour is excluded. Omit the upper bound to continue through the end of the day. Overnight windows require separate rules.</p>
 
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           <div>
@@ -287,6 +295,7 @@ function UucRuleEditor({
             <input aria-label={`Rule ${index + 1} date upper bound`} type="date" value={dateToInput(rule.predicate?.dateUpperBound)} onChange={(event) => onUpdate(updatePredicate(rule, 'dateUpperBound', inputToDate(event.target.value)))} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" />
           </div>
         </div>
+        <p className="mt-1 text-xs text-gray-500">Dates are evaluated in the device's local time zone.</p>
 
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           <div>
@@ -306,8 +315,10 @@ function UucRuleEditor({
               const duration = daysToDuration(days);
               if (duration) onUpdate(updatePredicate(rule, 'updateAgeUpperBound', duration));
             }} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" />
+            <p className="mt-1 text-xs text-gray-500">Zero means no upper limit and always evaluates true.</p>
           </div>
         </div>
+        <p className="mt-1 text-xs text-gray-500">Update age is the time the specific update has been available to this device, in whole 24-hour days.</p>
       </fieldset>
     </article>
   );
@@ -344,6 +355,16 @@ export default function PlatformUpdatesSection({ config, onChange }: PlatformUpd
         <h4 className="text-sm font-semibold text-blue-950">Device eligibility</h4>
         <p className="mt-1 text-xs text-blue-900">UUC is supported only on company-owned devices. Fully managed devices need Android 13 or later for Google targets and Google OTA OS updates. COPE devices need Android 15 or later. OS updates from other OEMs need Android 17 or later in either management mode.</p>
         <p className="mt-2 text-xs text-blue-800">Policies are not enforced during setup, and early updates can begin before Android Device Policy receives the policy.</p>
+      </section>
+
+      <section className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+        <h4 className="text-sm font-semibold text-amber-950">Important behaviour</h4>
+        <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-amber-900">
+          <li>Mainline is controlled as one update. UUC governs only the start of its download and cannot stop a download that has already begun.</li>
+          <li>For updates delivered through Google Play, Block stops automatic updates only. Users can still update manually. Google Play Store and Android Device Policy updates are exempt.</li>
+          <li>OEM updates can bundle Mainline modules and Google system services, so applying the OEM update can also update those components.</li>
+          <li>Apply-stage control is best-effort. Some updates apply immediately after download, and a user-initiated reboot can apply a downloaded update.</li>
+        </ul>
       </section>
 
       <section className="mt-5 rounded-xl border border-gray-200 bg-gray-50 p-4">
@@ -389,7 +410,7 @@ export default function PlatformUpdatesSection({ config, onChange }: PlatformUpd
           <div><span className="block font-semibold text-gray-800">5 days</span>Google system services, including single-app targets</div>
           <div><span className="block font-semibold text-gray-800">25 days</span>Mainline and OEM OS updates without an API-level change</div>
           <div><span className="block font-semibold text-gray-800">180 or 90 days</span>Major OEM OS updates: fully managed or COPE respectively</div>
-          <p className="md:col-span-3">After the target's maximum deferral, BLOCK and USER_PROMPT fall back to the update client's normal behaviour. For Google Play-delivered targets, BLOCK prevents automatic updates only.</p>
+          <p className="md:col-span-3">After the target's maximum deferral, BLOCK and USER_PROMPT fall back to the update client's normal behaviour. A newly discovered update restarts the timer. For Google Play-delivered targets, BLOCK prevents automatic updates only.</p>
         </div>
 
         {systemUpdateConfigured && (

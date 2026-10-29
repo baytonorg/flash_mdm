@@ -64,8 +64,9 @@ function hasDuplicates(values: string[]): boolean {
 
 function parseWholeDayDuration(value: unknown): number | null {
   if (typeof value !== 'string') return null;
-  const match = /^(0|[1-9]\d*)s$/.exec(value);
+  const match = /^(0|[1-9]\d*)(?:\.(\d{1,9}))?s$/.exec(value);
   if (!match) return null;
+  if (match[2] && /[1-9]/.test(match[2])) return null;
   const seconds = Number(match[1]);
   if (!Number.isSafeInteger(seconds) || seconds % 86400 !== 0) return null;
   return seconds / 86400;
@@ -92,7 +93,7 @@ function parseUucHour(value: unknown): number | null {
   const hours = asNumber(time.hours);
   if (hours === null || !Number.isInteger(hours) || hours < 0 || hours > 23) return null;
   for (const key of ['minutes', 'seconds', 'nanos'] as const) {
-    if (time[key] !== undefined && time[key] !== 0) return null;
+    if (Object.prototype.hasOwnProperty.call(time, key)) return null;
   }
   return hours;
 }
@@ -889,8 +890,10 @@ export function validateAmapiPolicyPayload(payload: unknown): AmapiPolicyValidat
       const outcomeType = asString(outcome?.outcomeType) ?? '';
       if (!UUC_OUTCOMES.has(outcomeType)) {
         errors.push(`${path}.outcome.outcomeType is required and must be BLOCK, USER_PROMPT, or FORCE`);
+      } else if (outcomeType === 'USER_PROMPT' && targetTypes.every((target) => !UUC_OS_TARGETS.has(target))) {
+        warnings.push(`${path}.outcome USER_PROMPT has no effect for non-OS targets; default update behavior applies as if no rule matched`);
       } else if (outcomeType === 'USER_PROMPT' && targetTypes.some((target) => !UUC_OS_TARGETS.has(target))) {
-        errors.push(`${path}.outcome USER_PROMPT is only valid for OEM OS update targets`);
+        warnings.push(`${path}.outcome USER_PROMPT applies only to the OEM OS targets in this mixed rule; default update behavior applies to its non-OS targets`);
       }
 
       const predicate = asObject(rule.predicate);
@@ -903,9 +906,6 @@ export function validateAmapiPolicyPayload(payload: unknown): AmapiPolicyValidat
           errors.push(`${path}.predicate.daysOfWeek must contain only explicit day values`);
         }
         const days = rawDays.filter((value): value is string => typeof value === 'string');
-        if (predicate.daysOfWeek !== undefined && days.length === 0) {
-          errors.push(`${path}.predicate.daysOfWeek must not be empty when set`);
-        }
         if (hasDuplicates(days)) errors.push(`${path}.predicate.daysOfWeek contains duplicates`);
         days.forEach((day, dayIdx) => {
           if (!UUC_DAYS.has(day)) errors.push(`${path}.predicate.daysOfWeek[${dayIdx}] must be an explicit day`);
@@ -918,13 +918,15 @@ export function validateAmapiPolicyPayload(payload: unknown): AmapiPolicyValidat
           ? null
           : parseUucHour(predicate.timeOfDayUpperBound);
         if (predicate.timeOfDayLowerBound !== undefined && lowerHour === null) {
-          errors.push(`${path}.predicate.timeOfDayLowerBound must use hours 0..23 with zero/omitted minutes, seconds, and nanos`);
+          errors.push(`${path}.predicate.timeOfDayLowerBound must contain only hours 0..23; minutes, seconds, and nanos must be omitted`);
         }
         if (predicate.timeOfDayUpperBound !== undefined && upperHour === null) {
-          errors.push(`${path}.predicate.timeOfDayUpperBound must use hours 0..23 with zero/omitted minutes, seconds, and nanos`);
+          errors.push(`${path}.predicate.timeOfDayUpperBound must contain only hours 0..23; minutes, seconds, and nanos must be omitted`);
         }
-        if (lowerHour !== null && upperHour !== null && lowerHour >= upperHour) {
-          errors.push(`${path}.predicate time-of-day lower bound must be earlier than the upper bound; split overnight windows into separate rules`);
+        if (upperHour === 0) {
+          warnings.push(`${path}.predicate.timeOfDayUpperBound=0 makes the predicate false for the entire day; omit the upper bound to continue through the end of the day`);
+        } else if (lowerHour !== null && upperHour !== null && lowerHour >= upperHour) {
+          warnings.push(`${path}.predicate time-of-day window never matches because the upper bound is not later than the lower bound; split overnight windows into separate rules`);
         }
 
         const lowerDate = predicate.dateLowerBound === undefined ? null : parseUucDate(predicate.dateLowerBound);
@@ -936,7 +938,7 @@ export function validateAmapiPolicyPayload(payload: unknown): AmapiPolicyValidat
           errors.push(`${path}.predicate.dateUpperBound must be a valid year/month/day date`);
         }
         if (lowerDate !== null && upperDate !== null && lowerDate > upperDate) {
-          errors.push(`${path}.predicate date lower bound must not be after the upper bound`);
+          warnings.push(`${path}.predicate date range never matches because the upper bound is before the lower bound`);
         }
 
         const lowerAge = predicate.updateAgeLowerBound === undefined
@@ -951,8 +953,11 @@ export function validateAmapiPolicyPayload(payload: unknown): AmapiPolicyValidat
         if (predicate.updateAgeUpperBound !== undefined && upperAge === null) {
           errors.push(`${path}.predicate.updateAgeUpperBound must be a non-negative Duration in whole 24-hour days`);
         }
-        if (lowerAge !== null && upperAge !== null && lowerAge > upperAge) {
-          errors.push(`${path}.predicate update-age lower bound must not exceed the upper bound`);
+        if (lowerAge !== null && upperAge !== null && upperAge !== 0 && lowerAge > upperAge) {
+          warnings.push(`${path}.predicate update-age range never matches because the upper bound is below the lower bound`);
+        }
+        if (upperAge === 0) {
+          warnings.push(`${path}.predicate.updateAgeUpperBound=0 is unbounded and always evaluates to true`);
         }
       }
 

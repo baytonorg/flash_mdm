@@ -139,8 +139,9 @@ export function createDefaultUucRule(index: number): UucRule {
 
 export function durationToDays(value: unknown): number | '' {
   if (typeof value !== 'string') return '';
-  const match = /^(0|[1-9]\d*)s$/.exec(value);
+  const match = /^(0|[1-9]\d*)(?:\.(\d{1,9}))?s$/.exec(value);
   if (!match) return '';
+  if (match[2] && /[1-9]/.test(match[2])) return '';
   const seconds = Number(match[1]);
   return Number.isSafeInteger(seconds) && seconds % DAY_SECONDS === 0
     ? seconds / DAY_SECONDS
@@ -204,12 +205,9 @@ export function getRuleEditorIssues(rule: UucRule, index: number, rules: UucRule
   if (!rule.outcome?.outcomeType || rule.outcome.outcomeType === 'OUTCOME_TYPE_UNSPECIFIED') {
     issues.push('Choose an outcome.');
   }
-  if (rule.outcome?.outcomeType === 'USER_PROMPT' && targets.some((target) => !isOsTarget(target.targetType))) {
-    issues.push('User prompt is available only for OEM OS targets.');
-  }
   const days = rule.predicate?.daysOfWeek;
   if (days !== undefined) {
-    if (!Array.isArray(days) || days.length === 0) issues.push('Days of week must be a non-empty list when set.');
+    if (!Array.isArray(days)) issues.push('Days of week must be a list.');
     else {
       if (new Set(days).size !== days.length) issues.push('Days of week must not contain duplicates.');
       if (days.some((day) => !UUC_DAYS.has(day))) issues.push('Choose only supported days of week.');
@@ -220,33 +218,70 @@ export function getRuleEditorIssues(rule: UucRule, index: number, rules: UucRule
     if (!record) return undefined;
     const hours = record.hours;
     if (!Number.isInteger(hours) || Number(hours) < 0 || Number(hours) > 23) return undefined;
-    if (['minutes', 'seconds', 'nanos'].some((key) => record[key] !== undefined && record[key] !== 0)) return undefined;
+    if (['minutes', 'seconds', 'nanos'].some((key) => Object.prototype.hasOwnProperty.call(record, key))) return undefined;
     return Number(hours);
   };
   const lowerHour = validateHour(rule.predicate?.timeOfDayLowerBound);
   const upperHour = validateHour(rule.predicate?.timeOfDayUpperBound);
   if (rule.predicate?.timeOfDayLowerBound !== undefined && lowerHour === undefined) {
-    issues.push('Time lower bound must use a whole hour from 0 to 23.');
+    issues.push('Time lower bound must contain only an hour from 0 to 23. Omit minutes, seconds, and nanos.');
   }
   if (rule.predicate?.timeOfDayUpperBound !== undefined && upperHour === undefined) {
-    issues.push('Time upper bound must use a whole hour from 0 to 23.');
-  }
-  if (lowerHour !== undefined && upperHour !== undefined && lowerHour >= upperHour) {
-    issues.push('Time lower bound must be earlier than the upper bound. Split overnight windows into separate rules.');
+    issues.push('Time upper bound must contain only an hour from 0 to 23. Omit minutes, seconds, and nanos.');
   }
   const lowerDate = dateToInput(rule.predicate?.dateLowerBound);
   const upperDate = dateToInput(rule.predicate?.dateUpperBound);
   if (rule.predicate?.dateLowerBound !== undefined && !lowerDate) issues.push('Date lower bound must be a valid date.');
   if (rule.predicate?.dateUpperBound !== undefined && !upperDate) issues.push('Date upper bound must be a valid date.');
-  if (lowerDate && upperDate && lowerDate > upperDate) issues.push('Date lower bound must not be after the upper bound.');
   const lowerAge = durationToDays(rule.predicate?.updateAgeLowerBound);
   const upperAge = durationToDays(rule.predicate?.updateAgeUpperBound);
   if (rule.predicate?.updateAgeLowerBound !== undefined && lowerAge === '') issues.push('Update-age lower bound must be a whole number of days.');
   if (rule.predicate?.updateAgeUpperBound !== undefined && upperAge === '') issues.push('Update-age upper bound must be a whole number of days.');
-  if (lowerAge !== '' && upperAge !== '' && lowerAge > upperAge) {
-    issues.push('Update-age lower bound must not exceed the upper bound.');
-  }
   return issues;
+}
+
+export function getRuleEditorWarnings(rule: UucRule): string[] {
+  const warnings: string[] = [];
+  const targets = Array.isArray(rule.targets) ? rule.targets : [];
+  const hasOsTarget = targets.some((target) => isOsTarget(target.targetType));
+  const hasNonOsTarget = targets.some((target) => !isOsTarget(target.targetType));
+  const stages = Array.isArray(rule.stages) ? rule.stages : [];
+
+  if (stages.length > 0 && !hasOsTarget) {
+    warnings.push('Evaluation stages are ignored because this rule has no OEM OS target.');
+  } else if (stages.length > 0 && hasNonOsTarget) {
+    warnings.push('Evaluation stages apply only to the OS targets in this mixed rule.');
+  }
+  if (rule.outcome?.outcomeType === 'USER_PROMPT' && !hasOsTarget) {
+    warnings.push('User prompt has no effect for non-OS targets. Those targets use their default update behaviour as if no rule matched.');
+  } else if (rule.outcome?.outcomeType === 'USER_PROMPT' && hasNonOsTarget) {
+    warnings.push('User prompt applies only to the OS targets in this mixed rule. Non-OS targets use their default update behaviour as if no rule matched.');
+  }
+
+  const lowerHour = rule.predicate?.timeOfDayLowerBound?.hours;
+  const upperHour = rule.predicate?.timeOfDayUpperBound?.hours;
+  if (Number.isInteger(upperHour) && upperHour === 0) {
+    warnings.push('A time upper bound of 00:00 makes this predicate false for the whole day. Omit the upper bound to continue through the end of the day.');
+  } else if (Number.isInteger(lowerHour) && Number.isInteger(upperHour) && Number(upperHour) <= Number(lowerHour)) {
+    warnings.push('This time window never matches. Use two rules for an overnight window: an evening rule with only a lower bound, then a morning rule with only an upper bound.');
+  }
+
+  const lowerDate = dateToInput(rule.predicate?.dateLowerBound);
+  const upperDate = dateToInput(rule.predicate?.dateUpperBound);
+  if (lowerDate && upperDate && lowerDate > upperDate) {
+    warnings.push('This date range never matches because the upper date is before the lower date.');
+  }
+
+  const lowerAge = durationToDays(rule.predicate?.updateAgeLowerBound);
+  const upperAge = durationToDays(rule.predicate?.updateAgeUpperBound);
+  if (lowerAge !== '' && upperAge !== '' && upperAge !== 0 && lowerAge > upperAge) {
+    warnings.push('This update-age range never matches because the upper bound is below the lower bound.');
+  }
+  if (upperAge === 0) {
+    warnings.push('An update-age upper bound of 0 is unbounded in UUC. It always evaluates to true.');
+  }
+
+  return warnings;
 }
 
 export function describeUucRule(rule: UucRule): string {
@@ -260,14 +295,25 @@ export function describeUucRule(rule: UucRule): string {
   const conditions: string[] = [];
   if (rule.predicate?.daysOfWeek?.length) conditions.push(rule.predicate.daysOfWeek.join(', '));
   if (rule.predicate?.timeOfDayLowerBound || rule.predicate?.timeOfDayUpperBound) {
-    conditions.push(`hours ${rule.predicate.timeOfDayLowerBound?.hours ?? 0}:00 to ${rule.predicate.timeOfDayUpperBound?.hours ?? 23}:00`);
+    const lowerHour = rule.predicate.timeOfDayLowerBound?.hours;
+    const upperHour = rule.predicate.timeOfDayUpperBound?.hours;
+    if (lowerHour !== undefined && upperHour !== undefined) {
+      conditions.push(`hours ${String(lowerHour).padStart(2, '0')}:00 inclusive to ${String(upperHour).padStart(2, '0')}:00 exclusive`);
+    } else if (lowerHour !== undefined) {
+      conditions.push(`from ${String(lowerHour).padStart(2, '0')}:00 to the end of the day`);
+    } else if (upperHour !== undefined) {
+      conditions.push(`before ${String(upperHour).padStart(2, '0')}:00`);
+    }
   }
   const lowerDate = dateToInput(rule.predicate?.dateLowerBound);
   const upperDate = dateToInput(rule.predicate?.dateUpperBound);
   if (lowerDate || upperDate) conditions.push(`dates ${lowerDate || 'any'} to ${upperDate || 'any'}`);
   const lowerAge = durationToDays(rule.predicate?.updateAgeLowerBound);
   const upperAge = durationToDays(rule.predicate?.updateAgeUpperBound);
-  if (lowerAge !== '' || upperAge !== '') conditions.push(`update age ${lowerAge === '' ? 0 : lowerAge} to ${upperAge === '' ? 'any' : upperAge} days`);
+  if (lowerAge !== '' || upperAge !== '') {
+    const effectiveUpperAge = upperAge === '' || upperAge === 0 ? 'any' : upperAge;
+    conditions.push(`update age ${lowerAge === '' ? 0 : lowerAge} to ${effectiveUpperAge} days`);
+  }
   const stages = rule.stages?.length
     ? ` at ${rule.stages.map((stage) => stage === 'STAGE_DOWNLOAD' ? 'download' : 'apply').join(' and ')}`
     : '';

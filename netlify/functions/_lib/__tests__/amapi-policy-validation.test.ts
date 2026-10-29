@@ -365,12 +365,77 @@ describe('amapi-policy-validation', () => {
       expect.stringContaining('targets contains duplicate target types'),
       expect.stringContaining('singleApp.packageName is invalid'),
       expect.stringContaining('stages contains duplicates'),
-      expect.stringContaining('daysOfWeek must not be empty'),
-      expect.stringContaining('timeOfDayLowerBound must use hours 0..23'),
+      expect.stringContaining('timeOfDayLowerBound must contain only hours 0..23'),
       expect.stringContaining('dateLowerBound must be a valid year/month/day date'),
       expect.stringContaining('updateAgeLowerBound must be a non-negative Duration in whole 24-hour days'),
-      expect.stringContaining('USER_PROMPT is only valid for OEM OS update targets'),
     ]));
+  });
+
+  it('rejects explicit zero-valued minute fields because UUC permits the hour field only', () => {
+    const result = validateAmapiPolicyPayload({
+      unifiedUpdatePolicy: {
+        rules: [{
+          id: 'zero-minute-is-still-present',
+          targets: [{ targetType: 'OS_UPDATE_WITH_API_LEVEL_CHANGE' }],
+          predicate: { timeOfDayLowerBound: { hours: 9, minutes: 0 } },
+          outcome: { outcomeType: 'BLOCK' },
+        }],
+      },
+    });
+
+    expect(result.errors).toEqual(expect.arrayContaining([
+      expect.stringContaining('minutes, seconds, and nanos must be omitted'),
+    ]));
+  });
+
+  it('accepts documented false and unbounded predicates while warning about their effect', () => {
+    const result = validateAmapiPolicyPayload({
+      unifiedUpdatePolicy: {
+        rules: [
+          {
+            id: 'documented-edge-semantics',
+            targets: [
+              { targetType: 'OS_UPDATE_WITH_API_LEVEL_CHANGE' },
+              { targetType: 'GOOGLE_PLAY_SYSTEM_UPDATE' },
+            ],
+            predicate: {
+              daysOfWeek: [],
+              timeOfDayLowerBound: { hours: 17 },
+              timeOfDayUpperBound: { hours: 9 },
+              dateLowerBound: { year: 2026, month: 12, day: 31 },
+              dateUpperBound: { year: 2026, month: 1, day: 1 },
+              updateAgeLowerBound: '604800.000000000s',
+              updateAgeUpperBound: '0s',
+            },
+            outcome: { outcomeType: 'USER_PROMPT' },
+          },
+        ],
+      },
+    });
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.warnings).toEqual(expect.arrayContaining([
+      expect.stringContaining('time-of-day window never matches'),
+      expect.stringContaining('date range never matches'),
+      expect.stringContaining('updateAgeUpperBound=0 is unbounded'),
+      expect.stringContaining('USER_PROMPT applies only to the OEM OS targets'),
+    ]));
+    expect(result.warnings.some((warning) => warning.includes('update-age range never matches'))).toBe(false);
+  });
+
+  it('accepts a non-OS USER_PROMPT rule and reports the documented default behaviour', () => {
+    const result = validateAmapiPolicyPayload({
+      unifiedUpdatePolicy: {
+        rules: [{
+          id: 'non-os-prompt',
+          targets: [{ targetType: 'GOOGLE_SYSTEM_SERVICES' }],
+          outcome: { outcomeType: 'USER_PROMPT' },
+        }],
+      },
+    });
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.warnings).toContain('unifiedUpdatePolicy.rules[0].outcome USER_PROMPT has no effect for non-OS targets; default update behavior applies as if no rule matched');
   });
 
   it('warns for shadowed, ignored-stage, and unreachable unified update targets', () => {
