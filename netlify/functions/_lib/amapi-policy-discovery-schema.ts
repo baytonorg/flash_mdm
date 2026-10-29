@@ -809,6 +809,19 @@ export const AMAPI_POLICY_DISCOVERY_SCHEMA = {
         }
       }
     },
+    "ExtraCapabilities": {
+      "type": "object",
+      "properties": {
+        "localDeviceWipeCommand": {
+          "type": "string",
+          "enum": [
+            "LOCAL_DEVICE_WIPE_COMMAND_UNSPECIFIED",
+            "LOCAL_DEVICE_WIPE_COMMAND_DISALLOWED",
+            "LOCAL_DEVICE_WIPE_COMMAND_ALLOWED"
+          ]
+        }
+      }
+    },
     "FreezePeriod": {
       "type": "object",
       "properties": {
@@ -1834,6 +1847,9 @@ export const AMAPI_POLICY_DISCOVERY_SCHEMA = {
     "Role": {
       "type": "object",
       "properties": {
+        "extraCapabilities": {
+          "$ref": "ExtraCapabilities"
+        },
         "roleType": {
           "type": "string",
           "enum": [
