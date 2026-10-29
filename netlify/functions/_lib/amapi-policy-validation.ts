@@ -19,6 +19,27 @@ export type AmapiPolicyValidationResult = {
 
 const SHA256_HEX = /^[a-fA-F0-9]{64}$/;
 const ANDROID_PACKAGE_NAME = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/;
+const UUC_OS_TARGETS = new Set([
+  'OS_UPDATE_WITH_API_LEVEL_CHANGE',
+  'OS_UPDATE_WITHOUT_API_LEVEL_CHANGE',
+]);
+const UUC_TARGETS = new Set([
+  ...UUC_OS_TARGETS,
+  'GOOGLE_PLAY_SYSTEM_UPDATE',
+  'GOOGLE_SYSTEM_SERVICES',
+  'SINGLE_APP',
+]);
+const UUC_STAGES = new Set(['STAGE_DOWNLOAD', 'STAGE_APPLY']);
+const UUC_OUTCOMES = new Set(['BLOCK', 'USER_PROMPT', 'FORCE']);
+const UUC_DAYS = new Set([
+  'MONDAY',
+  'TUESDAY',
+  'WEDNESDAY',
+  'THURSDAY',
+  'FRIDAY',
+  'SATURDAY',
+  'SUNDAY',
+]);
 
 function asObject(value: unknown): JsonObject | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -39,6 +60,41 @@ function asNumber(value: unknown): number | null {
 
 function hasDuplicates(values: string[]): boolean {
   return new Set(values).size !== values.length;
+}
+
+function parseWholeDayDuration(value: unknown): number | null {
+  if (typeof value !== 'string') return null;
+  const match = /^(0|[1-9]\d*)s$/.exec(value);
+  if (!match) return null;
+  const seconds = Number(match[1]);
+  if (!Number.isSafeInteger(seconds) || seconds % 86400 !== 0) return null;
+  return seconds / 86400;
+}
+
+function parseUucDate(value: unknown): number | null {
+  const date = asObject(value);
+  if (!date) return null;
+  const year = asNumber(date.year);
+  const month = asNumber(date.month);
+  const day = asNumber(date.day);
+  if (![year, month, day].every((part) => part !== null && Number.isInteger(part))) return null;
+  if (year === null || month === null || day === null || year < 1 || year > 9999 || month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const parsed = new Date(0);
+  parsed.setUTCHours(0, 0, 0, 0);
+  parsed.setUTCFullYear(year, month - 1, day);
+  if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) return null;
+  return parsed.getTime();
+}
+
+function parseUucHour(value: unknown): number | null {
+  const time = asObject(value);
+  if (!time) return null;
+  const hours = asNumber(time.hours);
+  if (hours === null || !Number.isInteger(hours) || hours < 0 || hours > 23) return null;
+  for (const key of ['minutes', 'seconds', 'nanos'] as const) {
+    if (time[key] !== undefined && time[key] !== 0) return null;
+  }
+  return hours;
 }
 
 function enumerateAnnualRange(startDay: number, endDay: number, totalDays = 366): number[] {
@@ -742,6 +798,207 @@ export function validateAmapiPolicyPayload(payload: unknown): AmapiPolicyValidat
       }
       if (mode === 'SCREEN_TIMEOUT_ENFORCED' && st.screenTimeout === undefined) {
         errors.push('displaySettings.screenTimeoutSettings.screenTimeout must be set when screenTimeoutMode=SCREEN_TIMEOUT_ENFORCED');
+      }
+    }
+  }
+
+  const unifiedUpdatePolicy = asObject(policy.unifiedUpdatePolicy);
+  if (unifiedUpdatePolicy) {
+    const rules = asArray<unknown>(unifiedUpdatePolicy.rules);
+    if (unifiedUpdatePolicy.rules !== undefined && !Array.isArray(unifiedUpdatePolicy.rules)) {
+      errors.push('unifiedUpdatePolicy.rules must be a list');
+    }
+    if (rules.length > 100) {
+      errors.push(`unifiedUpdatePolicy.rules has ${rules.length} items; AMAPI maximum is 100`);
+    }
+
+    const ruleIds = new Set<string>();
+    const unconditionalTargetStageOwner = new Map<string, number>();
+    rules.forEach((ruleValue, ruleIdx) => {
+      const path = `unifiedUpdatePolicy.rules[${ruleIdx}]`;
+      const rule = asObject(ruleValue);
+      if (!rule) {
+        errors.push(`${path} must be an object`);
+        return;
+      }
+      const id = asString(rule.id)?.trim() ?? '';
+      if (!id) {
+        errors.push(`${path}.id is required`);
+      } else {
+        if (id.length > 64) errors.push(`${path}.id exceeds the AMAPI maximum of 64 characters`);
+        if (ruleIds.has(id)) errors.push(`${path}.id duplicates rule id ${id}`);
+        ruleIds.add(id);
+      }
+
+      const targets = asArray<unknown>(rule.targets);
+      if (rule.targets !== undefined && !Array.isArray(rule.targets)) {
+        errors.push(`${path}.targets must be a list`);
+      }
+      if (targets.length === 0) {
+        errors.push(`${path}.targets must not be empty`);
+      }
+      const targetTypes: string[] = [];
+      targets.forEach((targetValue, targetIdx) => {
+        const targetPath = `${path}.targets[${targetIdx}]`;
+        const target = asObject(targetValue);
+        if (!target) {
+          errors.push(`${targetPath} must be an object`);
+          return;
+        }
+        const targetType = asString(target.targetType) ?? '';
+        if (!UUC_TARGETS.has(targetType)) {
+          errors.push(`${targetPath}.targetType must be a supported explicit target`);
+          return;
+        }
+        targetTypes.push(targetType);
+        const singleApp = asObject(target.singleApp);
+        if (targetType === 'SINGLE_APP') {
+          const packageName = asString(singleApp?.packageName)?.trim() ?? '';
+          if (!packageName) {
+            errors.push(`${targetPath}.singleApp.packageName is required for SINGLE_APP`);
+          } else if (!ANDROID_PACKAGE_NAME.test(packageName)) {
+            errors.push(`${targetPath}.singleApp.packageName is invalid: ${packageName}`);
+          }
+        } else if (singleApp) {
+          errors.push(`${targetPath}.singleApp is only valid for SINGLE_APP`);
+        }
+      });
+      if (hasDuplicates(targetTypes)) {
+        errors.push(`${path}.targets contains duplicate target types`);
+      }
+
+      const rawStages = asArray<unknown>(rule.stages);
+      if (rule.stages !== undefined && !Array.isArray(rule.stages)) {
+        errors.push(`${path}.stages must be a list`);
+      }
+      if (rawStages.some((value) => typeof value !== 'string')) {
+        errors.push(`${path}.stages must contain only explicit stage values`);
+      }
+      const stages = rawStages.filter((value): value is string => typeof value === 'string');
+      if (hasDuplicates(stages)) errors.push(`${path}.stages contains duplicates`);
+      stages.forEach((stage, stageIdx) => {
+        if (!UUC_STAGES.has(stage)) errors.push(`${path}.stages[${stageIdx}] must be a supported explicit stage`);
+      });
+      if (stages.length > 0 && targetTypes.every((target) => !UUC_OS_TARGETS.has(target))) {
+        warnings.push(`${path}.stages is ignored because the rule has no OEM OS update target`);
+      } else if (stages.length > 0 && targetTypes.some((target) => !UUC_OS_TARGETS.has(target))) {
+        warnings.push(`${path}.stages is ignored for the rule's non-OS targets`);
+      }
+
+      const outcome = asObject(rule.outcome);
+      const outcomeType = asString(outcome?.outcomeType) ?? '';
+      if (!UUC_OUTCOMES.has(outcomeType)) {
+        errors.push(`${path}.outcome.outcomeType is required and must be BLOCK, USER_PROMPT, or FORCE`);
+      } else if (outcomeType === 'USER_PROMPT' && targetTypes.some((target) => !UUC_OS_TARGETS.has(target))) {
+        errors.push(`${path}.outcome USER_PROMPT is only valid for OEM OS update targets`);
+      }
+
+      const predicate = asObject(rule.predicate);
+      if (predicate) {
+        const rawDays = asArray<unknown>(predicate.daysOfWeek);
+        if (predicate.daysOfWeek !== undefined && !Array.isArray(predicate.daysOfWeek)) {
+          errors.push(`${path}.predicate.daysOfWeek must be a list`);
+        }
+        if (rawDays.some((value) => typeof value !== 'string')) {
+          errors.push(`${path}.predicate.daysOfWeek must contain only explicit day values`);
+        }
+        const days = rawDays.filter((value): value is string => typeof value === 'string');
+        if (predicate.daysOfWeek !== undefined && days.length === 0) {
+          errors.push(`${path}.predicate.daysOfWeek must not be empty when set`);
+        }
+        if (hasDuplicates(days)) errors.push(`${path}.predicate.daysOfWeek contains duplicates`);
+        days.forEach((day, dayIdx) => {
+          if (!UUC_DAYS.has(day)) errors.push(`${path}.predicate.daysOfWeek[${dayIdx}] must be an explicit day`);
+        });
+
+        const lowerHour = predicate.timeOfDayLowerBound === undefined
+          ? null
+          : parseUucHour(predicate.timeOfDayLowerBound);
+        const upperHour = predicate.timeOfDayUpperBound === undefined
+          ? null
+          : parseUucHour(predicate.timeOfDayUpperBound);
+        if (predicate.timeOfDayLowerBound !== undefined && lowerHour === null) {
+          errors.push(`${path}.predicate.timeOfDayLowerBound must use hours 0..23 with zero/omitted minutes, seconds, and nanos`);
+        }
+        if (predicate.timeOfDayUpperBound !== undefined && upperHour === null) {
+          errors.push(`${path}.predicate.timeOfDayUpperBound must use hours 0..23 with zero/omitted minutes, seconds, and nanos`);
+        }
+        if (lowerHour !== null && upperHour !== null && lowerHour >= upperHour) {
+          errors.push(`${path}.predicate time-of-day lower bound must be earlier than the upper bound; split overnight windows into separate rules`);
+        }
+
+        const lowerDate = predicate.dateLowerBound === undefined ? null : parseUucDate(predicate.dateLowerBound);
+        const upperDate = predicate.dateUpperBound === undefined ? null : parseUucDate(predicate.dateUpperBound);
+        if (predicate.dateLowerBound !== undefined && lowerDate === null) {
+          errors.push(`${path}.predicate.dateLowerBound must be a valid year/month/day date`);
+        }
+        if (predicate.dateUpperBound !== undefined && upperDate === null) {
+          errors.push(`${path}.predicate.dateUpperBound must be a valid year/month/day date`);
+        }
+        if (lowerDate !== null && upperDate !== null && lowerDate > upperDate) {
+          errors.push(`${path}.predicate date lower bound must not be after the upper bound`);
+        }
+
+        const lowerAge = predicate.updateAgeLowerBound === undefined
+          ? null
+          : parseWholeDayDuration(predicate.updateAgeLowerBound);
+        const upperAge = predicate.updateAgeUpperBound === undefined
+          ? null
+          : parseWholeDayDuration(predicate.updateAgeUpperBound);
+        if (predicate.updateAgeLowerBound !== undefined && lowerAge === null) {
+          errors.push(`${path}.predicate.updateAgeLowerBound must be a non-negative Duration in whole 24-hour days`);
+        }
+        if (predicate.updateAgeUpperBound !== undefined && upperAge === null) {
+          errors.push(`${path}.predicate.updateAgeUpperBound must be a non-negative Duration in whole 24-hour days`);
+        }
+        if (lowerAge !== null && upperAge !== null && lowerAge > upperAge) {
+          errors.push(`${path}.predicate update-age lower bound must not exceed the upper bound`);
+        }
+      }
+
+      const isUnconditional = !predicate || Object.keys(predicate).length === 0;
+      for (const targetType of targetTypes) {
+        const effectiveStages = UUC_OS_TARGETS.has(targetType)
+          ? (stages.filter((stage) => UUC_STAGES.has(stage)).length > 0
+              ? stages.filter((stage) => UUC_STAGES.has(stage))
+              : [...UUC_STAGES])
+          : ['ALL'];
+        const ownedStages = effectiveStages.flatMap((stage) => {
+          const earlierRule = unconditionalTargetStageOwner.get(`${targetType}:${stage}`);
+          return earlierRule === undefined ? [] : [{ stage, earlierRule }];
+        });
+        if (ownedStages.length === effectiveStages.length && ownedStages.length > 0) {
+          const ownerNumbers = [...new Set(ownedStages.map(({ earlierRule }) => earlierRule + 1))].join(', ');
+          warnings.push(`${path} target ${targetType} is unreachable because earlier unconditional rule(s) ${ownerNumbers} cover its evaluation stages`);
+        } else if (ownedStages.length > 0) {
+          warnings.push(`${path} target ${targetType} is unreachable at ${ownedStages.map(({ stage }) => stage).join(', ')} because an earlier unconditional rule covers those evaluation stages`);
+        }
+        if (isUnconditional) {
+          for (const stage of effectiveStages) {
+            const key = `${targetType}:${stage}`;
+            if (!unconditionalTargetStageOwner.has(key)) unconditionalTargetStageOwner.set(key, ruleIdx);
+          }
+        }
+      }
+    });
+
+    const systemUpdateForPrecedence = asObject(policy.systemUpdate);
+    if (systemUpdateForPrecedence && Object.keys(systemUpdateForPrecedence).length > 0) {
+      rules.forEach((ruleValue, ruleIdx) => {
+        const rule = asObject(ruleValue);
+        if (!rule) return;
+        const targets = asArray<unknown>(rule.targets);
+        targets.forEach((targetValue, targetIdx) => {
+          const target = asObject(targetValue);
+          if (!target) return;
+          const targetType = asString(target.targetType) ?? '';
+          if (UUC_OS_TARGETS.has(targetType)) {
+            warnings.push(`unifiedUpdatePolicy.rules[${ruleIdx}].targets[${targetIdx}] ${targetType} is shadowed by systemUpdate`);
+          }
+        });
+      });
+      if (asString(systemUpdateForPrecedence.type) === 'WINDOWED') {
+        warnings.push('systemUpdate type WINDOWED also affects Google Play app update timing; review UUC Google-system-service and single-app rules carefully');
       }
     }
   }

@@ -8,6 +8,7 @@ import EnumField from '@/components/policy/fields/EnumField';
 import RepeaterField from '@/components/policy/fields/RepeaterField';
 import JsonField from '@/components/policy/fields/JsonField';
 import ManagedConfigEditor from '@/components/apps/ManagedConfigEditor';
+import PlatformUpdatesSection from '@/components/policy/PlatformUpdatesSection';
 import { useAppDetails } from '@/api/queries/apps';
 import { useContextStore } from '@/stores/context';
 
@@ -2213,8 +2214,11 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
 
       return (
         <div>
-          <h3 className="text-lg font-semibold text-gray-900 mb-1">System Updates</h3>
-          <p className="text-sm text-gray-500 mb-6">Configure over-the-air update policy.</p>
+          <PlatformUpdatesSection config={config} onChange={onChange} />
+
+          <div className="mt-8 border-t border-gray-200 pt-6">
+          <h4 className="text-base font-semibold text-gray-900 mb-1">System update policy</h4>
+          <p className="text-sm text-gray-500 mb-6">Configure authoritative OEM over-the-air update behaviour where this policy is supported.</p>
 
           <EnumField
             label="System Update Type"
@@ -2338,6 +2342,7 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
           <p className="mt-2 text-xs text-amber-700">
             AMAPI requires each freeze period to be at most 90 days and separated by at least 60 days.
           </p>
+          </div>
         </div>
       );
       }

@@ -2,7 +2,7 @@
 // Refresh deliberately with `npm run amapi-schema:update` and review the schema diff.
 export const AMAPI_POLICY_DISCOVERY_SCHEMA = {
   "source": "https://androidmanagement.googleapis.com/$discovery/rest?version=v1",
-  "revision": "20261022",
+  "revision": "20261029",
   "root": "Policy",
   "schemas": {
     "AdvancedSecurityOverrides": {
@@ -963,6 +963,20 @@ export const AMAPI_POLICY_DISCOVERY_SCHEMA = {
         }
       }
     },
+    "Outcome": {
+      "type": "object",
+      "properties": {
+        "outcomeType": {
+          "type": "string",
+          "enum": [
+            "OUTCOME_TYPE_UNSPECIFIED",
+            "FORCE",
+            "USER_PROMPT",
+            "BLOCK"
+          ]
+        }
+      }
+    },
     "PackageNameList": {
       "type": "object",
       "properties": {
@@ -1622,6 +1636,9 @@ export const AMAPI_POLICY_DISCOVERY_SCHEMA = {
         "tetheringConfigDisabled": {
           "type": "boolean"
         },
+        "unifiedUpdatePolicy": {
+          "$ref": "UnifiedUpdatePolicy"
+        },
         "uninstallAppsDisabled": {
           "type": "boolean"
         },
@@ -1676,6 +1693,47 @@ export const AMAPI_POLICY_DISCOVERY_SCHEMA = {
         },
         "wipeAction": {
           "$ref": "WipeAction"
+        }
+      }
+    },
+    "Predicate": {
+      "type": "object",
+      "properties": {
+        "dateLowerBound": {
+          "$ref": "Date"
+        },
+        "dateUpperBound": {
+          "$ref": "Date"
+        },
+        "daysOfWeek": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "DAY_OF_WEEK_UNSPECIFIED",
+              "MONDAY",
+              "TUESDAY",
+              "WEDNESDAY",
+              "THURSDAY",
+              "FRIDAY",
+              "SATURDAY",
+              "SUNDAY"
+            ]
+          }
+        },
+        "timeOfDayLowerBound": {
+          "$ref": "TimeOfDay"
+        },
+        "timeOfDayUpperBound": {
+          "$ref": "TimeOfDay"
+        },
+        "updateAgeLowerBound": {
+          "type": "string",
+          "format": "google-duration"
+        },
+        "updateAgeUpperBound": {
+          "type": "string",
+          "format": "google-duration"
         }
       }
     },
@@ -1788,6 +1846,37 @@ export const AMAPI_POLICY_DISCOVERY_SCHEMA = {
         }
       }
     },
+    "Rule": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "Outcome"
+        },
+        "predicate": {
+          "$ref": "Predicate"
+        },
+        "stages": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "STAGE_UNSPECIFIED",
+              "STAGE_DOWNLOAD",
+              "STAGE_APPLY"
+            ]
+          }
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "$ref": "Target"
+          }
+        }
+      }
+    },
     "ScreenBrightnessSettings": {
       "type": "object",
       "properties": {
@@ -1834,6 +1923,14 @@ export const AMAPI_POLICY_DISCOVERY_SCHEMA = {
         },
         "title": {
           "$ref": "UserFacingMessage"
+        }
+      }
+    },
+    "SingleApp": {
+      "type": "object",
+      "properties": {
+        "packageName": {
+          "type": "string"
         }
       }
     },
@@ -1903,6 +2000,57 @@ export const AMAPI_POLICY_DISCOVERY_SCHEMA = {
             "WINDOWED",
             "POSTPONE"
           ]
+        }
+      }
+    },
+    "Target": {
+      "type": "object",
+      "properties": {
+        "singleApp": {
+          "$ref": "SingleApp"
+        },
+        "targetType": {
+          "type": "string",
+          "enum": [
+            "TARGET_TYPE_UNSPECIFIED",
+            "SINGLE_APP",
+            "GOOGLE_SYSTEM_SERVICES",
+            "GOOGLE_PLAY_SYSTEM_UPDATE",
+            "OS_UPDATE_WITHOUT_API_LEVEL_CHANGE",
+            "OS_UPDATE_WITH_API_LEVEL_CHANGE"
+          ]
+        }
+      }
+    },
+    "TimeOfDay": {
+      "type": "object",
+      "properties": {
+        "hours": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "minutes": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "nanos": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "seconds": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "UnifiedUpdatePolicy": {
+      "type": "object",
+      "properties": {
+        "rules": {
+          "type": "array",
+          "items": {
+            "$ref": "Rule"
+          }
         }
       }
     },

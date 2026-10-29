@@ -119,9 +119,9 @@ const CATEGORY_HELP: Record<string, { title: string; description: string; docLin
       'Manage device encryption, debugging access, safe boot, and advanced security overrides such as Google Play Protect verification and developer settings access.',
   },
   systemUpdates: {
-    title: 'System Updates',
+    title: 'Platform Updates',
     description:
-      'Define how OTA system updates and app auto-updates are handled. Options include automatic, windowed (within a daily maintenance window), or postponed updates.',
+      'Control OEM OS, Google Play system, and Google system-service updates. Unified Update Controls use ordered rules, while System update policy remains authoritative for OEM updates whenever configured.',
   },
   permissions: {
     title: 'Permissions',
