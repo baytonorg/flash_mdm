@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { AlertTriangle, ArrowDown, ArrowUp, Copy, Plus, Trash2 } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, ChevronDown, ChevronUp, Copy, Plus, Trash2, X } from 'lucide-react';
 import clsx from 'clsx';
 import {
   PLATFORM_UPDATE_TARGET_LABELS,
@@ -99,6 +99,35 @@ function createDuplicateRuleId(rule: UucRule, rules: UucRule[]): string {
   return candidate;
 }
 
+type ConditionType = 'days' | 'time' | 'date' | 'age';
+
+const CONDITION_LABELS: Record<ConditionType, string> = {
+  days: 'Days of week',
+  time: 'Time of day',
+  date: 'Date range',
+  age: 'Update age',
+};
+
+function getConfiguredConditionTypes(predicate: UucPredicate | undefined): ConditionType[] {
+  if (!predicate) return [];
+  const types: ConditionType[] = [];
+  if (predicate.daysOfWeek !== undefined) types.push('days');
+  if (predicate.timeOfDayLowerBound !== undefined || predicate.timeOfDayUpperBound !== undefined) types.push('time');
+  if (predicate.dateLowerBound !== undefined || predicate.dateUpperBound !== undefined) types.push('date');
+  if (predicate.updateAgeLowerBound !== undefined || predicate.updateAgeUpperBound !== undefined) types.push('age');
+  return types;
+}
+
+function clearCondition(rule: UucRule, type: ConditionType): UucRule {
+  const keys: Record<ConditionType, (keyof UucPredicate)[]> = {
+    days: ['daysOfWeek'],
+    time: ['timeOfDayLowerBound', 'timeOfDayUpperBound'],
+    date: ['dateLowerBound', 'dateUpperBound'],
+    age: ['updateAgeLowerBound', 'updateAgeUpperBound'],
+  };
+  return keys[type].reduce((nextRule, key) => updatePredicate(nextRule, key, undefined), rule);
+}
+
 function UucRuleEditor({
   rule,
   index,
@@ -108,6 +137,8 @@ function UucRuleEditor({
   onMove,
   onDuplicate,
   onRemove,
+  expanded,
+  onToggleExpanded,
 }: {
   rule: UucRule;
   index: number;
@@ -117,12 +148,23 @@ function UucRuleEditor({
   onMove: (direction: -1 | 1) => void;
   onDuplicate: () => void;
   onRemove: () => void;
+  expanded: boolean;
+  onToggleExpanded: () => void;
 }) {
   const issues = getRuleEditorIssues(rule, index, rules);
   const warnings = getRuleEditorWarnings(rule);
   const targetTypes = new Set((rule.targets ?? []).map((target) => target.targetType));
   const hasOsTarget = (rule.targets ?? []).some((target) => isOsTarget(target.targetType));
+  const hasNonOsTarget = (rule.targets ?? []).some((target) => !isOsTarget(target.targetType));
   const singleApp = (rule.targets ?? []).find((target) => target.targetType === 'SINGLE_APP');
+  const [conditionMode, setConditionMode] = useState<'always' | 'conditional'>(() => getConfiguredConditionTypes(rule.predicate).length > 0 ? 'conditional' : 'always');
+  const [visibleConditions, setVisibleConditions] = useState<ConditionType[]>(() => getConfiguredConditionTypes(rule.predicate));
+  const status = issues.length > 0 ? 'Needs attention' : warnings.length > 0 ? 'Review' : 'Ready';
+
+  const removeCondition = (type: ConditionType) => {
+    setVisibleConditions((current) => current.filter((candidate) => candidate !== type));
+    onUpdate(clearCondition(rule, type));
+  };
 
   const toggleTarget = (targetType: PlatformUpdateTargetType, checked: boolean) => {
     const nextTargets = checked
@@ -146,24 +188,41 @@ function UucRuleEditor({
   };
 
   return (
-    <article className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Rule {index + 1}</p>
-          <p className="mt-1 text-sm font-medium text-gray-900">{getUucRuleDisplayName(rule, index)}</p>
-          <p className="mt-2 text-xs font-medium uppercase tracking-wide text-gray-400">Configuration summary</p>
-          <p className="mt-1 text-sm text-gray-600">{describeUucRule(rule)}</p>
-        </div>
-        <div className="flex items-center gap-1">
+    <article className={clsx('rounded-xl border bg-white shadow-sm transition-colors', expanded ? 'border-accent/40' : 'border-gray-200')}>
+      <div className="flex items-start gap-2 p-4">
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-label={`Edit rule ${index + 1}`}
+          onClick={onToggleExpanded}
+          className="min-w-0 flex-1 rounded-lg text-left focus:outline-none focus:ring-2 focus:ring-accent/30"
+        >
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Rule {index + 1}</span>
+            <span className={clsx('rounded-full px-2 py-0.5 text-[11px] font-medium',
+              issues.length > 0 ? 'bg-red-100 text-red-700' : warnings.length > 0 ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-700')}
+            >{status}</span>
+            {rule.outcome?.outcomeType && rule.outcome.outcomeType !== 'OUTCOME_TYPE_UNSPECIFIED' && (
+              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">{rule.outcome.outcomeType.replace('_', ' ')}</span>
+            )}
+          </span>
+          <span className="mt-1 block text-sm font-semibold text-gray-900">{getUucRuleDisplayName(rule, index)}</span>
+          <span className="mt-1 block text-sm text-gray-600"><span className="font-medium text-gray-700">Configuration summary:</span> {describeUucRule(rule)}</span>
+        </button>
+        <div className="flex flex-none items-center gap-1">
           <button type="button" aria-label={`Move rule ${index + 1} up`} disabled={index === 0} onClick={() => onMove(-1)} className="rounded p-1.5 text-gray-500 hover:bg-gray-100 disabled:text-gray-200"><ArrowUp className="h-4 w-4" /></button>
           <button type="button" aria-label={`Move rule ${index + 1} down`} disabled={index === rules.length - 1} onClick={() => onMove(1)} className="rounded p-1.5 text-gray-500 hover:bg-gray-100 disabled:text-gray-200"><ArrowDown className="h-4 w-4" /></button>
           <button type="button" aria-label={`Duplicate rule ${index + 1}`} disabled={rules.length >= 100} onClick={onDuplicate} className="rounded p-1.5 text-gray-500 hover:bg-gray-100 disabled:text-gray-200"><Copy className="h-4 w-4" /></button>
           <button type="button" aria-label={`Delete rule ${index + 1}`} onClick={onRemove} className="rounded p-1.5 text-gray-500 hover:bg-red-50 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>
+          <button type="button" aria-label={`${expanded ? 'Collapse' : 'Expand'} rule ${index + 1}`} aria-expanded={expanded} onClick={onToggleExpanded} className="rounded p-1.5 text-gray-500 hover:bg-gray-100">
+            {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </button>
         </div>
       </div>
 
+      {expanded && <div className="border-t border-gray-100 px-4 pb-4">
       {issues.length > 0 && (
-        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
           <p className="font-semibold">Rule needs attention</p>
           <ul className="mt-1 list-disc pl-4">{issues.map((issue) => <li key={issue}>{issue}</li>)}</ul>
         </div>
@@ -176,7 +235,7 @@ function UucRuleEditor({
         </div>
       )}
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+      <div className="mt-4">
         <div>
           <label className="mb-1 block text-sm font-medium text-gray-900">Rule name</label>
           <input
@@ -188,28 +247,10 @@ function UucRuleEditor({
           />
           <p className="mt-1 text-xs text-gray-500">For admins in Flash. The AMAPI rule ID is generated and kept stable automatically.</p>
         </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium text-gray-900">Outcome</label>
-          <select
-            aria-label={`Rule ${index + 1} outcome`}
-            value={rule.outcome?.outcomeType ?? 'OUTCOME_TYPE_UNSPECIFIED'}
-            onChange={(event) => onUpdate({
-              ...rule,
-              outcome: { outcomeType: event.target.value as UucRule['outcome']['outcomeType'] },
-            })}
-            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
-          >
-            <option value="OUTCOME_TYPE_UNSPECIFIED">Choose an outcome</option>
-            <option value="BLOCK">Block</option>
-            <option value="USER_PROMPT" disabled={!hasOsTarget}>User prompt (OS targets only)</option>
-            <option value="FORCE">Force</option>
-          </select>
-          <p className="mt-1 text-xs text-gray-500">Force starts the evaluated action immediately. User prompt is effective only for OS targets. Block and user prompt remain subject to Android's maximum deferral limits.</p>
-        </div>
       </div>
 
-      <fieldset className="mt-4">
-        <legend className="text-sm font-medium text-gray-900">Targets</legend>
+      <fieldset className="mt-6 rounded-lg border border-gray-200 p-4">
+        <legend className="px-1 text-sm font-semibold text-gray-900">Applies to</legend>
         <p className="mt-1 text-xs text-gray-500">Choose one or more unique targets. Effectiveness is calculated per target.</p>
         <div className="mt-2 grid gap-2 md:grid-cols-2">
           {PLATFORM_UPDATE_TARGETS.map((targetType) => {
@@ -243,27 +284,49 @@ function UucRuleEditor({
             <p className="mt-1 text-xs text-gray-500">One package per rule. Google does not publish a fixed package list, so enter the app's package name. AMAPI checks that it belongs to Google system services when the policy is saved. Use another rule for another app.</p>
           </div>
         )}
+        {hasOsTarget && <div className="mt-4 border-t border-gray-100 pt-4">
+          <p className="text-sm font-medium text-gray-900">At stage</p>
+          <p className="mt-1 text-xs text-gray-500">Optional. Leave both blank for all stages. Apply-stage control is best-effort and cannot prevent every user-initiated reboot or immediately applied update.</p>
+          {hasNonOsTarget && <p className="mt-1 text-xs font-medium text-amber-700">Stage selection applies only to the OEM OS targets in this mixed rule. Google targets are evaluated without a stage restriction.</p>}
+          <div className="mt-2 flex flex-wrap gap-4">
+            {(['STAGE_DOWNLOAD', 'STAGE_APPLY'] as UucStage[]).map((stage) => (
+              <label key={stage} className="flex items-center gap-2 text-sm text-gray-700">
+                <input type="checkbox" checked={rule.stages?.includes(stage) ?? false} onChange={(event) => toggleStage(stage, event.target.checked)} className="h-4 w-4 rounded border-gray-300 text-accent focus:ring-accent" />
+                {stage === 'STAGE_DOWNLOAD' ? 'Download' : 'Apply'}
+              </label>
+            ))}
+          </div>
+        </div>}
       </fieldset>
 
-      <fieldset className="mt-4">
-        <legend className="text-sm font-medium text-gray-900">Evaluation stages</legend>
-        <p className="mt-1 text-xs text-gray-500">Optional. Empty means all stages. Stages are honoured only for OEM OS targets. Apply-stage control is best-effort and cannot prevent every user-initiated reboot or immediately applied update.</p>
-        <div className="mt-2 flex flex-wrap gap-4">
-          {(['STAGE_DOWNLOAD', 'STAGE_APPLY'] as UucStage[]).map((stage) => (
-            <label key={stage} className="flex items-center gap-2 text-sm text-gray-700">
-              <input type="checkbox" disabled={!hasOsTarget} checked={rule.stages?.includes(stage) ?? false} onChange={(event) => toggleStage(stage, event.target.checked)} className="h-4 w-4 rounded border-gray-300 text-accent focus:ring-accent disabled:cursor-not-allowed disabled:opacity-50" />
-              {stage === 'STAGE_DOWNLOAD' ? 'Download' : 'Apply'}
-            </label>
-          ))}
+      <fieldset className="mt-4 rounded-lg border border-gray-200 p-4">
+        <legend className="px-1 text-sm font-semibold text-gray-900">When</legend>
+        <p className="text-xs text-gray-500">Choose whether this rule always applies or only applies when every configured condition matches.</p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <label className={clsx('flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm', conditionMode === 'always' ? 'border-accent bg-accent/5' : 'border-gray-200')}>
+            <input type="radio" name={`rule-${rule.id}-condition-mode`} checked={conditionMode === 'always'} onChange={() => { setConditionMode('always'); setVisibleConditions([]); onUpdate({ ...rule, predicate: undefined }); }} className="mt-0.5 h-4 w-4 border-gray-300 text-accent focus:ring-accent" />
+            <span><span className="block font-medium text-gray-900">Always</span><span className="block text-xs text-gray-500">Apply whenever this target and stage are evaluated.</span></span>
+          </label>
+          <label className={clsx('flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm', conditionMode === 'conditional' ? 'border-accent bg-accent/5' : 'border-gray-200')}>
+            <input type="radio" name={`rule-${rule.id}-condition-mode`} checked={conditionMode === 'conditional'} onChange={() => setConditionMode('conditional')} className="mt-0.5 h-4 w-4 border-gray-300 text-accent focus:ring-accent" />
+            <span><span className="block font-medium text-gray-900">Only when</span><span className="block text-xs text-gray-500">Apply only when all added conditions match.</span></span>
+          </label>
         </div>
-      </fieldset>
 
-      <fieldset className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
-        <legend className="px-1 text-sm font-medium text-gray-900">Conditions (all must match)</legend>
-        <p className="mb-3 text-xs text-gray-500">Leave all conditions blank to apply this rule at all times.</p>
+        {conditionMode === 'conditional' && <div className="mt-4">
+          <p className="text-xs font-medium text-gray-700">Add condition</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {(Object.keys(CONDITION_LABELS) as ConditionType[]).map((type) => (
+              <button key={type} type="button" disabled={visibleConditions.includes(type)} onClick={() => setVisibleConditions((current) => [...current, type])} className="rounded-full border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:border-accent hover:text-accent disabled:cursor-default disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-400">
+                <Plus className="mr-1 inline h-3.5 w-3.5" />{CONDITION_LABELS[type]}
+              </button>
+            ))}
+          </div>
+          {visibleConditions.length === 0 && <p className="mt-3 rounded-lg bg-blue-50 p-3 text-xs text-blue-800">No conditions added yet. Until you add one, this rule applies at all times.</p>}
+        </div>}
 
-        <div>
-          <p className="text-xs font-medium text-gray-700">Days of week</p>
+        {conditionMode === 'conditional' && visibleConditions.includes('days') && <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
+          <div className="flex items-center justify-between gap-2"><p className="text-sm font-medium text-gray-900">Days of week</p><button type="button" aria-label={`Remove days of week condition from rule ${index + 1}`} onClick={() => removeCondition('days')} className="rounded p-1 text-gray-400 hover:bg-white hover:text-red-600"><X className="h-4 w-4" /></button></div>
           <div className="mt-1 flex flex-wrap gap-2">
             {DAYS.map(([value, label]) => (
               <label key={value} className="flex items-center gap-1.5 rounded border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700">
@@ -282,15 +345,20 @@ function UucRuleEditor({
               </label>
             ))}
           </div>
-        </div>
+        </div>}
 
-        <div className="mt-3 grid gap-3 md:grid-cols-2">
+        {conditionMode === 'conditional' && visibleConditions.includes('time') && <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
+          <div className="mb-3 flex items-center justify-between gap-2"><p className="text-sm font-medium text-gray-900">Time of day</p><button type="button" aria-label={`Remove time of day condition from rule ${index + 1}`} onClick={() => removeCondition('time')} className="rounded p-1 text-gray-400 hover:bg-white hover:text-red-600"><X className="h-4 w-4" /></button></div>
+        <div className="grid gap-3 md:grid-cols-2">
           <HourSelect label="Start time (included)" emptyLabel="Start of day" value={rule.predicate?.timeOfDayLowerBound?.hours} onChange={(hours) => onUpdate(updatePredicate(rule, 'timeOfDayLowerBound', hours === undefined ? undefined : { hours }))} />
           <HourSelect label="End time (not included)" emptyLabel="End of day" value={rule.predicate?.timeOfDayUpperBound?.hours} onChange={(hours) => onUpdate(updatePredicate(rule, 'timeOfDayUpperBound', hours === undefined ? undefined : { hours }))} />
         </div>
         <p className="mt-1 text-xs text-gray-500">Uses the device's local time and whole hours. Overnight periods need two rules: one before midnight and one after midnight.</p>
+        </div>}
 
-        <div className="mt-3 grid gap-3 md:grid-cols-2">
+        {conditionMode === 'conditional' && visibleConditions.includes('date') && <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
+          <div className="mb-3 flex items-center justify-between gap-2"><p className="text-sm font-medium text-gray-900">Date range</p><button type="button" aria-label={`Remove date range condition from rule ${index + 1}`} onClick={() => removeCondition('date')} className="rounded p-1 text-gray-400 hover:bg-white hover:text-red-600"><X className="h-4 w-4" /></button></div>
+        <div className="grid gap-3 md:grid-cols-2">
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-700">Start date</label>
             <input aria-label={`Rule ${index + 1} start date`} type="date" value={dateToInput(rule.predicate?.dateLowerBound)} onChange={(event) => onUpdate(updatePredicate(rule, 'dateLowerBound', inputToDate(event.target.value)))} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" />
@@ -301,8 +369,11 @@ function UucRuleEditor({
           </div>
         </div>
         <p className="mt-1 text-xs text-gray-500">Dates are evaluated in the device's local time zone.</p>
+        </div>}
 
-        <div className="mt-3 grid gap-3 md:grid-cols-2">
+        {conditionMode === 'conditional' && visibleConditions.includes('age') && <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
+          <div className="mb-3 flex items-center justify-between gap-2"><p className="text-sm font-medium text-gray-900">Update age</p><button type="button" aria-label={`Remove update age condition from rule ${index + 1}`} onClick={() => removeCondition('age')} className="rounded p-1 text-gray-400 hover:bg-white hover:text-red-600"><X className="h-4 w-4" /></button></div>
+        <div className="grid gap-3 md:grid-cols-2">
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-700">Available for at least (days)</label>
             <input aria-label={`Rule ${index + 1} minimum update age`} placeholder="No minimum" type="number" min={0} step={1} value={durationToDays(rule.predicate?.updateAgeLowerBound)} onChange={(event) => {
@@ -324,7 +395,29 @@ function UucRuleEditor({
           </div>
         </div>
         <p className="mt-1 text-xs text-gray-500">Update age is the time the specific update has been available to this device, in whole 24-hour days.</p>
+        </div>}
       </fieldset>
+
+      <fieldset className="mt-4 rounded-lg border border-gray-200 p-4">
+        <legend className="px-1 text-sm font-semibold text-gray-900">Then</legend>
+        <label className="mb-1 block text-sm font-medium text-gray-900">Outcome</label>
+        <select
+          aria-label={`Rule ${index + 1} outcome`}
+          value={rule.outcome?.outcomeType ?? 'OUTCOME_TYPE_UNSPECIFIED'}
+          onChange={(event) => onUpdate({
+            ...rule,
+            outcome: { outcomeType: event.target.value as UucRule['outcome']['outcomeType'] },
+          })}
+          className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
+        >
+          <option value="OUTCOME_TYPE_UNSPECIFIED">Choose an outcome</option>
+          <option value="BLOCK">Block</option>
+          <option value="USER_PROMPT" disabled={!hasOsTarget}>User prompt (OS targets only)</option>
+          <option value="FORCE">Force</option>
+        </select>
+        <p className="mt-1 text-xs text-gray-500">Force starts the evaluated action immediately. User prompt is effective only for OS targets. Block and user prompt remain subject to Android's maximum deferral limits.</p>
+      </fieldset>
+      </div>}
     </article>
   );
 }
@@ -337,6 +430,7 @@ export default function PlatformUpdatesSection({ config, onChange }: PlatformUpd
     ? (config.systemUpdate as Record<string, unknown>).type
     : undefined;
   const [migrationPreview, setMigrationPreview] = useState<MigrationPreview | null>(null);
+  const [expandedRuleIndex, setExpandedRuleIndex] = useState<number | null>(null);
   const hasShadowedTargets = useMemo(() => rules.some((rule) =>
     rule.targets?.some((target) => isTargetShadowed(config, target.targetType))), [config, rules]);
 
@@ -418,7 +512,11 @@ export default function PlatformUpdatesSection({ config, onChange }: PlatformUpd
             <h4 className="text-base font-semibold text-gray-900">Unified Update Controls</h4>
             <p className="mt-1 text-xs text-gray-500">Up to 100 ordered rules. Android Device Policy applies the first matching predicate for each update target and stage.</p>
           </div>
-          <button type="button" disabled={rules.length >= 100} onClick={() => setRules([...rules, createDefaultUucRule(rules.length, rules)])} className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-accent/90 disabled:bg-gray-300"><Plus className="h-4 w-4" />Add rule</button>
+          <button type="button" disabled={rules.length >= 100} onClick={() => {
+            const nextRule = createDefaultUucRule(rules.length, rules);
+            setRules([...rules, nextRule]);
+            setExpandedRuleIndex(rules.length);
+          }} className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-accent/90 disabled:bg-gray-300"><Plus className="h-4 w-4" />Add rule</button>
         </div>
 
         <div className="mt-4 grid gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-600 md:grid-cols-3">
@@ -447,7 +545,11 @@ export default function PlatformUpdatesSection({ config, onChange }: PlatformUpd
                 {migrationPreview.warnings.map((warning) => <p key={warning} className="mt-1 text-xs text-amber-700">{warning}</p>)}
                 {migrationPreview.rules.map((rule, index) => <p key={rule.id} className="mt-2 text-xs text-gray-700"><span className="font-medium">{getUucRuleDisplayName(rule, index)}:</span> {describeUucRule(rule)}</p>)}
                 {migrationPreview.rules.length > 0 && (
-                  <button type="button" disabled={rules.length + migrationPreview.rules.length > 100} onClick={() => { setRules([...rules, ...migrationPreview.rules]); setMigrationPreview(null); }} className="mt-3 rounded-lg bg-blue-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-800 disabled:bg-gray-300">Add candidates for editing</button>
+                  <button type="button" disabled={rules.length + migrationPreview.rules.length > 100} onClick={() => {
+                    setRules([...rules, ...migrationPreview.rules]);
+                    setExpandedRuleIndex(rules.length);
+                    setMigrationPreview(null);
+                  }} className="mt-3 rounded-lg bg-blue-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-800 disabled:bg-gray-300">Add candidates for editing</button>
                 )}
               </div>
             )}
@@ -465,6 +567,8 @@ export default function PlatformUpdatesSection({ config, onChange }: PlatformUpd
                 index={index}
                 rules={rules}
                 config={config}
+                expanded={expandedRuleIndex === index}
+                onToggleExpanded={() => setExpandedRuleIndex((current) => current === index ? null : index)}
                 onUpdate={(nextRule) => updateRule(index, nextRule)}
                 onMove={(direction) => {
                   const destination = index + direction;
@@ -472,6 +576,7 @@ export default function PlatformUpdatesSection({ config, onChange }: PlatformUpd
                   const next = [...rules];
                   [next[index], next[destination]] = [next[destination], next[index]];
                   setRules(next);
+                  setExpandedRuleIndex((current) => current === index ? destination : current === destination ? index : current);
                 }}
                 onDuplicate={() => {
                   if (rules.length >= 100) return;
@@ -479,8 +584,15 @@ export default function PlatformUpdatesSection({ config, onChange }: PlatformUpd
                   copy.id = createDuplicateRuleId(rule, rules);
                   copy._flashName = `${getUucRuleDisplayName(rule, index)} copy`;
                   setRules([...rules.slice(0, index + 1), copy, ...rules.slice(index + 1)]);
+                  setExpandedRuleIndex(index + 1);
                 }}
-                onRemove={() => setRules(rules.filter((_, candidateIndex) => candidateIndex !== index))}
+                onRemove={() => {
+                  setRules(rules.filter((_, candidateIndex) => candidateIndex !== index));
+                  setExpandedRuleIndex((current) => {
+                    if (current === null || current === index) return null;
+                    return current > index ? current - 1 : current;
+                  });
+                }}
               />
             ))}
           </div>

@@ -1,6 +1,33 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { useState } from 'react';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import PlatformUpdatesSection from '@/components/policy/PlatformUpdatesSection';
+
+function expandRule(index = 1) {
+  fireEvent.click(screen.getByRole('button', { name: `Expand rule ${index}` }));
+}
+
+function ControlledPlatformUpdatesSection({ initialConfig }: { initialConfig: Record<string, unknown> }) {
+  const [config, setConfig] = useState(initialConfig);
+  return (
+    <PlatformUpdatesSection
+      config={config}
+      onChange={(path, value) => {
+        if (path === 'unifiedUpdatePolicy.rules') {
+          setConfig((current) => ({
+            ...current,
+            unifiedUpdatePolicy: {
+              ...((current.unifiedUpdatePolicy as Record<string, unknown> | undefined) ?? {}),
+              rules: value,
+            },
+          }));
+        } else if (path === 'unifiedUpdatePolicy') {
+          setConfig((current) => ({ ...current, unifiedUpdatePolicy: value }));
+        }
+      }}
+    />
+  );
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -39,6 +66,7 @@ describe('PlatformUpdatesSection', () => {
     expect(within(majorRow!).getByText('System update policy')).toBeInTheDocument();
     expect(within(mainlineRow!).getByText('Unified update controls')).toBeInTheDocument();
     expect(screen.getByText('At least one UUC rule is partly or fully shadowed.')).toBeInTheDocument();
+    expandRule();
     expect(screen.getAllByText('Shadowed by System update policy')).toHaveLength(2);
   });
 
@@ -116,11 +144,12 @@ describe('PlatformUpdatesSection', () => {
       />,
     );
 
-    expect(screen.getByRole('checkbox', { name: 'Download' })).toBeDisabled();
-    expect(screen.getByRole('checkbox', { name: 'Apply' })).toBeDisabled();
+    expect(screen.queryByText('At stage')).not.toBeInTheDocument();
+    expandRule();
+    expect(screen.queryByText('At stage')).not.toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'User prompt (OS targets only)' })).toBeDisabled();
     expect(screen.getByLabelText('Rule 1 name')).toHaveAttribute('maxlength', '120');
-    expect(screen.getByText('Configuration summary')).toBeInTheDocument();
+    expect(screen.getByText('Configuration summary:')).toBeInTheDocument();
   });
 
   it('enables OS-only inputs for an OS-only rule', () => {
@@ -139,11 +168,12 @@ describe('PlatformUpdatesSection', () => {
       />,
     );
 
+    expandRule();
     expect(screen.getByRole('checkbox', { name: 'Download' })).toBeEnabled();
     expect(screen.getByRole('checkbox', { name: 'Apply' })).toBeEnabled();
     expect(screen.getByRole('option', { name: 'User prompt (OS targets only)' })).toBeEnabled();
-    expect(screen.getByText('Conditions (all must match)')).toBeInTheDocument();
-    expect(screen.getByText('Leave all conditions blank to apply this rule at all times.')).toBeInTheDocument();
+    expect(screen.getByText('When')).toBeInTheDocument();
+    expect(screen.getByText('Always')).toBeInTheDocument();
     expect(screen.getAllByText(/Apply-stage control is best-effort/).length).toBeGreaterThan(0);
   });
 
@@ -166,8 +196,10 @@ describe('PlatformUpdatesSection', () => {
       />,
     );
 
+    expandRule();
     expect(screen.getByRole('option', { name: 'User prompt (OS targets only)' })).toBeEnabled();
     expect(screen.getByText(/User prompt applies only to the OS targets in this mixed rule/)).toBeInTheDocument();
+    expect(screen.getByText(/Stage selection applies only to the OEM OS targets/)).toBeInTheDocument();
   });
 
   it('discloses UUC operational limits and zero upper-age semantics', () => {
@@ -187,6 +219,7 @@ describe('PlatformUpdatesSection', () => {
       />,
     );
 
+    expandRule();
     expect(screen.getByText(/Mainline is controlled as one update/)).toBeInTheDocument();
     expect(screen.getByText(/Google Play Store and Android Device Policy updates are exempt/)).toBeInTheDocument();
     expect(screen.getByText('Leave blank for no maximum. Android also treats zero as no maximum.')).toBeInTheDocument();
@@ -241,6 +274,7 @@ describe('PlatformUpdatesSection', () => {
       />,
     );
 
+    expandRule();
     fireEvent.change(screen.getByLabelText('Rule 1 name'), { target: { value: 'Delay major updates' } });
     expect(onChange).toHaveBeenCalledWith(
       'unifiedUpdatePolicy.rules',
@@ -264,6 +298,11 @@ describe('PlatformUpdatesSection', () => {
       />,
     );
 
+    expandRule();
+    fireEvent.click(screen.getByRole('radio', { name: /Only when/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Time of day' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Date range' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Update age' }));
     expect(screen.getByLabelText('Start time (included)')).toHaveDisplayValue('Start of day');
     expect(screen.getByLabelText('End time (not included)')).toHaveDisplayValue('End of day');
     expect(screen.getByLabelText('Rule 1 start date')).toBeInTheDocument();
@@ -288,8 +327,177 @@ describe('PlatformUpdatesSection', () => {
       />,
     );
 
+    expandRule();
     expect(screen.getByText('Enter the Google system service app package name.')).toBeInTheDocument();
     expect(screen.getByText(/Google does not publish a fixed package list/)).toBeInTheDocument();
     expect(screen.getByText(/Use another rule for another app/)).toBeInTheDocument();
+  });
+
+  it('keeps existing rules collapsed and expands only one editor at a time', () => {
+    render(
+      <PlatformUpdatesSection
+        config={{
+          unifiedUpdatePolicy: {
+            rules: [
+              {
+                id: 'major',
+                _flashName: 'Major updates',
+                targets: [{ targetType: 'OS_UPDATE_WITH_API_LEVEL_CHANGE' }],
+                outcome: { outcomeType: 'BLOCK' },
+              },
+              {
+                id: 'mainline',
+                _flashName: 'Mainline updates',
+                targets: [{ targetType: 'GOOGLE_PLAY_SYSTEM_UPDATE' }],
+                outcome: { outcomeType: 'FORCE' },
+              },
+            ],
+          },
+        }}
+        onChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByLabelText('Rule 1 name')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Configuration summary:')).toHaveLength(2);
+    expandRule(1);
+    expect(screen.getByLabelText('Rule 1 name')).toBeInTheDocument();
+    expandRule(2);
+    expect(screen.queryByLabelText('Rule 1 name')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Rule 2 name')).toBeInTheDocument();
+  });
+
+  it('opens a newly added rule for editing', () => {
+    render(<ControlledPlatformUpdatesSection initialConfig={{}} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+    expect(screen.getByRole('button', { name: 'Collapse rule 1' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByLabelText('Rule 1 name')).toHaveValue('Update rule 1');
+    expect(screen.getByText('Needs attention')).toBeInTheDocument();
+  });
+
+  it('opens a duplicated rule and preserves a stable unique ID', () => {
+    render(
+      <ControlledPlatformUpdatesSection
+        initialConfig={{
+          unifiedUpdatePolicy: {
+            rules: [{
+              id: 'major',
+              _flashName: 'Major updates',
+              targets: [{ targetType: 'OS_UPDATE_WITH_API_LEVEL_CHANGE' }],
+              outcome: { outcomeType: 'BLOCK' },
+            }],
+          },
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Duplicate rule 1' }));
+    expect(screen.getByRole('button', { name: 'Collapse rule 2' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByLabelText('Rule 2 name')).toHaveValue('Major updates copy');
+  });
+
+  it('shows configured condition groups and clears the predicate only when Always is chosen', () => {
+    const onChange = vi.fn();
+    render(
+      <PlatformUpdatesSection
+        config={{
+          unifiedUpdatePolicy: {
+            rules: [{
+              id: 'scheduled',
+              targets: [{ targetType: 'OS_UPDATE_WITH_API_LEVEL_CHANGE' }],
+              predicate: {
+                daysOfWeek: ['MONDAY'],
+                updateAgeLowerBound: '86400s',
+              },
+              outcome: { outcomeType: 'BLOCK' },
+            }],
+          },
+        }}
+        onChange={onChange}
+      />,
+    );
+
+    expandRule();
+    expect(screen.getByRole('radio', { name: /Only when/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Mon' })).toBeChecked();
+    expect(screen.getByLabelText('Rule 1 minimum update age')).toHaveValue(1);
+    fireEvent.click(screen.getByRole('radio', { name: /Always/ }));
+    expect(onChange).toHaveBeenCalledWith(
+      'unifiedUpdatePolicy.rules',
+      [expect.not.objectContaining({ predicate: expect.anything() })],
+    );
+  });
+
+  it('adds and removes optional condition groups without inventing predicate values', () => {
+    const onChange = vi.fn();
+    render(
+      <PlatformUpdatesSection
+        config={{
+          unifiedUpdatePolicy: {
+            rules: [{
+              id: 'conditional',
+              targets: [{ targetType: 'GOOGLE_PLAY_SYSTEM_UPDATE' }],
+              outcome: { outcomeType: 'BLOCK' },
+            }],
+          },
+        }}
+        onChange={onChange}
+      />,
+    );
+
+    expandRule();
+    fireEvent.click(screen.getByRole('radio', { name: /Only when/ }));
+    expect(screen.getByText(/No conditions added yet/)).toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Days of week' }));
+    expect(screen.getByRole('checkbox', { name: 'Mon' })).not.toBeChecked();
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Mon' }));
+    expect(onChange).toHaveBeenCalledWith(
+      'unifiedUpdatePolicy.rules',
+      [expect.objectContaining({ predicate: { daysOfWeek: ['MONDAY'] } })],
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Remove days of week condition from rule 1' }));
+    expect(onChange).toHaveBeenLastCalledWith(
+      'unifiedUpdatePolicy.rules',
+      [expect.not.objectContaining({ predicate: expect.anything() })],
+    );
+  });
+
+  it('summarises validation and review state on collapsed cards', () => {
+    render(
+      <PlatformUpdatesSection
+        config={{
+          unifiedUpdatePolicy: {
+            rules: [
+              {
+                id: 'incomplete',
+                targets: [],
+                outcome: { outcomeType: 'OUTCOME_TYPE_UNSPECIFIED' },
+              },
+              {
+                id: 'review',
+                _flashName: 'Rule needing review',
+                targets: [{ targetType: 'GOOGLE_PLAY_SYSTEM_UPDATE' }],
+                predicate: { updateAgeUpperBound: '0s' },
+                outcome: { outcomeType: 'BLOCK' },
+              },
+              {
+                id: 'ready',
+                _flashName: 'Ready rule',
+                targets: [{ targetType: 'GOOGLE_PLAY_SYSTEM_UPDATE' }],
+                outcome: { outcomeType: 'FORCE' },
+              },
+            ],
+          },
+        }}
+        onChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Needs attention')).toBeInTheDocument();
+    expect(screen.getByText('Review')).toBeInTheDocument();
+    expect(screen.getByText('Ready')).toBeInTheDocument();
   });
 });
