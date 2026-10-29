@@ -71,12 +71,12 @@ describe('platform update policy model', () => {
       'Rule ID must be unique.',
     ]));
     expect(getRuleEditorIssues(rules[0], 0, rules)).not.toEqual(expect.arrayContaining([
-      expect.stringContaining('Time lower bound'),
-      expect.stringContaining('Update-age lower bound'),
+      expect.stringContaining('Start time'),
+      expect.stringContaining('Minimum update age'),
     ]));
     expect(getRuleEditorWarnings(rules[0])).toEqual(expect.arrayContaining([
       expect.stringContaining('User prompt has no effect'),
-      expect.stringContaining('time window never matches'),
+      expect.stringContaining('time period never matches'),
       expect.stringContaining('update-age range never matches'),
     ]));
     expect(getRuleEditorIssues(rules[1], 1, rules)).toEqual(expect.arrayContaining([
@@ -98,7 +98,7 @@ describe('platform update policy model', () => {
     };
 
     expect(getRuleEditorIssues(rule, 0, [rule])).toHaveLength(0);
-    expect(getRuleEditorWarnings(rule)).toContain('An update-age upper bound of 0 is unbounded in UUC. It always evaluates to true.');
+    expect(getRuleEditorWarnings(rule)).toContain('A maximum update age of 0 means no maximum in UUC. It always evaluates to true.');
     expect(describeUucRule(rule)).toContain('update age 7 to any days');
   });
 
@@ -143,9 +143,9 @@ describe('platform update policy model', () => {
       'Single-app package name is invalid.',
       'Evaluation stages must not contain duplicates.',
       'Days of week must not contain duplicates.',
-      'Time lower bound must contain only an hour from 0 to 23. Omit minutes, seconds, and nanos.',
-      'Date lower bound must be a valid date.',
-      'Update-age lower bound must be a whole number of days.',
+      'Start time must be a whole hour from 00:00 to 23:00.',
+      'Start date must be a valid date.',
+      'Minimum update age must be a whole number of days.',
     ]));
   });
 

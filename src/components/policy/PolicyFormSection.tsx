@@ -9,6 +9,7 @@ import RepeaterField from '@/components/policy/fields/RepeaterField';
 import JsonField from '@/components/policy/fields/JsonField';
 import ManagedConfigEditor from '@/components/apps/ManagedConfigEditor';
 import PlatformUpdatesSection from '@/components/policy/PlatformUpdatesSection';
+import { hasConfiguredSystemUpdate } from '@/components/policy/platformUpdates';
 import { useAppDetails } from '@/api/queries/apps';
 import { useContextStore } from '@/stores/context';
 
@@ -2198,6 +2199,7 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
     case 'systemUpdates':
       {
       const systemUpdateType = getPath(config, 'systemUpdate.type') ?? 'SYSTEM_UPDATE_TYPE_UNSPECIFIED';
+      const systemUpdateConfigured = hasConfiguredSystemUpdate(config);
       const isWindowed = systemUpdateType === 'WINDOWED';
       const startMinutes = normalizeMinutesOfDay(getPath(config, 'systemUpdate.startMinutes') ?? 0);
       const endMinutes = normalizeMinutesOfDay(getPath(config, 'systemUpdate.endMinutes') ?? 0);
@@ -2218,11 +2220,24 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
 
           <div className="mt-8 border-t border-gray-200 pt-6">
           <h4 className="text-base font-semibold text-gray-900 mb-1">System update policy</h4>
-          <p className="text-sm text-gray-500 mb-6">Configure authoritative OEM over-the-air update behaviour where this policy is supported.</p>
+          <p className="text-sm text-gray-500">Controls OEM over-the-air updates, including major Android releases and security-patch level updates. It does not control Google Play system updates (Mainline) or Google system services.</p>
+          <div className={clsx(
+            'mb-6 mt-3 rounded-lg border p-3 text-xs',
+            systemUpdateConfigured
+              ? 'border-amber-200 bg-amber-50 text-amber-900'
+              : 'border-gray-200 bg-gray-50 text-gray-700',
+          )}>
+            <p className="font-semibold">{systemUpdateConfigured ? 'Currently authoritative for OEM OS updates' : 'Not currently configured'}</p>
+            <p className="mt-1">
+              {systemUpdateConfigured
+                ? 'This setting is not combined with UUC. More granular UUC rules for OEM updates are ignored. UUC rules for Mainline and Google system services can still apply.'
+                : 'On supported company-owned devices, UUC rules may control OEM OS updates. Unsupported devices follow their normal update behaviour.'}
+            </p>
+          </div>
 
           <EnumField
-            label="System Update Type"
-            description="The type of system update policy."
+            label="OEM OS update behaviour"
+            description="Choose how the device manufacturer handles operating-system updates."
             value={systemUpdateType}
             onChange={(v) => {
               onChange('systemUpdate.type', v);
@@ -2232,10 +2247,10 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
               }
             }}
             options={[
-              { value: 'SYSTEM_UPDATE_TYPE_UNSPECIFIED', label: 'Unspecified', description: 'Follow default device behaviour.' },
+              { value: 'SYSTEM_UPDATE_TYPE_UNSPECIFIED', label: 'Device default', description: 'Follow the device manufacturer\'s normal update behaviour. If saved, System update policy still takes precedence over UUC for OEM OS updates.' },
               { value: 'AUTOMATIC', label: 'Automatic', description: 'Install automatically when available.' },
-              { value: 'WINDOWED', label: 'Windowed', description: 'Install within a maintenance window.' },
-              { value: 'POSTPONE', label: 'Postpone', description: 'Postpone for up to 30 days.' },
+              { value: 'WINDOWED', label: 'Maintenance window', description: 'Install automatically within a daily window. This window also schedules Google Play app updates.' },
+              { value: 'POSTPONE', label: 'Postpone', description: 'Postpone automatic OEM OS installation for up to 30 days.' },
             ]}
           />
           {isWindowed ? <div className="py-3">

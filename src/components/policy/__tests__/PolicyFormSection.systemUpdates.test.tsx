@@ -9,6 +9,9 @@ describe('PolicyFormSection systemUpdates freeze periods', () => {
       <PolicyFormSection category="systemUpdates" config={{}} onChange={onChange} />,
     );
 
+    expect(screen.getByText('Not currently configured')).toBeInTheDocument();
+    expect(screen.getByText(/UUC rules may control OEM OS updates/)).toBeInTheDocument();
+    expect(screen.getByText(/does not control Google Play system updates \(Mainline\) or Google system services/)).toBeInTheDocument();
     expect(screen.queryByLabelText('Window Start Time')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Window End Time')).not.toBeInTheDocument();
 
@@ -19,6 +22,8 @@ describe('PolicyFormSection systemUpdates freeze periods', () => {
         onChange={onChange}
       />,
     );
+    expect(screen.getByText('Currently authoritative for OEM OS updates')).toBeInTheDocument();
+    expect(screen.getByText(/This setting is not combined with UUC/)).toHaveTextContent('More granular UUC rules for OEM updates are ignored');
     expect(screen.queryByLabelText('Window Start Time')).not.toBeInTheDocument();
   });
 

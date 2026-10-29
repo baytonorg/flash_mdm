@@ -112,6 +112,7 @@ export async function buildGeneratedPolicyPayload(input: {
   // applicable group or device override.
   await applyReferencedServerCaCertificates(base, input.environmentId);
 
+  stripFlashUucRuleMetadata(base);
   const deviceScopedVariables = detectDeviceScopedVariables(base);
   normalizeAmapiCompatibilityFields(base);
 
@@ -134,6 +135,20 @@ export async function buildGeneratedPolicyPayload(input: {
     payload: base,
     metadata,
   };
+}
+
+function stripFlashUucRuleMetadata(config: Record<string, unknown>): void {
+  const unifiedUpdatePolicy = (
+    config.unifiedUpdatePolicy
+    && typeof config.unifiedUpdatePolicy === 'object'
+    && !Array.isArray(config.unifiedUpdatePolicy)
+  ) ? config.unifiedUpdatePolicy as Record<string, unknown> : null;
+  if (unifiedUpdatePolicy && Array.isArray(unifiedUpdatePolicy.rules)) {
+    for (const rule of unifiedUpdatePolicy.rules) {
+      if (!rule || typeof rule !== 'object' || Array.isArray(rule)) continue;
+      delete (rule as Record<string, unknown>)._flashName;
+    }
+  }
 }
 
 function normalizeAmapiCompatibilityFields(config: Record<string, unknown>): void {

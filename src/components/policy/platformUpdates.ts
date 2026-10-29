@@ -27,6 +27,7 @@ export type UucPredicate = {
 
 export type UucRule = {
   id: string;
+  _flashName?: string;
   targets: UucTarget[];
   stages?: UucStage[];
   predicate?: UucPredicate;
@@ -129,9 +130,22 @@ export function getEffectiveControlOverview(config: Record<string, unknown>): Ef
   });
 }
 
-export function createDefaultUucRule(index: number): UucRule {
+export function getUucRuleDisplayName(rule: UucRule, index: number): string {
+  const storedName = rule._flashName?.trim();
+  if (storedName) return storedName;
+  const nameFromId = rule.id
+    ?.trim()
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ');
+  if (nameFromId) return nameFromId.charAt(0).toUpperCase() + nameFromId.slice(1);
+  return `Rule ${index + 1}`;
+}
+
+export function createDefaultUucRule(index: number, existingRules: UucRule[] = []): UucRule {
+  const existingIds = new Set(existingRules.map((rule) => rule.id));
   return {
-    id: `update-rule-${index + 1}`,
+    id: nextCandidateId(`update-rule-${index + 1}`, existingIds),
+    _flashName: `Update rule ${index + 1}`,
     targets: [],
     outcome: { outcomeType: 'OUTCOME_TYPE_UNSPECIFIED' },
   };
@@ -192,7 +206,7 @@ export function getRuleEditorIssues(rule: UucRule, index: number, rules: UucRule
     }
     if (target.targetType === 'SINGLE_APP') {
       const packageName = target.singleApp?.packageName?.trim() ?? '';
-      if (!packageName) issues.push('Single-app targets require a package name.');
+      if (!packageName) issues.push('Enter the Google system service app package name.');
       else if (!ANDROID_PACKAGE_NAME.test(packageName)) issues.push('Single-app package name is invalid.');
     } else if (target.singleApp) {
       issues.push('Single-app configuration is valid only for the single-app target.');
@@ -224,19 +238,19 @@ export function getRuleEditorIssues(rule: UucRule, index: number, rules: UucRule
   const lowerHour = validateHour(rule.predicate?.timeOfDayLowerBound);
   const upperHour = validateHour(rule.predicate?.timeOfDayUpperBound);
   if (rule.predicate?.timeOfDayLowerBound !== undefined && lowerHour === undefined) {
-    issues.push('Time lower bound must contain only an hour from 0 to 23. Omit minutes, seconds, and nanos.');
+    issues.push('Start time must be a whole hour from 00:00 to 23:00.');
   }
   if (rule.predicate?.timeOfDayUpperBound !== undefined && upperHour === undefined) {
-    issues.push('Time upper bound must contain only an hour from 0 to 23. Omit minutes, seconds, and nanos.');
+    issues.push('End time must be a whole hour from 00:00 to 23:00.');
   }
   const lowerDate = dateToInput(rule.predicate?.dateLowerBound);
   const upperDate = dateToInput(rule.predicate?.dateUpperBound);
-  if (rule.predicate?.dateLowerBound !== undefined && !lowerDate) issues.push('Date lower bound must be a valid date.');
-  if (rule.predicate?.dateUpperBound !== undefined && !upperDate) issues.push('Date upper bound must be a valid date.');
+  if (rule.predicate?.dateLowerBound !== undefined && !lowerDate) issues.push('Start date must be a valid date.');
+  if (rule.predicate?.dateUpperBound !== undefined && !upperDate) issues.push('End date must be a valid date.');
   const lowerAge = durationToDays(rule.predicate?.updateAgeLowerBound);
   const upperAge = durationToDays(rule.predicate?.updateAgeUpperBound);
-  if (rule.predicate?.updateAgeLowerBound !== undefined && lowerAge === '') issues.push('Update-age lower bound must be a whole number of days.');
-  if (rule.predicate?.updateAgeUpperBound !== undefined && upperAge === '') issues.push('Update-age upper bound must be a whole number of days.');
+  if (rule.predicate?.updateAgeLowerBound !== undefined && lowerAge === '') issues.push('Minimum update age must be a whole number of days.');
+  if (rule.predicate?.updateAgeUpperBound !== undefined && upperAge === '') issues.push('Maximum update age must be a whole number of days.');
   return issues;
 }
 
@@ -261,24 +275,24 @@ export function getRuleEditorWarnings(rule: UucRule): string[] {
   const lowerHour = rule.predicate?.timeOfDayLowerBound?.hours;
   const upperHour = rule.predicate?.timeOfDayUpperBound?.hours;
   if (Number.isInteger(upperHour) && upperHour === 0) {
-    warnings.push('A time upper bound of 00:00 makes this predicate false for the whole day. Omit the upper bound to continue through the end of the day.');
+    warnings.push('An end time of 00:00 makes this condition false for the whole day. Choose End of day to continue through midnight.');
   } else if (Number.isInteger(lowerHour) && Number.isInteger(upperHour) && Number(upperHour) <= Number(lowerHour)) {
-    warnings.push('This time window never matches. Use two rules for an overnight window: an evening rule with only a lower bound, then a morning rule with only an upper bound.');
+    warnings.push('This time period never matches because the end time is not later than the start time. Use two rules for an overnight period.');
   }
 
   const lowerDate = dateToInput(rule.predicate?.dateLowerBound);
   const upperDate = dateToInput(rule.predicate?.dateUpperBound);
   if (lowerDate && upperDate && lowerDate > upperDate) {
-    warnings.push('This date range never matches because the upper date is before the lower date.');
+    warnings.push('This date range never matches because the end date is before the start date.');
   }
 
   const lowerAge = durationToDays(rule.predicate?.updateAgeLowerBound);
   const upperAge = durationToDays(rule.predicate?.updateAgeUpperBound);
   if (lowerAge !== '' && upperAge !== '' && upperAge !== 0 && lowerAge > upperAge) {
-    warnings.push('This update-age range never matches because the upper bound is below the lower bound.');
+    warnings.push('This update-age range never matches because the maximum is below the minimum.');
   }
   if (upperAge === 0) {
-    warnings.push('An update-age upper bound of 0 is unbounded in UUC. It always evaluates to true.');
+    warnings.push('A maximum update age of 0 means no maximum in UUC. It always evaluates to true.');
   }
 
   return warnings;
@@ -347,6 +361,7 @@ export function buildSystemUpdateMigrationCandidates(config: Record<string, unkn
     return {
       rules: [{
         id: nextCandidateId('candidate-automatic-os-updates', existingIds),
+        _flashName: 'Automatic OS updates candidate',
         targets,
         outcome: { outcomeType: 'FORCE' },
       }],
@@ -357,6 +372,7 @@ export function buildSystemUpdateMigrationCandidates(config: Record<string, unkn
     return {
       rules: [{
         id: nextCandidateId('candidate-postpone-os-updates', existingIds),
+        _flashName: 'Postponed OS updates candidate',
         targets,
         stages: ['STAGE_APPLY'],
         predicate: { updateAgeUpperBound: daysToDuration(30) },
@@ -396,6 +412,7 @@ export function buildSystemUpdateMigrationCandidates(config: Record<string, unkn
       return {
         rules: [{
           id: nextCandidateId('candidate-windowed-os-updates', existingIds),
+          _flashName: 'Windowed OS updates candidate',
           targets,
           stages: ['STAGE_APPLY'],
           outcome: { outcomeType: 'FORCE' },
@@ -414,6 +431,7 @@ export function buildSystemUpdateMigrationCandidates(config: Record<string, unkn
         }];
     const blockedRules: UucRule[] = blockedWindows.map((window, index) => ({
       id: nextCandidateId(`candidate-windowed-block-outside-${index + 1}`, existingIds),
+      _flashName: `Block outside update window ${index + 1}`,
       targets: targets.map((target) => ({ ...target })),
       stages: ['STAGE_APPLY'],
       predicate: {
@@ -425,6 +443,7 @@ export function buildSystemUpdateMigrationCandidates(config: Record<string, unkn
     return {
       rules: [...blockedRules, {
         id: nextCandidateId('candidate-windowed-force-inside', existingIds),
+        _flashName: 'Apply inside update window',
         targets: targets.map((target) => ({ ...target })),
         stages: ['STAGE_APPLY'],
         outcome: { outcomeType: 'FORCE' },

@@ -28,6 +28,10 @@ describe('PlatformUpdatesSection', () => {
     );
 
     expect(screen.getByRole('heading', { name: 'Platform Updates' })).toBeInTheDocument();
+    expect(screen.getByText('Which control should I use?')).toBeInTheDocument();
+    expect(screen.getByText(/Using both is valid/)).toHaveTextContent('the controls are not combined');
+    expect(screen.getByText(/Using both is valid/)).toHaveTextContent('System update policy controls OEM updates, including security-patch level updates.');
+    expect(screen.getByText(/Using both is valid/)).toHaveTextContent('UUC rules for OEM updates have no effect until System update policy is cleared.');
     const majorRow = screen.getAllByText('Major OS updates')[0]?.closest<HTMLElement>('div[class*="grid"]');
     const mainlineRow = screen.getAllByText('Google Play system updates')[0]?.closest<HTMLElement>('div[class*="grid"]');
     expect(majorRow).not.toBeNull();
@@ -45,6 +49,7 @@ describe('PlatformUpdatesSection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
     expect(onChange).toHaveBeenCalledWith('unifiedUpdatePolicy.rules', [{
       id: 'update-rule-1',
+      _flashName: 'Update rule 1',
       targets: [],
       outcome: { outcomeType: 'OUTCOME_TYPE_UNSPECIFIED' },
     }]);
@@ -60,7 +65,7 @@ describe('PlatformUpdatesSection', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Generate candidate rules' }));
-    expect(screen.getByText(/candidate-postpone-os-updates/)).toBeInTheDocument();
+    expect(screen.getByText(/Postponed OS updates candidate/)).toBeInTheDocument();
     expect(onChange).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Add candidates for editing' }));
@@ -114,7 +119,8 @@ describe('PlatformUpdatesSection', () => {
     expect(screen.getByRole('checkbox', { name: 'Download' })).toBeDisabled();
     expect(screen.getByRole('checkbox', { name: 'Apply' })).toBeDisabled();
     expect(screen.getByRole('option', { name: 'User prompt (OS targets only)' })).toBeDisabled();
-    expect(screen.getByLabelText('Rule 1 ID')).toHaveAttribute('maxlength', '64');
+    expect(screen.getByLabelText('Rule 1 name')).toHaveAttribute('maxlength', '120');
+    expect(screen.getByText('Configuration summary')).toBeInTheDocument();
   });
 
   it('enables OS-only inputs for an OS-only rule', () => {
@@ -183,8 +189,8 @@ describe('PlatformUpdatesSection', () => {
 
     expect(screen.getByText(/Mainline is controlled as one update/)).toBeInTheDocument();
     expect(screen.getByText(/Google Play Store and Android Device Policy updates are exempt/)).toBeInTheDocument();
-    expect(screen.getByText('Zero means no upper limit and always evaluates true.')).toBeInTheDocument();
-    expect(screen.getByText(/An update-age upper bound of 0 is unbounded/)).toBeInTheDocument();
+    expect(screen.getByText('Leave blank for no maximum. Android also treats zero as no maximum.')).toBeInTheDocument();
+    expect(screen.getByText(/A maximum update age of 0 means no maximum/)).toBeInTheDocument();
   });
 
   it('assigns a unique ID when duplicating a rule', () => {
@@ -214,7 +220,76 @@ describe('PlatformUpdatesSection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Duplicate rule 1' }));
     expect(onChange).toHaveBeenCalledWith(
       'unifiedUpdatePolicy.rules',
-      expect.arrayContaining([expect.objectContaining({ id: 'os-rule-copy-2' })]),
+      expect.arrayContaining([expect.objectContaining({ id: 'os-rule-copy-2', _flashName: 'Os rule copy' })]),
     );
+  });
+
+  it('stores a friendly Flash-only name without changing the generated rule ID', () => {
+    const onChange = vi.fn();
+    render(
+      <PlatformUpdatesSection
+        config={{
+          unifiedUpdatePolicy: {
+            rules: [{
+              id: 'stable-generated-id',
+              targets: [{ targetType: 'OS_UPDATE_WITH_API_LEVEL_CHANGE' }],
+              outcome: { outcomeType: 'BLOCK' },
+            }],
+          },
+        }}
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText('Rule 1 name'), { target: { value: 'Delay major updates' } });
+    expect(onChange).toHaveBeenCalledWith(
+      'unifiedUpdatePolicy.rules',
+      [expect.objectContaining({ id: 'stable-generated-id', _flashName: 'Delay major updates' })],
+    );
+  });
+
+  it('uses plain-language condition labels instead of API bound terminology', () => {
+    render(
+      <PlatformUpdatesSection
+        config={{
+          unifiedUpdatePolicy: {
+            rules: [{
+              id: 'plain-language',
+              targets: [{ targetType: 'OS_UPDATE_WITH_API_LEVEL_CHANGE' }],
+              outcome: { outcomeType: 'BLOCK' },
+            }],
+          },
+        }}
+        onChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText('Start time (included)')).toHaveDisplayValue('Start of day');
+    expect(screen.getByLabelText('End time (not included)')).toHaveDisplayValue('End of day');
+    expect(screen.getByLabelText('Rule 1 start date')).toBeInTheDocument();
+    expect(screen.getByLabelText('Rule 1 end date')).toBeInTheDocument();
+    expect(screen.getByLabelText('Rule 1 minimum update age')).toHaveAttribute('placeholder', 'No minimum');
+    expect(screen.getByLabelText('Rule 1 maximum update age')).toHaveAttribute('placeholder', 'No maximum');
+  });
+
+  it('explains that single-app eligibility is checked by AMAPI rather than a fixed list', () => {
+    render(
+      <PlatformUpdatesSection
+        config={{
+          unifiedUpdatePolicy: {
+            rules: [{
+              id: 'single-app',
+              targets: [{ targetType: 'SINGLE_APP', singleApp: { packageName: '' } }],
+              outcome: { outcomeType: 'BLOCK' },
+            }],
+          },
+        }}
+        onChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Enter the Google system service app package name.')).toBeInTheDocument();
+    expect(screen.getByText(/Google does not publish a fixed package list/)).toBeInTheDocument();
+    expect(screen.getByText(/Use another rule for another app/)).toBeInTheDocument();
   });
 });

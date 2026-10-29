@@ -13,6 +13,7 @@ import {
   getEffectiveControlOverview,
   getRuleEditorIssues,
   getRuleEditorWarnings,
+  getUucRuleDisplayName,
   getUucRules,
   hasConfiguredSystemUpdate,
   inputToDate,
@@ -58,10 +59,12 @@ function updatePredicate(rule: UucRule, key: keyof UucPredicate, value: unknown)
 
 function HourSelect({
   label,
+  emptyLabel,
   value,
   onChange,
 }: {
   label: string;
+  emptyLabel: string;
   value: number | undefined;
   onChange: (value: number | undefined) => void;
 }) {
@@ -74,7 +77,7 @@ function HourSelect({
         onChange={(event) => onChange(event.target.value === '' ? undefined : Number(event.target.value))}
         className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
       >
-        <option value="">No bound</option>
+        <option value="">{emptyLabel}</option>
         {Array.from({ length: 24 }, (_, hour) => (
           <option key={hour} value={hour}>{String(hour).padStart(2, '0')}:00</option>
         ))}
@@ -147,6 +150,8 @@ function UucRuleEditor({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Rule {index + 1}</p>
+          <p className="mt-1 text-sm font-medium text-gray-900">{getUucRuleDisplayName(rule, index)}</p>
+          <p className="mt-2 text-xs font-medium uppercase tracking-wide text-gray-400">Configuration summary</p>
           <p className="mt-1 text-sm text-gray-600">{describeUucRule(rule)}</p>
         </div>
         <div className="flex items-center gap-1">
@@ -173,15 +178,15 @@ function UucRuleEditor({
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <div>
-          <label className="mb-1 block text-sm font-medium text-gray-900">Rule ID</label>
+          <label className="mb-1 block text-sm font-medium text-gray-900">Rule name</label>
           <input
-            aria-label={`Rule ${index + 1} ID`}
-            value={rule.id ?? ''}
-            maxLength={64}
-            onChange={(event) => onUpdate({ ...rule, id: event.target.value })}
+            aria-label={`Rule ${index + 1} name`}
+            value={getUucRuleDisplayName(rule, index)}
+            maxLength={120}
+            onChange={(event) => onUpdate({ ...rule, _flashName: event.target.value })}
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
           />
-          <p className="mt-1 text-xs text-gray-400">{rule.id?.length ?? 0}/64, unique within this policy</p>
+          <p className="mt-1 text-xs text-gray-500">For admins in Flash. The AMAPI rule ID is generated and kept stable automatically.</p>
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium text-gray-900">Outcome</label>
@@ -235,7 +240,7 @@ function UucRuleEditor({
               placeholder="com.google.android.webview"
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
             />
-            <p className="mt-1 text-xs text-gray-500">AMAPI accepts only apps that belong to Google system services. Flash validates the package-name format, and AMAPI validates eligibility.</p>
+            <p className="mt-1 text-xs text-gray-500">One package per rule. Google does not publish a fixed package list, so enter the app's package name. AMAPI checks that it belongs to Google system services when the policy is saved. Use another rule for another app.</p>
           </div>
         )}
       </fieldset>
@@ -280,27 +285,27 @@ function UucRuleEditor({
         </div>
 
         <div className="mt-3 grid gap-3 md:grid-cols-2">
-          <HourSelect label="Time lower bound" value={rule.predicate?.timeOfDayLowerBound?.hours} onChange={(hours) => onUpdate(updatePredicate(rule, 'timeOfDayLowerBound', hours === undefined ? undefined : { hours }))} />
-          <HourSelect label="Time upper bound" value={rule.predicate?.timeOfDayUpperBound?.hours} onChange={(hours) => onUpdate(updatePredicate(rule, 'timeOfDayUpperBound', hours === undefined ? undefined : { hours }))} />
+          <HourSelect label="Start time (included)" emptyLabel="Start of day" value={rule.predicate?.timeOfDayLowerBound?.hours} onChange={(hours) => onUpdate(updatePredicate(rule, 'timeOfDayLowerBound', hours === undefined ? undefined : { hours }))} />
+          <HourSelect label="End time (not included)" emptyLabel="End of day" value={rule.predicate?.timeOfDayUpperBound?.hours} onChange={(hours) => onUpdate(updatePredicate(rule, 'timeOfDayUpperBound', hours === undefined ? undefined : { hours }))} />
         </div>
-        <p className="mt-1 text-xs text-gray-500">Device local time, whole hours only. The lower hour is included and the upper hour is excluded. Omit the upper bound to continue through the end of the day. Overnight windows require separate rules.</p>
+        <p className="mt-1 text-xs text-gray-500">Uses the device's local time and whole hours. Overnight periods need two rules: one before midnight and one after midnight.</p>
 
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           <div>
-            <label className="mb-1 block text-xs font-medium text-gray-700">Date lower bound</label>
-            <input aria-label={`Rule ${index + 1} date lower bound`} type="date" value={dateToInput(rule.predicate?.dateLowerBound)} onChange={(event) => onUpdate(updatePredicate(rule, 'dateLowerBound', inputToDate(event.target.value)))} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" />
+            <label className="mb-1 block text-xs font-medium text-gray-700">Start date</label>
+            <input aria-label={`Rule ${index + 1} start date`} type="date" value={dateToInput(rule.predicate?.dateLowerBound)} onChange={(event) => onUpdate(updatePredicate(rule, 'dateLowerBound', inputToDate(event.target.value)))} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-gray-700">Date upper bound</label>
-            <input aria-label={`Rule ${index + 1} date upper bound`} type="date" value={dateToInput(rule.predicate?.dateUpperBound)} onChange={(event) => onUpdate(updatePredicate(rule, 'dateUpperBound', inputToDate(event.target.value)))} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" />
+            <label className="mb-1 block text-xs font-medium text-gray-700">End date</label>
+            <input aria-label={`Rule ${index + 1} end date`} type="date" value={dateToInput(rule.predicate?.dateUpperBound)} onChange={(event) => onUpdate(updatePredicate(rule, 'dateUpperBound', inputToDate(event.target.value)))} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" />
           </div>
         </div>
         <p className="mt-1 text-xs text-gray-500">Dates are evaluated in the device's local time zone.</p>
 
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           <div>
-            <label className="mb-1 block text-xs font-medium text-gray-700">Update-age lower bound (days)</label>
-            <input aria-label={`Rule ${index + 1} update age lower bound`} type="number" min={0} step={1} value={durationToDays(rule.predicate?.updateAgeLowerBound)} onChange={(event) => {
+            <label className="mb-1 block text-xs font-medium text-gray-700">Available for at least (days)</label>
+            <input aria-label={`Rule ${index + 1} minimum update age`} placeholder="No minimum" type="number" min={0} step={1} value={durationToDays(rule.predicate?.updateAgeLowerBound)} onChange={(event) => {
               if (event.target.value === '') return onUpdate(updatePredicate(rule, 'updateAgeLowerBound', undefined));
               const days = Number(event.target.value);
               const duration = daysToDuration(days);
@@ -308,14 +313,14 @@ function UucRuleEditor({
             }} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-gray-700">Update-age upper bound (days)</label>
-            <input aria-label={`Rule ${index + 1} update age upper bound`} type="number" min={0} step={1} value={durationToDays(rule.predicate?.updateAgeUpperBound)} onChange={(event) => {
+            <label className="mb-1 block text-xs font-medium text-gray-700">Available for at most (days)</label>
+            <input aria-label={`Rule ${index + 1} maximum update age`} placeholder="No maximum" type="number" min={0} step={1} value={durationToDays(rule.predicate?.updateAgeUpperBound)} onChange={(event) => {
               if (event.target.value === '') return onUpdate(updatePredicate(rule, 'updateAgeUpperBound', undefined));
               const days = Number(event.target.value);
               const duration = daysToDuration(days);
               if (duration) onUpdate(updatePredicate(rule, 'updateAgeUpperBound', duration));
             }} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" />
-            <p className="mt-1 text-xs text-gray-500">Zero means no upper limit and always evaluates true.</p>
+            <p className="mt-1 text-xs text-gray-500">Leave blank for no maximum. Android also treats zero as no maximum.</p>
           </div>
         </div>
         <p className="mt-1 text-xs text-gray-500">Update age is the time the specific update has been available to this device, in whole 24-hour days.</p>
@@ -351,7 +356,17 @@ export default function PlatformUpdatesSection({ config, onChange }: PlatformUpd
       <h3 className="text-lg font-semibold text-gray-900">Platform Updates</h3>
       <p className="mt-1 text-sm text-gray-500">Control OEM OS, Google Play system, and Google system-service updates.</p>
 
-      <section className="mt-5 rounded-xl border border-blue-200 bg-blue-50 p-4">
+      <section className="mt-5 rounded-xl border border-teal-200 bg-teal-50 p-4">
+        <h4 className="text-sm font-semibold text-teal-950">Which control should I use?</h4>
+        <ul className="mt-2 list-disc space-y-2 pl-4 text-xs text-teal-950">
+          <li><span className="font-semibold">OEM over-the-air updates, including OS upgrades and security-patch level updates:</span> configure System update policy below.</li>
+          <li><span className="font-semibold">Google Play system updates (Mainline) and Google system services:</span> create UUC rules for those targets.</li>
+          <li><span className="font-semibold">Fine-grained OEM update rules on supported company-owned devices:</span> create UUC rules for major OS updates or minor and security-patch updates, then clear System update policy.</li>
+        </ul>
+        <p className="mt-3 text-xs font-medium text-teal-950">Using both is valid, but the controls are not combined. System update policy controls OEM updates, including security-patch level updates. UUC can still control Mainline and Google system services. UUC rules for OEM updates have no effect until System update policy is cleared.</p>
+      </section>
+
+      <section className="mt-4 rounded-xl border border-blue-200 bg-blue-50 p-4">
         <h4 className="text-sm font-semibold text-blue-950">Device eligibility</h4>
         <p className="mt-1 text-xs text-blue-900">UUC is supported only on company-owned devices. Fully managed devices need Android 13 or later for Google targets and Google OTA OS updates. COPE devices need Android 15 or later. OS updates from other OEMs need Android 17 or later in either management mode.</p>
         <p className="mt-2 text-xs text-blue-800">Policies are not enforced during setup, and early updates can begin before Android Device Policy receives the policy.</p>
@@ -390,7 +405,7 @@ export default function PlatformUpdatesSection({ config, onChange }: PlatformUpd
         <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
           <div className="flex gap-2"><AlertTriangle className="mt-0.5 h-4 w-4 flex-none" /><div>
             <p className="font-semibold">System update policy and UUC coexist</p>
-            <p className="mt-1 text-xs">This is valid. System update policy remains authoritative for OEM OS targets. UUC targets are marked individually where shadowed.</p>
+            <p className="mt-1 text-xs">This is valid, but the settings do not layer or refine one another. System update policy remains authoritative for OEM OS targets. UUC targets are marked individually where shadowed.</p>
             {hasShadowedTargets && <p className="mt-1 text-xs font-medium">At least one UUC rule is partly or fully shadowed.</p>}
             {systemUpdateType === 'WINDOWED' && <p className="mt-1 text-xs">Windowed system update policy also affects Google Play app update timing.</p>}
           </div></div>
@@ -403,14 +418,18 @@ export default function PlatformUpdatesSection({ config, onChange }: PlatformUpd
             <h4 className="text-base font-semibold text-gray-900">Unified Update Controls</h4>
             <p className="mt-1 text-xs text-gray-500">Up to 100 ordered rules. Android Device Policy applies the first matching predicate for each update target and stage.</p>
           </div>
-          <button type="button" disabled={rules.length >= 100} onClick={() => setRules([...rules, createDefaultUucRule(rules.length)])} className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-accent/90 disabled:bg-gray-300"><Plus className="h-4 w-4" />Add rule</button>
+          <button type="button" disabled={rules.length >= 100} onClick={() => setRules([...rules, createDefaultUucRule(rules.length, rules)])} className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-accent/90 disabled:bg-gray-300"><Plus className="h-4 w-4" />Add rule</button>
         </div>
 
         <div className="mt-4 grid gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-600 md:grid-cols-3">
-          <div><span className="block font-semibold text-gray-800">5 days</span>Google system services, including single-app targets</div>
-          <div><span className="block font-semibold text-gray-800">25 days</span>Mainline and OEM OS updates without an API-level change</div>
-          <div><span className="block font-semibold text-gray-800">180 or 90 days</span>Major OEM OS updates: fully managed or COPE respectively</div>
-          <p className="md:col-span-3">After the target's maximum deferral, BLOCK and USER_PROMPT fall back to the update client's normal behaviour. A newly discovered update restarts the timer. For Google Play-delivered targets, BLOCK prevents automatic updates only.</p>
+          <div className="md:col-span-3">
+            <p className="font-semibold text-gray-800">Maximum delay after an update becomes available</p>
+            <p className="mt-1">Android limits how long Block, and User prompt where supported, can delay each type of update.</p>
+          </div>
+          <div><span className="block font-semibold text-gray-800">Up to 5 days</span>Google system services and individual Google system apps</div>
+          <div><span className="block font-semibold text-gray-800">Up to 25 days</span>Google Play system updates and OS updates without an API-level change</div>
+          <div><span className="block font-semibold text-gray-800">Up to 180 days, or 90 days on COPE</span>OS updates with an API-level change</div>
+          <p className="md:col-span-3">When the limit is reached, Block and User prompt stop delaying the update and the update client resumes its normal behaviour. The timer restarts when the device discovers a new update. For updates delivered through Google Play, Block prevents automatic updates only.</p>
         </div>
 
         {systemUpdateConfigured && (
@@ -426,7 +445,7 @@ export default function PlatformUpdatesSection({ config, onChange }: PlatformUpd
               <div className="mt-3 rounded border border-blue-200 bg-white p-3">
                 <p className="text-xs font-semibold text-gray-900">Candidate preview</p>
                 {migrationPreview.warnings.map((warning) => <p key={warning} className="mt-1 text-xs text-amber-700">{warning}</p>)}
-                {migrationPreview.rules.map((rule) => <p key={rule.id} className="mt-2 text-xs text-gray-700"><span className="font-medium">{rule.id}:</span> {describeUucRule(rule)}</p>)}
+                {migrationPreview.rules.map((rule, index) => <p key={rule.id} className="mt-2 text-xs text-gray-700"><span className="font-medium">{getUucRuleDisplayName(rule, index)}:</span> {describeUucRule(rule)}</p>)}
                 {migrationPreview.rules.length > 0 && (
                   <button type="button" disabled={rules.length + migrationPreview.rules.length > 100} onClick={() => { setRules([...rules, ...migrationPreview.rules]); setMigrationPreview(null); }} className="mt-3 rounded-lg bg-blue-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-800 disabled:bg-gray-300">Add candidates for editing</button>
                 )}
@@ -458,6 +477,7 @@ export default function PlatformUpdatesSection({ config, onChange }: PlatformUpd
                   if (rules.length >= 100) return;
                   const copy = structuredClone(rule);
                   copy.id = createDuplicateRuleId(rule, rules);
+                  copy._flashName = `${getUucRuleDisplayName(rule, index)} copy`;
                   setRules([...rules.slice(0, index + 1), copy, ...rules.slice(index + 1)]);
                 }}
                 onRemove={() => setRules(rules.filter((_, candidateIndex) => candidateIndex !== index))}

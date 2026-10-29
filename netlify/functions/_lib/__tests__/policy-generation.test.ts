@@ -79,6 +79,43 @@ describe('policy-generation', () => {
     expect(result.metadata.generation_hash).toMatch(/^[a-f0-9]{64}$/);
   });
 
+  it('keeps Flash UUC rule names out of the AMAPI payload', async () => {
+    mockQuery
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never);
+
+    const result = await buildGeneratedPolicyPayload({
+      policyId: 'pol_1',
+      environmentId: 'env_1',
+      baseConfig: {
+        unifiedUpdatePolicy: {
+          rules: [{
+            id: 'generated-rule-id',
+            _flashName: 'Delay major updates for ${device.name}',
+            targets: [{ targetType: 'OS_UPDATE_WITH_API_LEVEL_CHANGE' }],
+            outcome: { outcomeType: 'BLOCK' },
+          }],
+        },
+      },
+    });
+
+    expect(result.payload).toEqual({
+      unifiedUpdatePolicy: {
+        rules: [{
+          id: 'generated-rule-id',
+          targets: [{ targetType: 'OS_UPDATE_WITH_API_LEVEL_CHANGE' }],
+          outcome: { outcomeType: 'BLOCK' },
+        }],
+      },
+    });
+    expect(validateAmapiPolicyAgainstDiscovery(result.payload)).toEqual([]);
+    expect(result.metadata.device_scoped_variables).toEqual([]);
+    expect(result.metadata.requires_per_device_derivative).toBe(false);
+  });
+
   it('includes legacy group and device app deployments when generating a device derivative', async () => {
     mockQuery
       .mockResolvedValueOnce([] as never) // policy_assignments
