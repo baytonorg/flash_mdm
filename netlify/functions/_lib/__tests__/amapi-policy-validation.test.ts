@@ -290,6 +290,231 @@ describe('amapi-policy-validation', () => {
     expect(result.errors.some((e) => e.includes('must be 64 hex chars'))).toBe(true);
   });
 
+  it('accepts a valid ordered unified update policy', () => {
+    const result = validateAmapiPolicyPayload({
+      unifiedUpdatePolicy: {
+        rules: [
+          {
+            id: 'block-major-updates-in-hours',
+            targets: [{ targetType: 'OS_UPDATE_WITH_API_LEVEL_CHANGE' }],
+            stages: ['STAGE_DOWNLOAD', 'STAGE_APPLY'],
+            predicate: {
+              daysOfWeek: ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY'],
+              timeOfDayLowerBound: { hours: 9 },
+              timeOfDayUpperBound: { hours: 17 },
+              dateLowerBound: { year: 2026, month: 1, day: 1 },
+              dateUpperBound: { year: 2026, month: 12, day: 31 },
+              updateAgeLowerBound: '86400s',
+              updateAgeUpperBound: '604800s',
+            },
+            outcome: { outcomeType: 'BLOCK' },
+          },
+          {
+            id: 'prompt-major-updates',
+            targets: [{ targetType: 'OS_UPDATE_WITH_API_LEVEL_CHANGE' }],
+            outcome: { outcomeType: 'USER_PROMPT' },
+          },
+          {
+            id: 'webview',
+            targets: [{ targetType: 'SINGLE_APP', singleApp: { packageName: 'com.google.android.webview' } }],
+            outcome: { outcomeType: 'FORCE' },
+          },
+        ],
+      },
+    });
+
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('rejects invalid unified update rule structure and constraints', () => {
+    const result = validateAmapiPolicyPayload({
+      unifiedUpdatePolicy: {
+        rules: [
+          {
+            id: '',
+            targets: [],
+            outcome: { outcomeType: 'OUTCOME_TYPE_UNSPECIFIED' },
+          },
+          {
+            id: 'x'.repeat(65),
+            targets: [
+              { targetType: 'SINGLE_APP', singleApp: { packageName: 'bad package' } },
+              { targetType: 'SINGLE_APP', singleApp: { packageName: 'com.example.other' } },
+            ],
+            stages: ['STAGE_DOWNLOAD', 'STAGE_DOWNLOAD'],
+            predicate: {
+              daysOfWeek: [],
+              timeOfDayLowerBound: { hours: 17, minutes: 1 },
+              timeOfDayUpperBound: { hours: 9 },
+              dateLowerBound: { year: 2026, month: 2, day: 30 },
+              dateUpperBound: { year: 2025, month: 12, day: 31 },
+              updateAgeLowerBound: '90000s',
+              updateAgeUpperBound: '86400s',
+            },
+            outcome: { outcomeType: 'USER_PROMPT' },
+          },
+        ],
+      },
+    });
+
+    expect(result.errors).toEqual(expect.arrayContaining([
+      'unifiedUpdatePolicy.rules[0].id is required',
+      'unifiedUpdatePolicy.rules[0].targets must not be empty',
+      expect.stringContaining('outcome.outcomeType is required'),
+      expect.stringContaining('id exceeds the AMAPI maximum of 64 characters'),
+      expect.stringContaining('targets contains duplicate target types'),
+      expect.stringContaining('singleApp.packageName is invalid'),
+      expect.stringContaining('stages contains duplicates'),
+      expect.stringContaining('timeOfDayLowerBound must contain only hours 0..23'),
+      expect.stringContaining('dateLowerBound must be a valid year/month/day date'),
+      expect.stringContaining('updateAgeLowerBound must be a non-negative Duration in whole 24-hour days'),
+    ]));
+  });
+
+  it('rejects explicit zero-valued minute fields because UUC permits the hour field only', () => {
+    const result = validateAmapiPolicyPayload({
+      unifiedUpdatePolicy: {
+        rules: [{
+          id: 'zero-minute-is-still-present',
+          targets: [{ targetType: 'OS_UPDATE_WITH_API_LEVEL_CHANGE' }],
+          predicate: { timeOfDayLowerBound: { hours: 9, minutes: 0 } },
+          outcome: { outcomeType: 'BLOCK' },
+        }],
+      },
+    });
+
+    expect(result.errors).toEqual(expect.arrayContaining([
+      expect.stringContaining('minutes, seconds, and nanos must be omitted'),
+    ]));
+  });
+
+  it('accepts documented false and unbounded predicates while warning about their effect', () => {
+    const result = validateAmapiPolicyPayload({
+      unifiedUpdatePolicy: {
+        rules: [
+          {
+            id: 'documented-edge-semantics',
+            targets: [
+              { targetType: 'OS_UPDATE_WITH_API_LEVEL_CHANGE' },
+              { targetType: 'GOOGLE_PLAY_SYSTEM_UPDATE' },
+            ],
+            predicate: {
+              daysOfWeek: [],
+              timeOfDayLowerBound: { hours: 17 },
+              timeOfDayUpperBound: { hours: 9 },
+              dateLowerBound: { year: 2026, month: 12, day: 31 },
+              dateUpperBound: { year: 2026, month: 1, day: 1 },
+              updateAgeLowerBound: '604800.000000000s',
+              updateAgeUpperBound: '0s',
+            },
+            outcome: { outcomeType: 'USER_PROMPT' },
+          },
+        ],
+      },
+    });
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.warnings).toEqual(expect.arrayContaining([
+      expect.stringContaining('time-of-day window never matches'),
+      expect.stringContaining('date range never matches'),
+      expect.stringContaining('updateAgeUpperBound=0 is unbounded'),
+      expect.stringContaining('USER_PROMPT applies only to the OEM OS targets'),
+    ]));
+    expect(result.warnings.some((warning) => warning.includes('update-age range never matches'))).toBe(false);
+  });
+
+  it('accepts a non-OS USER_PROMPT rule and reports the documented default behaviour', () => {
+    const result = validateAmapiPolicyPayload({
+      unifiedUpdatePolicy: {
+        rules: [{
+          id: 'non-os-prompt',
+          targets: [{ targetType: 'GOOGLE_SYSTEM_SERVICES' }],
+          outcome: { outcomeType: 'USER_PROMPT' },
+        }],
+      },
+    });
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.warnings).toContain('unifiedUpdatePolicy.rules[0].outcome USER_PROMPT has no effect for non-OS targets; default update behavior applies as if no rule matched');
+  });
+
+  it('warns for shadowed, ignored-stage, and unreachable unified update targets', () => {
+    const result = validateAmapiPolicyPayload({
+      systemUpdate: { type: 'WINDOWED', startMinutes: 60, endMinutes: 180 },
+      unifiedUpdatePolicy: {
+        rules: [
+          {
+            id: 'first',
+            targets: [
+              { targetType: 'OS_UPDATE_WITH_API_LEVEL_CHANGE' },
+              { targetType: 'GOOGLE_PLAY_SYSTEM_UPDATE' },
+            ],
+            stages: ['STAGE_DOWNLOAD'],
+            outcome: { outcomeType: 'BLOCK' },
+          },
+          {
+            id: 'second',
+            targets: [{ targetType: 'GOOGLE_PLAY_SYSTEM_UPDATE' }],
+            outcome: { outcomeType: 'FORCE' },
+          },
+        ],
+      },
+    });
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.warnings).toEqual(expect.arrayContaining([
+      expect.stringContaining('stages is ignored for the rule\'s non-OS targets'),
+      expect.stringContaining('is unreachable because earlier unconditional rule(s) 1 cover its evaluation stages'),
+      expect.stringContaining('OS_UPDATE_WITH_API_LEVEL_CHANGE is shadowed by systemUpdate'),
+      expect.stringContaining('WINDOWED also affects Google Play app update timing'),
+    ]));
+  });
+
+  it('keeps apply-only OS rules reachable after an unconditional download-only rule', () => {
+    const result = validateAmapiPolicyPayload({
+      unifiedUpdatePolicy: {
+        rules: [
+          {
+            id: 'download-first',
+            targets: [{ targetType: 'OS_UPDATE_WITH_API_LEVEL_CHANGE' }],
+            stages: ['STAGE_DOWNLOAD'],
+            outcome: { outcomeType: 'BLOCK' },
+          },
+          {
+            id: 'apply-second',
+            targets: [{ targetType: 'OS_UPDATE_WITH_API_LEVEL_CHANGE' }],
+            stages: ['STAGE_APPLY'],
+            outcome: { outcomeType: 'USER_PROMPT' },
+          },
+        ],
+      },
+    });
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.warnings.some((warning) => warning.includes('unreachable'))).toBe(false);
+  });
+
+  it('reports malformed UUC array entries instead of throwing', () => {
+    const result = validateAmapiPolicyPayload({
+      unifiedUpdatePolicy: {
+        rules: [null, {
+          id: 'malformed-target',
+          targets: [null],
+          stages: [null],
+          predicate: { daysOfWeek: [null] },
+          outcome: { outcomeType: 'BLOCK' },
+        }],
+      },
+    });
+
+    expect(result.errors).toEqual(expect.arrayContaining([
+      expect.stringContaining('unifiedUpdatePolicy.rules[0] must be an object'),
+      expect.stringContaining('unifiedUpdatePolicy.rules[1].targets[0] must be an object'),
+      expect.stringContaining('unifiedUpdatePolicy.rules[1].stages must contain only explicit stage values'),
+      expect.stringContaining('unifiedUpdatePolicy.rules[1].predicate.daysOfWeek must contain only explicit day values'),
+    ]));
+  });
+
   it('rejects negative maximumTimeToLock and warns on low minimumApiLevel / negative allowedDaysWithoutUpdate', () => {
     const result = validateAmapiPolicyPayload({
       maximumTimeToLock: -1,

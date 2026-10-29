@@ -35,11 +35,15 @@ const CATEGORY_STYLES: Record<string, { bg: string; text: string }> = {
   advanced: { bg: 'bg-gray-100', text: 'text-gray-700' },
 };
 
+const CATEGORY_LABELS: Record<string, string> = {
+  systemUpdates: 'Platform Updates',
+};
+
 function CategoryBadge({ category }: { category: string }) {
   const style = CATEGORY_STYLES[category] ?? { bg: 'bg-gray-100', text: 'text-gray-700' };
   return (
     <span className={clsx('inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium', style.bg, style.text)}>
-      {category}
+      {CATEGORY_LABELS[category] ?? category}
     </span>
   );
 }

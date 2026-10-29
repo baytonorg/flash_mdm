@@ -20,7 +20,7 @@ const CATEGORIES = [
   { value: 'network', label: 'Network' },
   { value: 'applications', label: 'Applications' },
   { value: 'deviceSettings', label: 'Device Settings' },
-  { value: 'systemUpdates', label: 'System Updates' },
+  { value: 'systemUpdates', label: 'Platform Updates' },
   { value: 'permissions', label: 'Permissions' },
   { value: 'kioskMode', label: 'Kiosk Mode' },
   { value: 'complianceRules', label: 'Compliance' },

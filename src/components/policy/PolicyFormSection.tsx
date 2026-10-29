@@ -8,6 +8,8 @@ import EnumField from '@/components/policy/fields/EnumField';
 import RepeaterField from '@/components/policy/fields/RepeaterField';
 import JsonField from '@/components/policy/fields/JsonField';
 import ManagedConfigEditor from '@/components/apps/ManagedConfigEditor';
+import PlatformUpdatesSection from '@/components/policy/PlatformUpdatesSection';
+import { hasConfiguredSystemUpdate } from '@/components/policy/platformUpdates';
 import { useAppDetails } from '@/api/queries/apps';
 import { useContextStore } from '@/stores/context';
 
@@ -2197,6 +2199,7 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
     case 'systemUpdates':
       {
       const systemUpdateType = getPath(config, 'systemUpdate.type') ?? 'SYSTEM_UPDATE_TYPE_UNSPECIFIED';
+      const systemUpdateConfigured = hasConfiguredSystemUpdate(config);
       const isWindowed = systemUpdateType === 'WINDOWED';
       const startMinutes = normalizeMinutesOfDay(getPath(config, 'systemUpdate.startMinutes') ?? 0);
       const endMinutes = normalizeMinutesOfDay(getPath(config, 'systemUpdate.endMinutes') ?? 0);
@@ -2206,6 +2209,7 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
         ? getPath(config, 'systemUpdate.freezePeriods')
         : [];
       const freezePeriods = freezePeriodsRaw.map((period: unknown) => policyFreezePeriodToEditorItem(period));
+      const hasFreezePeriods = freezePeriods.length > 0;
       const handleFreezePeriodsChange = (items: FreezePeriodEditorItem[]) => {
         const mapped = items.map((item) => editorItemToPolicyFreezePeriod(item));
         onChange('systemUpdate.freezePeriods', mapped);
@@ -2213,27 +2217,56 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
 
       return (
         <div>
-          <h3 className="text-lg font-semibold text-gray-900 mb-1">System Updates</h3>
-          <p className="text-sm text-gray-500 mb-6">Configure over-the-air update policy.</p>
+          <PlatformUpdatesSection config={config} onChange={onChange} />
 
-          <EnumField
-            label="System Update Type"
-            description="The type of system update policy."
-            value={systemUpdateType}
-            onChange={(v) => {
-              onChange('systemUpdate.type', v);
-              if (v !== 'WINDOWED') {
-                onChange('systemUpdate.startMinutes', undefined);
-                onChange('systemUpdate.endMinutes', undefined);
+          <div className="mt-8 border-t border-gray-200 pt-6">
+          <h4 className="text-base font-semibold text-gray-900 mb-1">System update policy</h4>
+          <p className="text-sm text-gray-500">Controls OEM over-the-air updates, including major Android releases and security-patch level updates. It does not control Google Play system updates (Mainline) or Google system services.</p>
+          <BooleanField
+            label="Configure System update policy"
+            description={systemUpdateConfigured
+              ? 'On. This policy controls OEM OS updates and takes precedence over UUC for those targets.'
+              : 'Off. Eligible UUC rules may control OEM OS updates; otherwise the device follows its normal update behaviour.'}
+            value={systemUpdateConfigured}
+            onChange={(enabled) => {
+              if (enabled) {
+                onChange('systemUpdate.type', 'SYSTEM_UPDATE_TYPE_UNSPECIFIED');
+                return;
               }
+              if (!window.confirm('Remove System update policy? Review UUC coverage first. This changes which policy controls OEM OS updates.')) return;
+              onChange('systemUpdate', undefined);
             }}
-            options={[
-              { value: 'SYSTEM_UPDATE_TYPE_UNSPECIFIED', label: 'Unspecified', description: 'Follow default device behaviour.' },
-              { value: 'AUTOMATIC', label: 'Automatic', description: 'Install automatically when available.' },
-              { value: 'WINDOWED', label: 'Windowed', description: 'Install within a maintenance window.' },
-              { value: 'POSTPONE', label: 'Postpone', description: 'Postpone for up to 30 days.' },
-            ]}
           />
+
+          {systemUpdateConfigured ? (
+            <>
+              <div className="my-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                <p className="font-semibold">System update policy is authoritative for OEM OS updates</p>
+                <p className="mt-1">More granular UUC rules for OEM updates are ignored. UUC rules for Mainline and Google system services can still apply.</p>
+              </div>
+
+              <EnumField
+                label="OEM OS update behaviour"
+                description="Choose how the device manufacturer handles operating-system updates."
+                value={systemUpdateType}
+                onChange={(v) => {
+                  if (v === 'SYSTEM_UPDATE_TYPE_UNSPECIFIED' && hasFreezePeriods) {
+                    if (!window.confirm('Manufacturer default cannot use freeze periods. Remove the configured freeze periods and continue?')) return;
+                    onChange('systemUpdate.freezePeriods', undefined);
+                  }
+                  onChange('systemUpdate.type', v);
+                  if (v !== 'WINDOWED') {
+                    onChange('systemUpdate.startMinutes', undefined);
+                    onChange('systemUpdate.endMinutes', undefined);
+                  }
+                }}
+                options={[
+                  { value: 'SYSTEM_UPDATE_TYPE_UNSPECIFIED', label: 'Manufacturer default', description: 'Follow the device manufacturer\'s normal update behaviour. System update policy remains active and takes precedence over UUC for OEM OS updates.' },
+                  { value: 'AUTOMATIC', label: 'Automatic', description: 'Install automatically when available.' },
+                  { value: 'WINDOWED', label: 'Maintenance window', description: 'Install automatically within a daily window. This window also schedules Google Play app updates.' },
+                  { value: 'POSTPONE', label: 'Postpone', description: 'Postpone automatic OEM OS installation for up to 30 days.' },
+                ]}
+              />
           {isWindowed ? <div className="py-3">
             <label className="block text-sm font-medium text-gray-900 mb-1">Window Start Time</label>
             <p className="text-xs text-gray-500 mb-2 leading-relaxed">
@@ -2266,7 +2299,7 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
             ) : null}
           </div> : null}
 
-          <RepeaterField
+          {systemUpdateType !== 'SYSTEM_UPDATE_TYPE_UNSPECIFIED' ? <RepeaterField
             label="Freeze Periods"
             description="Annually recurring OTA freeze windows. Set start month/day and duration (1-90 days); end date is calculated automatically with no year."
             value={freezePeriods}
@@ -2334,10 +2367,15 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
                 </div>
               );
             }}
-          />
-          <p className="mt-2 text-xs text-amber-700">
-            AMAPI requires each freeze period to be at most 90 days and separated by at least 60 days.
-          </p>
+          /> : (
+            <p className="py-3 text-xs text-gray-500">Choose Automatic, Maintenance window or Postpone to configure freeze periods.</p>
+          )}
+          {systemUpdateType !== 'SYSTEM_UPDATE_TYPE_UNSPECIFIED' ? (
+            <p className="mt-2 text-xs text-gray-500">Freeze periods can last up to 90 days and must be separated by at least 60 days.</p>
+          ) : null}
+            </>
+          ) : null}
+          </div>
         </div>
       );
       }

@@ -34,7 +34,7 @@ const CATEGORIES: CategoryDef[] = [
   { id: 'network', label: 'Network', icon: Wifi },
   { id: 'deviceSettings', label: 'Device Settings', icon: Settings },
   { id: 'security', label: 'Security', icon: Shield },
-  { id: 'systemUpdates', label: 'System Updates', icon: RefreshCw },
+  { id: 'systemUpdates', label: 'Platform Updates', icon: RefreshCw },
   { id: 'permissions', label: 'Permissions', icon: KeyRound },
   { id: 'statusReporting', label: 'Status Reporting', icon: BarChart3 },
   { id: 'personalUsage', label: 'Personal Usage', icon: UserCircle, scenarios: ['wp'] },

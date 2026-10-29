@@ -85,8 +85,22 @@ function setDeep(obj: Record<string, any>, path: string, value: any): Record<str
   return result;
 }
 
+type DocumentationSection = {
+  title: string;
+  paragraphs?: string[];
+  items?: string[];
+};
+
+type CategoryHelp = {
+  title: string;
+  description: string;
+  sections?: DocumentationSection[];
+  docLink?: string;
+  docLinks?: Array<{ label: string; href: string }>;
+};
+
 /** Documentation map: category -> help text */
-const CATEGORY_HELP: Record<string, { title: string; description: string; docLink?: string }> = {
+const CATEGORY_HELP: Record<string, CategoryHelp> = {
   password: {
     title: 'Password Requirements',
     description:
@@ -119,9 +133,57 @@ const CATEGORY_HELP: Record<string, { title: string; description: string; docLin
       'Manage device encryption, debugging access, safe boot, and advanced security overrides such as Google Play Protect verification and developer settings access.',
   },
   systemUpdates: {
-    title: 'System Updates',
+    title: 'Platform Updates',
     description:
-      'Define how OTA system updates and app auto-updates are handled. Options include automatic, windowed (within a daily maintenance window), or postponed updates.',
+      'Control OEM OS, Google Play system, and Google system-service updates.',
+    sections: [
+      {
+        title: 'How it works',
+        paragraphs: [
+          'Unified Update Controls (UUC) evaluates rules in order for each update target and stage. The first matching rule applies. If no rule matches, the update client uses its normal behaviour.',
+        ],
+      },
+      {
+        title: 'Choose the right control',
+        items: [
+          'Use System update policy for OEM over-the-air updates, including OS upgrades and security-patch level updates.',
+          'Use UUC for Google Play system updates (Mainline), Google system services and individual eligible Google system apps.',
+          'For fine-grained OEM rules on supported company-owned devices, create the UUC rules and leave System update policy off.',
+          'When System update policy is on, it takes precedence over UUC for both OEM OS targets. The controls do not layer.',
+        ],
+      },
+      {
+        title: 'Device eligibility',
+        items: [
+          'UUC is supported only on company-owned devices.',
+          'Fully managed devices need Android 13 or later for Google targets and Google OTA OS updates. COPE devices need Android 15 or later.',
+          'OS updates from other OEMs need Android 17 or later in either management mode.',
+          'Update policies are not enforced during setup, so an early update can begin before Android Device Policy receives the policy.',
+        ],
+      },
+      {
+        title: 'Deferral limits',
+        items: [
+          'Google system services and individual Google system apps: up to 5 days.',
+          'Mainline and OS updates without an API-level change: up to 25 days.',
+          'OS updates with an API-level change: up to 180 days, or 90 days on COPE.',
+          'After the limit, Block and User prompt fall back to normal update behaviour.',
+        ],
+      },
+      {
+        title: 'Important behaviour',
+        items: [
+          'For Google Play-delivered updates, Block stops automatic updates only. Users can still update manually.',
+          'Mainline control applies only before its download begins.',
+          'Apply-stage control is best-effort. A user reboot can apply a downloaded update.',
+          'OEM updates can bundle Mainline modules and Google system services.',
+        ],
+      },
+    ],
+    docLinks: [
+      { label: 'View UUC guide', href: 'https://developers.google.com/android/management/unified-update-controls' },
+      { label: 'View AMAPI Policy reference', href: 'https://developers.google.com/android/management/reference/rest/v1/enterprises.policies' },
+    ],
   },
   permissions: {
     title: 'Permissions',
@@ -666,6 +728,19 @@ export default function PolicyEditor() {
               <>
                 <h4 className="text-sm font-medium text-gray-800 mb-2">{helpInfo.title}</h4>
                 <p className="text-xs text-gray-600 leading-relaxed mb-4">{helpInfo.description}</p>
+                {helpInfo.sections?.map((section) => (
+                  <section key={section.title} className="border-t border-gray-200 py-4 first:border-t-0 first:pt-0">
+                    <h5 className="text-xs font-semibold text-gray-800">{section.title}</h5>
+                    {section.paragraphs?.map((paragraph) => (
+                      <p key={paragraph} className="mt-2 text-xs leading-relaxed text-gray-600">{paragraph}</p>
+                    ))}
+                    {section.items && (
+                      <ul className="mt-2 list-disc space-y-1.5 pl-4 text-xs leading-relaxed text-gray-600">
+                        {section.items.map((item) => <li key={item}>{item}</li>)}
+                      </ul>
+                    )}
+                  </section>
+                ))}
                 {helpInfo.docLink && (
                   <a
                     href={helpInfo.docLink}
@@ -675,6 +750,21 @@ export default function PolicyEditor() {
                   >
                     View AMAPI Reference
                   </a>
+                )}
+                {helpInfo.docLinks && (
+                  <div className="flex flex-col items-start gap-2 border-t border-gray-200 pt-4">
+                    {helpInfo.docLinks.map((link) => (
+                      <a
+                        key={link.href}
+                        href={link.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
+                      >
+                        {link.label}
+                      </a>
+                    ))}
+                  </div>
                 )}
               </>
             ) : (

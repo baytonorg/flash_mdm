@@ -55,7 +55,8 @@ const AMAPI_SECTIONS: Record<string, string> = {
   mountPhysicalMediaDisabled: 'Physical Media',
   usbFileTransferDisabled: 'USB Transfer',
   vpnConfigDisabled: 'VPN Config',
-  systemUpdate: 'System Update',
+  systemUpdate: 'System update policy',
+  unifiedUpdatePolicy: 'Unified Update Controls',
   minimumApiLevel: 'Minimum API Level',
   deviceOwnerLockScreenInfo: 'Lock Screen Info',
   shortSupportMessage: 'Short Support Message',
@@ -146,6 +147,7 @@ const AMAPI_KEY_TO_FORM_CATEGORY: Record<string, string> = {
 
   // systemUpdates
   systemUpdate: 'systemUpdates',
+  unifiedUpdatePolicy: 'systemUpdates',
 
   // permissions
   defaultPermissionPolicy: 'permissions',
@@ -204,7 +206,7 @@ const CATEGORY_ORDER: Array<{ id: string; label: string }> = [
   { id: 'network', label: 'Network' },
   { id: 'deviceSettings', label: 'Device Settings' },
   { id: 'security', label: 'Security' },
-  { id: 'systemUpdates', label: 'System Updates' },
+  { id: 'systemUpdates', label: 'Platform Updates' },
   { id: 'permissions', label: 'Permissions' },
   { id: 'statusReporting', label: 'Status Reporting' },
   { id: 'personalUsage', label: 'Personal Usage' },
