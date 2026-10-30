@@ -10,7 +10,7 @@ export interface EnrollmentToken {
   value?: string;
   one_time_use?: boolean;
   expiry?: string | null;
-  expires_at?: string;
+  expires_at?: string | null;
   created_at: string;
   qr_data?: string | null;
   token_value?: string | null;

@@ -36,7 +36,7 @@ function isExpired(dateStr: string | null): boolean {
 }
 
 function getTokenExpiry(token: EnrollmentToken): string | null {
-  return token.expiry ?? token.expires_at ?? null;
+  return token.expires_at ?? token.expiry ?? null;
 }
 
 export default function EnrollmentTokens() {
