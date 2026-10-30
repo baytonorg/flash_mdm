@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   deleteMutate: vi.fn(),
   deleteReset: vi.fn(),
   deleteError: null as Error | null,
+  tokens: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock('@tanstack/react-query', async () => {
@@ -29,15 +30,7 @@ vi.mock('@/stores/context', () => ({
 vi.mock('@/api/queries/enrollment', () => ({
   enrollmentKeys: { all: ['enrollment'] },
   useEnrollmentTokens: () => ({
-    data: [{
-      id: 't1',
-      name: 'Test token',
-      qr_data: null,
-      token_value: null,
-      allow_personal_usage: false,
-      expiry: null,
-      created_at: '2026-01-01T00:00:00Z',
-    }],
+    data: mocks.tokens,
     isLoading: false,
   }),
   useDeleteEnrollmentToken: () => ({
@@ -74,6 +67,15 @@ describe('Enrollment tokens bulk actions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.deleteError = null;
+    mocks.tokens = [{
+      id: 't1',
+      name: 'Test token',
+      qr_data: null,
+      token_value: null,
+      allow_personal_usage: false,
+      expires_at: '2099-11-05T13:12:23Z',
+      created_at: '2026-01-01T00:00:00Z',
+    }];
   });
 
   it('submits bulk token delete payload after confirmation', async () => {
@@ -104,6 +106,53 @@ describe('Enrollment tokens bulk actions', () => {
     await user.click(screen.getByRole('button', { name: 'Delete' }));
 
     expect(mocks.bulkMutate).not.toHaveBeenCalled();
+  });
+
+  it('renders the API expires_at field in the list and detail view', async () => {
+    const user = userEvent.setup();
+    render(<EnrollmentTokens />);
+
+    expect(screen.queryByText('Never')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Open enrolment token Test token' }));
+    const detailExpiryLabel = screen.getAllByText('Expires').at(-1);
+    expect(detailExpiryLabel?.nextElementSibling).not.toHaveTextContent('Never');
+  });
+
+  it('prefers expires_at over a conflicting legacy expiry value', () => {
+    mocks.tokens = [{
+      ...mocks.tokens[0],
+      expiry: null,
+      expires_at: '2000-01-01T00:00:00Z',
+    }];
+
+    render(<EnrollmentTokens />);
+
+    expect(screen.getByText('Expired')).toBeInTheDocument();
+    expect(screen.queryByText('Never')).not.toBeInTheDocument();
+  });
+
+  it('retains the legacy expiry field as a compatibility fallback', () => {
+    mocks.tokens = [{
+      ...mocks.tokens[0],
+      expiry: '2000-01-01T00:00:00Z',
+      expires_at: undefined,
+    }];
+
+    render(<EnrollmentTokens />);
+
+    expect(screen.getByText('Expired')).toBeInTheDocument();
+  });
+
+  it('renders Never only when both expiry fields are absent', () => {
+    mocks.tokens = [{
+      ...mocks.tokens[0],
+      expiry: null,
+      expires_at: null,
+    }];
+
+    render(<EnrollmentTokens />);
+
+    expect(screen.getByText('Never')).toBeInTheDocument();
   });
 
   it('shows a token deletion error and clears mutation state when dismissed', async () => {
