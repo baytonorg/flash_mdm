@@ -1173,12 +1173,14 @@ async function processEnrollment(
 
   await logAudit({
     environment_id: environmentId,
+    device_id: enrolledDeviceForApps?.id,
     actor_type: 'system',
     visibility_scope: 'privileged',
     action: 'device.enrolled',
     resource_type: 'device',
-    resource_id: deviceAmapiName,
+    resource_id: enrolledDeviceForApps?.id,
     details: {
+      amapi_name: deviceAmapiName,
       manufacturer: hardwareInfo.manufacturer,
       model: hardwareInfo.model,
       group_id: tokenGroupId ?? null,

@@ -1002,6 +1002,14 @@ describe('sync-process-background job queue processing', () => {
         'UNKNOWN',
       ]
     );
+    expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'device.enrolled',
+      device_id: 'dev_enroll_1',
+      resource_id: 'dev_enroll_1',
+      details: expect.objectContaining({
+        amapi_name: 'enterprises/e1/devices/d2',
+      }),
+    }));
   });
 
   it('preserves an existing current row during re-enrollment and retains predecessor history', async () => {
