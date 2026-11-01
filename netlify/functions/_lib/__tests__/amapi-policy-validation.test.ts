@@ -105,6 +105,7 @@ describe('amapi-policy-validation', () => {
         packageName: 'com.example.custom',
         installType: 'CUSTOM',
         signingKeyCerts: [{ signingKeyCertFingerprintSha256: `${'A'.repeat(43)}=` }],
+        customAppConfig: {},
       }],
     });
     expect(valid.errors).toHaveLength(0);
@@ -114,9 +115,31 @@ describe('amapi-policy-validation', () => {
         packageName: 'com.example.custom',
         installType: 'CUSTOM',
         signingKeyCerts: [{ signingKeyCertFingerprintSha256: 'a'.repeat(64) }],
+        customAppConfig: {},
       }],
     });
     expect(invalid.errors.some((e) => e.includes('base64-encoded 32-byte'))).toBe(true);
+  });
+
+  it('requires customAppConfig to be an object for CUSTOM applications', () => {
+    const missing = validateAmapiPolicyPayload({
+      applications: [{
+        packageName: 'com.example.custom',
+        installType: 'CUSTOM',
+        signingKeyCerts: [{ signingKeyCertFingerprintSha256: `${'A'.repeat(43)}=` }],
+      }],
+    });
+    const invalid = validateAmapiPolicyPayload({
+      applications: [{
+        packageName: 'com.example.custom',
+        installType: 'CUSTOM',
+        signingKeyCerts: [{ signingKeyCertFingerprintSha256: `${'A'.repeat(43)}=` }],
+        customAppConfig: [],
+      }],
+    });
+
+    expect(missing.errors.some((e) => e.includes('requires customAppConfig to be an object'))).toBe(true);
+    expect(invalid.errors.some((e) => e.includes('requires customAppConfig to be an object'))).toBe(true);
   });
 
   it('rejects KIOSK installType conflicts with KIOSK role and multiple kiosk install types', () => {

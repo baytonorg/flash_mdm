@@ -14,7 +14,7 @@
 |------|-------|-------------|
 | `parseJson` | 77-82 | Safely parses a JSON string or returns the value as-is; returns `{}` on failure |
 | `validateInstallTypeField` | 84-90 | Validates an install type value against the AMAPI allowed list |
-| `validateAppPolicyField` | 92-99 | Validates an app_policy object against the AMAPI application policy fragment schema |
+| `validateAppPolicyField` | 92-102 | Validates an app_policy object against the AMAPI application policy fragment schema and effective install type |
 | `getAmapiAppMetadataContext` | 101-109 | Fetches workspace and enterprise details needed for AMAPI app metadata calls |
 | `fetchAmapiAppMetadata` | 111-137 | Calls AMAPI to retrieve app title and icon URL for a given package name |
 | `hydrateAppMetadataCache` | 139-167 | Lazily hydrates an app row's display_name and icon_url from AMAPI if missing, persisting back to DB |
@@ -52,7 +52,7 @@ The handler implements a custom URL-based router that splits the path after `/ap
 - **Catalog** lists all imported apps for an environment with lazy AMAPI metadata hydration (fetches title/icon from Google Play if missing).
 - **Import** upserts an app into the catalog using an `ON CONFLICT` on `(environment_id, package_name)`.
 - **App CRUD by UUID** supports GET (with all scope configs and resolved scope names), PUT (update defaults), and DELETE (cascading delete).
-- **Scope config CRUD** allows adding, updating, and deleting per-scope (environment/group/device) overrides for install type, auto update mode, managed config, and app_policy.
+- **Scope config CRUD** allows adding, updating, and deleting per-scope (environment/group/device) overrides for install type, auto update mode, managed config, and app_policy. Create and update requests validate the effective install type together with the effective app policy, including the required `customAppConfig` object for `CUSTOM` installs.
 
 **Legacy API (app_deployments table):**
 - GET/PUT/DELETE on `/api/apps/deployments/:id` for backward compatibility.

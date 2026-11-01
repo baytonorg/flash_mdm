@@ -283,6 +283,9 @@ export function validateAmapiPolicyPayload(payload: unknown): AmapiPolicyValidat
       if (!Array.isArray(app.signingKeyCerts) || asArray(app.signingKeyCerts).length === 0) {
         errors.push(`applications[${idx}] with installType=CUSTOM requires signingKeyCerts`);
       }
+      if (!asObject(app.customAppConfig)) {
+        errors.push(`applications[${idx}] with installType=CUSTOM requires customAppConfig to be an object`);
+      }
       const customDisallowedFields = [
         'minimumVersionCode',
         'accessibleTrackIds',

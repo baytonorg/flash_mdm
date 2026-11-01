@@ -29,6 +29,7 @@ import PlayStoreIframe from '@/components/apps/PlayStoreIframe';
 import ManagedConfigEditor from '@/components/apps/ManagedConfigEditor';
 import AppScopeSelector from '@/components/apps/AppScopeSelector';
 import AmapiApplicationPolicyEditor from '@/components/apps/AmapiApplicationPolicyEditor';
+import { normalizeAppPolicyForInstallType } from '@/components/apps/amapiApplicationPolicy';
 import JsonField from '@/components/policy/fields/JsonField';
 
 // ─── Install type options ───────────────────────────────────────────────────
@@ -312,6 +313,7 @@ export default function Applications() {
   };
 
   const handleOpenScopeConfig = (app: CatalogApp, config?: AppScopeConfig) => {
+    const effectiveInstallType = config?.install_type ?? app.default_install_type;
     setCatalogScopeModal(app);
     setEditingScopeConfig(config ?? null);
     setScopeConfigScope(config
@@ -320,12 +322,20 @@ export default function Applications() {
         scope_id: config.scope_id,
       }
       : { scope_type: 'environment', scope_id: environmentId ?? '' });
-    setScopeConfigInstallType(config?.install_type ?? app.default_install_type);
+    setScopeConfigInstallType(effectiveInstallType);
     setScopeConfigAutoUpdate(config?.auto_update_mode ?? app.default_auto_update_mode);
     setScopeConfigManagedConfig((config?.managed_config ?? {}) as Record<string, unknown>);
-    setScopeConfigAppPolicy((config?.app_policy ?? {}) as Record<string, unknown>);
+    setScopeConfigAppPolicy(normalizeAppPolicyForInstallType(
+      (config?.app_policy ?? {}) as Record<string, unknown>,
+      effectiveInstallType,
+    ));
     setScopeConfigTab('general');
     setScopeConfigManagedConfigTab('form');
+  };
+
+  const handleScopeConfigInstallTypeChange = (nextInstallType: string) => {
+    setScopeConfigInstallType(nextInstallType);
+    setScopeConfigAppPolicy((current) => normalizeAppPolicyForInstallType(current, nextInstallType));
   };
 
   const handleSaveScopeConfig = () => {
@@ -1154,7 +1164,7 @@ export default function Applications() {
                     <label className="block text-sm font-medium text-gray-900 mb-1">Install Type</label>
                     <select
                       value={scopeConfigInstallType}
-                      onChange={(e) => setScopeConfigInstallType(e.target.value)}
+                      onChange={(e) => handleScopeConfigInstallTypeChange(e.target.value)}
                       className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
                     >
                       {INSTALL_TYPES.map((t) => (

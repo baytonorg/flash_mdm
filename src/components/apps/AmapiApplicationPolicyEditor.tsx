@@ -464,25 +464,14 @@ export default function AmapiApplicationPolicyEditor({
             <div className="rounded-lg border border-gray-200 p-4">
               <h4 className="text-sm font-semibold text-gray-900 mb-2">Custom App Configuration</h4>
               <p className="text-xs text-gray-500 mb-3">
-                Shown only for `installType=CUSTOM`.
+                AMAPI requires `customAppConfig` for `installType=CUSTOM`. Flash creates the object automatically; leave the uninstall setting unspecified to use the platform default.
               </p>
-              <div className="mb-2 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className={chipClass(!!value.customAppConfig)}
-                  onClick={() => onChange(setKey(value, 'customAppConfig', value.customAppConfig ? undefined : {}))}
-                >
-                  {value.customAppConfig ? 'Disable customAppConfig' : 'Enable customAppConfig'}
-                </button>
-              </div>
-              {!!value.customAppConfig && (
-                <EnumField
-                  label="User Uninstall Settings"
-                  value={str(customAppConfig.userUninstallSettings) || 'USER_UNINSTALL_SETTINGS_UNSPECIFIED'}
-                  onChange={(v) => onChange(setNestedKey(value, 'customAppConfig', { ...customAppConfig, userUninstallSettings: v }))}
-                  options={CUSTOM_APP_UNINSTALL_OPTIONS}
-                />
-              )}
+              <EnumField
+                label="User Uninstall Settings"
+                value={str(customAppConfig.userUninstallSettings) || 'USER_UNINSTALL_SETTINGS_UNSPECIFIED'}
+                onChange={(v) => onChange(setNestedKey(value, 'customAppConfig', { ...customAppConfig, userUninstallSettings: v }))}
+                options={CUSTOM_APP_UNINSTALL_OPTIONS}
+              />
             </div>
           )}
         </div>
