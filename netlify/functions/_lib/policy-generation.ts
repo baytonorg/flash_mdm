@@ -582,7 +582,15 @@ function upsertApplicationInPolicyConfig(config: Record<string, unknown>, deploy
 
   const existingIndex = applications.findIndex((a) => a.packageName === deployment.package_name);
   if (existingIndex >= 0) {
-    applications[existingIndex] = { ...applications[existingIndex], ...appEntry };
+    const mergedEntry = { ...applications[existingIndex], ...appEntry };
+    if (deployment.install_type === 'CUSTOM') {
+      delete mergedEntry.autoUpdateMode;
+      delete mergedEntry.installPriority;
+      delete mergedEntry.installConstraint;
+      delete mergedEntry.minimumVersionCode;
+      delete mergedEntry.accessibleTrackIds;
+    }
+    applications[existingIndex] = mergedEntry;
   } else {
     applications.push(appEntry);
   }

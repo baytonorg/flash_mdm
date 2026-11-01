@@ -99,6 +99,26 @@ describe('amapi-policy-validation', () => {
     expect(result.errors.some((e) => e.includes('must not set installPriority'))).toBe(true);
   });
 
+  it('validates ApplicationSigningKeyCert fingerprints as base64-encoded SHA-256 bytes', () => {
+    const valid = validateAmapiPolicyPayload({
+      applications: [{
+        packageName: 'com.example.custom',
+        installType: 'CUSTOM',
+        signingKeyCerts: [{ signingKeyCertFingerprintSha256: `${'A'.repeat(43)}=` }],
+      }],
+    });
+    expect(valid.errors).toHaveLength(0);
+
+    const invalid = validateAmapiPolicyPayload({
+      applications: [{
+        packageName: 'com.example.custom',
+        installType: 'CUSTOM',
+        signingKeyCerts: [{ signingKeyCertFingerprintSha256: 'a'.repeat(64) }],
+      }],
+    });
+    expect(invalid.errors.some((e) => e.includes('base64-encoded 32-byte'))).toBe(true);
+  });
+
   it('rejects KIOSK installType conflicts with KIOSK role and multiple kiosk install types', () => {
     const result = validateAmapiPolicyPayload({
       applications: [

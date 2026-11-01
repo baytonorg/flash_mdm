@@ -240,7 +240,17 @@ describe('policy-generation', () => {
     const result = await buildGeneratedPolicyPayload({
       policyId: 'pol_1',
       environmentId: 'env_1',
-      baseConfig: {},
+      baseConfig: {
+        applications: [{
+          packageName: 'com.example.custom',
+          installType: 'FORCE_INSTALLED',
+          autoUpdateMode: 'AUTO_UPDATE_HIGH_PRIORITY',
+          installPriority: 10,
+          minimumVersionCode: 100,
+          installConstraint: [{ chargingConstraint: 'INSTALL_ONLY_WHEN_CHARGING' }],
+          accessibleTrackIds: ['production'],
+        }],
+      },
     });
 
     const app = (result.payload.applications as Array<Record<string, unknown>>)[0];

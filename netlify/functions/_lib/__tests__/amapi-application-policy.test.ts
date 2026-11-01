@@ -33,7 +33,7 @@ describe('amapi-application-policy helper', () => {
 
     expect(errors.some((e) => e.includes('duplicate roleType'))).toBe(true);
     expect(errors.some((e) => e.includes('ROLE_TYPE_UNSPECIFIED'))).toBe(true);
-    expect(errors.some((e) => e.includes('64 hex chars'))).toBe(true);
+    expect(errors.some((e) => e.includes('base64-encoded 32-byte'))).toBe(true);
   });
 
   it('rejects invalid signingKeyCerts string-array fingerprints (AMAPI accepted shape)', () => {
@@ -46,7 +46,7 @@ describe('amapi-application-policy helper', () => {
   });
 
   it('accepts a valid app_policy fragment with roles and signing certs', () => {
-    const fp = 'a'.repeat(64);
+    const fp = `${'A'.repeat(43)}=`;
     const errors = validateAmapiApplicationPolicyFragment({
       roles: [{ roleType: 'KIOSK' }, { roleType: 'COMPANION_APP' }],
       signingKeyCerts: [{ signingKeyCertFingerprintSha256: fp }],
