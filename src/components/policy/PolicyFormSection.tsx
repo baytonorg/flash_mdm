@@ -40,8 +40,8 @@ function uniqueNonEmptyStrings(value: any): string[] {
   return out;
 }
 
-function isValidSha256Hex(v: string): boolean {
-  return /^[a-fA-F0-9]{64}$/.test(v.trim());
+function isValidSha256Base64(v: string): boolean {
+  return /^[A-Za-z0-9+/]{43}=$/.test(v.trim());
 }
 
 function normalizeMinutesOfDay(value: unknown): number {
@@ -1801,22 +1801,22 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
                 </div>
                 <RepeaterField
                   label="Signing Key Certs"
-                  description="SHA-256 signing cert fingerprints. Required for some custom/role/extension scenarios."
+                  description="Base64-encoded SHA-256 signing cert fingerprints. Required for some custom/role/extension scenarios."
                   value={Array.isArray(item.signingKeyCerts) ? item.signingKeyCerts : []}
                   onChange={(certs) => onItemChange({ ...item, signingKeyCerts: certs })}
                   defaultItem={{ signingKeyCertFingerprintSha256: '' }}
                   renderItem={(cert, __idx, onCertChange) => (
                     <div className="space-y-1">
                       <TextField
-                        label="SHA-256 Fingerprint"
+                        label="SHA-256 Fingerprint (base64)"
                         value={cert.signingKeyCertFingerprintSha256 ?? ''}
                         onChange={(v) => onCertChange({ signingKeyCertFingerprintSha256: v.trim() })}
-                        placeholder="64 hex chars"
+                        placeholder="Base64-encoded 32-byte digest"
                       />
                       {typeof cert.signingKeyCertFingerprintSha256 === 'string' &&
                       cert.signingKeyCertFingerprintSha256.trim() &&
-                      !isValidSha256Hex(cert.signingKeyCertFingerprintSha256) ? (
-                        <p className="text-xs text-amber-700">Expected 64 hex characters (SHA-256 digest).</p>
+                      !isValidSha256Base64(cert.signingKeyCertFingerprintSha256) ? (
+                        <p className="text-xs text-amber-700">Expected a base64-encoded 32-byte SHA-256 digest.</p>
                       ) : null}
                     </div>
                   )}

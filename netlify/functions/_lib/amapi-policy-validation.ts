@@ -1,4 +1,5 @@
 import { validateAmapiPolicyAgainstDiscovery } from './amapi-discovery-validation.js';
+import { isAmapiSha256Digest } from './amapi-application-policy.js';
 
 type JsonObject = Record<string, unknown>;
 
@@ -313,8 +314,8 @@ export function validateAmapiPolicyPayload(payload: unknown): AmapiPolicyValidat
     const certs = asArray<JsonObject>(app.signingKeyCerts);
     certs.forEach((cert, certIdx) => {
       const fp = asString(cert.signingKeyCertFingerprintSha256)?.trim();
-      if (fp && !SHA256_HEX.test(fp)) {
-        errors.push(`applications[${idx}].signingKeyCerts[${certIdx}].signingKeyCertFingerprintSha256 must be 64 hex chars`);
+      if (fp && !isAmapiSha256Digest(fp)) {
+        errors.push(`applications[${idx}].signingKeyCerts[${certIdx}].signingKeyCertFingerprintSha256 must be a base64-encoded 32-byte SHA-256 fingerprint`);
       }
     });
 

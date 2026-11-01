@@ -444,10 +444,10 @@ export default function AmapiApplicationPolicyEditor({
               defaultItem={{ signingKeyCertFingerprintSha256: '' }}
               renderItem={(item, _idx, onItemChange) => (
                 <TextField
-                  label="SHA-256 Fingerprint"
+                  label="SHA-256 Fingerprint (base64)"
                   value={str(item.signingKeyCertFingerprintSha256)}
                   onChange={(v) => onItemChange({ ...item, signingKeyCertFingerprintSha256: v })}
-                  placeholder="64-char hex fingerprint"
+                  placeholder="Base64-encoded 32-byte SHA-256 digest"
                 />
               )}
             />

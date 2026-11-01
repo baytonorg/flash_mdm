@@ -1,4 +1,8 @@
-const SHA256_HEX = /^[a-fA-F0-9]{64}$/;
+const SHA256_BASE64 = /^[A-Za-z0-9+/]{43}=$/;
+
+export function isAmapiSha256Digest(value: unknown): value is string {
+  return typeof value === 'string' && SHA256_BASE64.test(value.trim());
+}
 
 export const AMAPI_APPLICATION_INSTALL_TYPES = [
   'INSTALL_TYPE_UNSPECIFIED',
@@ -71,8 +75,8 @@ export function validateAmapiApplicationPolicyFragment(value: unknown): string[]
   signingKeyCerts.forEach((cert, idx) => {
     if (typeof cert === 'string') {
       const fp = cert.trim();
-      if (fp && !SHA256_HEX.test(fp)) {
-        errors.push(`app_policy.signingKeyCerts[${idx}] must be a 64-char SHA-256 hex fingerprint`);
+      if (fp && !isAmapiSha256Digest(fp)) {
+        errors.push(`app_policy.signingKeyCerts[${idx}] must be a base64-encoded 32-byte SHA-256 fingerprint`);
       }
       return;
     }
@@ -80,8 +84,8 @@ export function validateAmapiApplicationPolicyFragment(value: unknown): string[]
     const certObj = asObject(cert);
     if (!certObj) return;
     const fp = asString(certObj.signingKeyCertFingerprintSha256)?.trim();
-    if (fp && !SHA256_HEX.test(fp)) {
-      errors.push(`app_policy.signingKeyCerts[${idx}].signingKeyCertFingerprintSha256 must be 64 hex chars`);
+    if (fp && !isAmapiSha256Digest(fp)) {
+      errors.push(`app_policy.signingKeyCerts[${idx}].signingKeyCertFingerprintSha256 must be a base64-encoded 32-byte SHA-256 fingerprint`);
     }
   });
 
@@ -91,7 +95,7 @@ export function validateAmapiApplicationPolicyFragment(value: unknown): string[]
     .map((v) => v.trim())
     .filter(Boolean);
   extFingerprints.forEach((fp, idx) => {
-    if (!SHA256_HEX.test(fp)) {
+    if (!/^[a-fA-F0-9]{64}$/.test(fp)) {
       errors.push(`app_policy.extensionConfig.signingKeyFingerprintsSha256[${idx}] must be 64 hex chars`);
     }
   });
