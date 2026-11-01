@@ -38,10 +38,25 @@ function hasDuplicates(values: string[]): boolean {
   return new Set(values).size !== values.length;
 }
 
-export function validateAmapiApplicationPolicyFragment(value: unknown): string[] {
+export function validateAmapiApplicationPolicyFragment(
+  value: unknown,
+  installType?: AmapiApplicationInstallType | string | null,
+): string[] {
   const errors: string[] = [];
   const appPolicy = asObject(value);
-  if (!appPolicy) return errors;
+  if (!appPolicy) {
+    if (installType === 'CUSTOM') {
+      errors.push('app_policy.customAppConfig must be an object when install_type is CUSTOM');
+    }
+    return errors;
+  }
+
+  if (installType === 'CUSTOM' && !asObject(appPolicy.customAppConfig)) {
+    errors.push('app_policy.customAppConfig must be an object when install_type is CUSTOM');
+  }
+  if (installType && installType !== 'CUSTOM' && appPolicy.customAppConfig !== undefined) {
+    errors.push('app_policy.customAppConfig requires install_type CUSTOM');
+  }
 
   const installConstraint = asArray(appPolicy.installConstraint);
   if (installConstraint.length > 1) {

@@ -56,4 +56,20 @@ describe('amapi-application-policy helper', () => {
 
     expect(errors).toEqual([]);
   });
+
+  it('requires customAppConfig to be an object for CUSTOM installs', () => {
+    expect(validateAmapiApplicationPolicyFragment({}, 'CUSTOM')).toContain(
+      'app_policy.customAppConfig must be an object when install_type is CUSTOM'
+    );
+    expect(validateAmapiApplicationPolicyFragment({ customAppConfig: null }, 'CUSTOM')).toContain(
+      'app_policy.customAppConfig must be an object when install_type is CUSTOM'
+    );
+    expect(validateAmapiApplicationPolicyFragment({ customAppConfig: {} }, 'CUSTOM')).toEqual([]);
+  });
+
+  it('rejects customAppConfig outside CUSTOM installs', () => {
+    expect(validateAmapiApplicationPolicyFragment({ customAppConfig: {} }, 'AVAILABLE')).toContain(
+      'app_policy.customAppConfig requires install_type CUSTOM'
+    );
+  });
 });

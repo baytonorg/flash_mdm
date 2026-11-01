@@ -91,12 +91,15 @@ function validateInstallTypeField(value: unknown, fieldName: string): string | n
   return null;
 }
 
-function validateAppPolicyField(value: unknown): string | null {
-  if (value === undefined || value === null) return null;
+function validateAppPolicyField(value: unknown, installType: string): string | null {
+  if ((value === undefined || value === null) && installType !== 'CUSTOM') return null;
   if (typeof value !== 'object' || Array.isArray(value)) {
+    if ((value === undefined || value === null) && installType === 'CUSTOM') {
+      return 'app_policy.customAppConfig must be an object when install_type is CUSTOM';
+    }
     return 'app_policy must be a JSON object';
   }
-  const errors = validateAmapiApplicationPolicyFragment(value);
+  const errors = validateAmapiApplicationPolicyFragment(value, installType);
   return errors.length ? errors.join('; ') : null;
 }
 
@@ -534,7 +537,8 @@ async function handleAddScopeConfig(request: Request, appId: string) {
 
   const installTypeError = validateInstallTypeField(body.install_type, 'install_type');
   if (installTypeError) return errorResponse(installTypeError);
-  const appPolicyError = validateAppPolicyField(body.app_policy);
+  const effectiveInstallType = body.install_type ?? app.default_install_type;
+  const appPolicyError = validateAppPolicyField(body.app_policy, effectiveInstallType);
   if (appPolicyError) return errorResponse(appPolicyError);
 
   const affectedPolicyIds: string[] = [];
@@ -633,7 +637,9 @@ async function handleUpdateScopeConfig(request: Request, appId: string, configId
 
   const installTypeError = validateInstallTypeField(body.install_type, 'install_type');
   if (installTypeError) return errorResponse(installTypeError);
-  const appPolicyError = validateAppPolicyField(body.app_policy);
+  const effectiveInstallType = body.install_type ?? existing.install_type ?? app.default_install_type;
+  const effectiveAppPolicy = body.app_policy ?? parseJson(existing.app_policy);
+  const appPolicyError = validateAppPolicyField(effectiveAppPolicy, effectiveInstallType);
   if (appPolicyError) return errorResponse(appPolicyError);
 
   const affectedPolicyIds: string[] = [];

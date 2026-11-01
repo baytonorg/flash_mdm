@@ -130,6 +130,9 @@ describe('AmapiApplicationPolicyEditor', () => {
     );
 
     expect(screen.getByText('Custom App Configuration')).toBeInTheDocument();
+    expect(screen.getByText(/AMAPI requires.*customAppConfig/i)).toBeInTheDocument();
+    expect(screen.getByText('User Uninstall Settings')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /customAppConfig/i })).not.toBeInTheDocument();
     expect(screen.queryByText('Managed Configuration Template')).not.toBeInTheDocument();
   });
 });
