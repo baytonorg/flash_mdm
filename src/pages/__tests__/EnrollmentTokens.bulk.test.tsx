@@ -9,7 +9,13 @@ const mocks = vi.hoisted(() => ({
   invalidateQueries: vi.fn(),
   deleteMutate: vi.fn(),
   deleteReset: vi.fn(),
+  syncMutate: vi.fn(),
   deleteError: null as Error | null,
+  activeEnvironment: { id: 'env1', name: 'Environment 1', enterprise_name: 'enterprises/e1' } as {
+    id: string;
+    name: string;
+    enterprise_name: string | null;
+  },
   tokens: [] as Array<Record<string, unknown>>,
 }));
 
@@ -23,7 +29,7 @@ vi.mock('@tanstack/react-query', async () => {
 
 vi.mock('@/stores/context', () => ({
   useContextStore: () => ({
-    activeEnvironment: { id: 'env1', name: 'Environment 1' },
+    activeEnvironment: mocks.activeEnvironment,
   }),
 }));
 
@@ -40,7 +46,7 @@ vi.mock('@/api/queries/enrollment', () => ({
     isError: mocks.deleteError !== null,
     error: mocks.deleteError,
   }),
-  useSyncEnrollmentTokens: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
+  useSyncEnrollmentTokens: () => ({ mutate: mocks.syncMutate, isPending: false, isError: false, error: null }),
   useBulkEnrollmentAction: () => ({ mutate: mocks.bulkMutate, isPending: false }),
 }));
 
@@ -67,6 +73,7 @@ describe('Enrollment tokens bulk actions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.deleteError = null;
+    mocks.activeEnvironment = { id: 'env1', name: 'Environment 1', enterprise_name: 'enterprises/e1' };
     mocks.tokens = [{
       id: 't1',
       name: 'Test token',
@@ -95,6 +102,24 @@ describe('Enrollment tokens bulk actions', () => {
       },
       expect.any(Object),
     );
+  });
+
+  it('gates token creation and AMAPI sync until the environment is bound', async () => {
+    const user = userEvent.setup();
+    mocks.activeEnvironment = { id: 'env1', name: 'Environment 1', enterprise_name: null };
+    mocks.tokens = [];
+
+    render(<EnrollmentTokens />);
+
+    expect(screen.getByRole('status')).toHaveTextContent('Bind this environment before managing enrolment tokens.');
+    const syncButton = screen.getByRole('button', { name: 'Sync from AMAPI' });
+    const createButtons = screen.getAllByRole('button', { name: 'Create Token' });
+    expect(syncButton).toBeDisabled();
+    expect(createButtons).toHaveLength(2);
+    createButtons.forEach((button) => expect(button).toBeDisabled());
+
+    await user.click(syncButton);
+    expect(mocks.syncMutate).not.toHaveBeenCalled();
   });
 
   it('does not submit bulk token delete when confirmation is cancelled', async () => {
