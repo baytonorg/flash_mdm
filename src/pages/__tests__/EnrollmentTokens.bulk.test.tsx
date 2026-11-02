@@ -107,14 +107,16 @@ describe('Enrollment tokens bulk actions', () => {
   it('gates token creation and AMAPI sync until the environment is bound', async () => {
     const user = userEvent.setup();
     mocks.activeEnvironment = { id: 'env1', name: 'Environment 1', enterprise_name: null };
+    mocks.tokens = [];
 
     render(<EnrollmentTokens />);
 
     expect(screen.getByRole('status')).toHaveTextContent('Bind this environment before managing enrolment tokens.');
     const syncButton = screen.getByRole('button', { name: 'Sync from AMAPI' });
-    const createButton = screen.getByRole('button', { name: 'Create Token' });
+    const createButtons = screen.getAllByRole('button', { name: 'Create Token' });
     expect(syncButton).toBeDisabled();
-    expect(createButton).toBeDisabled();
+    expect(createButtons).toHaveLength(2);
+    createButtons.forEach((button) => expect(button).toBeDisabled());
 
     await user.click(syncButton);
     expect(mocks.syncMutate).not.toHaveBeenCalled();

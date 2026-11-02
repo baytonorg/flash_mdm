@@ -247,7 +247,9 @@ export default function EnrollmentTokens() {
           <button
             type="button"
             onClick={() => setCreatorOpen(true)}
-            className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-light transition-colors"
+            disabled={!isEnterpriseBound}
+            title={!isEnterpriseBound ? 'Bind this environment to an enterprise before creating tokens.' : undefined}
+            className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-light transition-colors disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Plus className="h-4 w-4" />
             Create Token
