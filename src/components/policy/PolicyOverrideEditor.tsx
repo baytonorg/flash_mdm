@@ -8,6 +8,7 @@ import {
 import { usePolicy, usePolicyAssignments } from '@/api/queries/policies';
 import LockControls from '@/components/policy/LockControls';
 import PolicyFormSection from '@/components/policy/PolicyFormSection';
+import { isPolicyCategoryAvailable } from '@/components/policy/policy-category-availability';
 
 /**
  * AMAPI top-level config sections with human-readable labels.
@@ -35,6 +36,7 @@ const AMAPI_SECTIONS: Record<string, string> = {
   openNetworkConfiguration: 'Network Config',
   deviceConnectivityManagement: 'Connectivity',
   deviceRadioState: 'Radio State',
+  deviceWidePolicies: 'Device-Wide Policies',
   privateDnsSettings: 'Private DNS',
   recommendedGlobalProxy: 'Global Proxy',
   wifiConfigsLockdownEnabled: 'WiFi Lockdown',
@@ -113,11 +115,17 @@ const AMAPI_KEY_TO_FORM_CATEGORY: Record<string, string> = {
   alwaysOnVpnPackage: 'network',
   preferentialNetworkService: 'network',
   networkEscapeHatchEnabled: 'network',
-  autoDateAndTimeZone: 'network',
   wifiConfigsLockdownEnabled: 'network',
   deviceRadioState: 'network',
   privateDnsSettings: 'network',
   recommendedGlobalProxy: 'network',
+
+  // personalUsage
+  deviceWidePolicies: 'personalUsage',
+
+  // deviceSettings
+  autoDateAndTimeZone: 'deviceSettings',
+  enterpriseDisplayNameVisibility: 'deviceSettings',
 
   // applications
   installAppsDisabled: 'applications',
@@ -185,11 +193,10 @@ const AMAPI_KEY_TO_FORM_CATEGORY: Record<string, string> = {
   smsDisabled: 'deviceSettings',
   networkResetDisabled: 'network',
   dataRoamingDisabled: 'network',
-  enterpriseDisplayNameVisibility: 'advanced',
   printingPolicy: 'deviceSettings',
   assistContentPolicy: 'deviceSettings',
   accountTypesWithManagementDisabled: 'security',
-  persistentPreferredActivities: 'advanced',
+  persistentPreferredActivities: 'applications',
   setupActions: 'advanced',
   workAccountSetupConfig: 'advanced',
   shortSupportMessage: 'complianceRules',
@@ -321,6 +328,9 @@ export default function PolicyOverrideEditor({
     ?? policyData?.policy?.config
     ?? {}
   ) as Record<string, unknown>;
+  const policyScenario = typeof policyData?.policy?.deployment_scenario === 'string'
+    ? policyData.policy.deployment_scenario
+    : 'fm';
 
   // Find assignment record for this scope to get current lock state
   const currentAssignment = useMemo(() => {
@@ -349,7 +359,7 @@ export default function PolicyOverrideEditor({
     }
 
     return CATEGORY_ORDER
-      .filter(({ id }) => byCategory.has(id))
+      .filter(({ id }) => byCategory.has(id) && isPolicyCategoryAvailable(id, policyScenario))
       .map(({ id, label }) => {
         const keys = byCategory.get(id)!;
         const overriddenKeys = keys.filter((k) => k in currentOverrides);
@@ -369,7 +379,7 @@ export default function PolicyOverrideEditor({
           isConfigured: configuredKeys.length > 0,
         };
       });
-  }, [baseConfig, currentOverrides, lockState, lockedSections]);
+  }, [baseConfig, currentOverrides, lockState, lockedSections, policyScenario]);
 
   const overrideCount = Object.keys(currentOverrides).length;
 

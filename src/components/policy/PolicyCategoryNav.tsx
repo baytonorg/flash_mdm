@@ -18,13 +18,12 @@ import {
   GitBranch,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { isPolicyCategoryAvailable } from './policy-category-availability';
 
 interface CategoryDef {
   id: string;
   label: string;
   icon: LucideIcon;
-  /** Which scenarios support this category. undefined = all scenarios. */
-  scenarios?: string[];
 }
 
 const CATEGORIES: CategoryDef[] = [
@@ -37,8 +36,8 @@ const CATEGORIES: CategoryDef[] = [
   { id: 'systemUpdates', label: 'Platform Updates', icon: RefreshCw },
   { id: 'permissions', label: 'Permissions', icon: KeyRound },
   { id: 'statusReporting', label: 'Status Reporting', icon: BarChart3 },
-  { id: 'personalUsage', label: 'Personal Usage', icon: UserCircle, scenarios: ['wp'] },
-  { id: 'kioskMode', label: 'Kiosk Mode', icon: Monitor, scenarios: ['fm'] },
+  { id: 'personalUsage', label: 'Personal Usage', icon: UserCircle },
+  { id: 'kioskMode', label: 'Kiosk Mode', icon: Monitor },
   { id: 'complianceRules', label: 'Compliance Rules', icon: Scale },
   { id: 'crossProfile', label: 'Cross-Profile', icon: ArrowLeftRight },
   { id: 'crossDevice', label: 'Cross-Device', icon: ArrowLeftRight },
@@ -64,9 +63,7 @@ export default function PolicyCategoryNav({
   scenario,
   isNew,
 }: PolicyCategoryNavProps) {
-  const filteredCategories = CATEGORIES.filter(
-    (cat) => !cat.scenarios || cat.scenarios.includes(scenario),
-  );
+  const filteredCategories = CATEGORIES.filter((cat) => isPolicyCategoryAvailable(cat.id, scenario));
 
   const renderItem = (cat: CategoryDef) => {
     const Icon = cat.icon;

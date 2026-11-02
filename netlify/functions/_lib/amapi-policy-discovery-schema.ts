@@ -2,7 +2,7 @@
 // Refresh deliberately with `npm run amapi-schema:update` and review the schema diff.
 export const AMAPI_POLICY_DISCOVERY_SCHEMA = {
   "source": "https://androidmanagement.googleapis.com/$discovery/rest?version=v1",
-  "revision": "20261029",
+  "revision": "20261102",
   "root": "Policy",
   "schemas": {
     "AdvancedSecurityOverrides": {
@@ -757,6 +757,14 @@ export const AMAPI_POLICY_DISCOVERY_SCHEMA = {
             "ENTERPRISE_BIT192_NETWORK_SECURITY"
           ]
         },
+        "nfc": {
+          "type": "string",
+          "enum": [
+            "NFC_UNSPECIFIED",
+            "NFC_USER_CHOICE",
+            "NFC_DISABLED"
+          ]
+        },
         "ultraWidebandState": {
           "type": "string",
           "enum": [
@@ -780,6 +788,27 @@ export const AMAPI_POLICY_DISCOVERY_SCHEMA = {
             "WIFI_STATE_USER_CHOICE",
             "WIFI_ENABLED",
             "WIFI_DISABLED"
+          ]
+        }
+      }
+    },
+    "DeviceWidePolicies": {
+      "type": "object",
+      "properties": {
+        "deviceRadioState": {
+          "$ref": "DeviceWideRadioState"
+        }
+      }
+    },
+    "DeviceWideRadioState": {
+      "type": "object",
+      "properties": {
+        "nfc": {
+          "type": "string",
+          "enum": [
+            "NFC_UNSPECIFIED",
+            "NFC_USER_CHOICE",
+            "NFC_DISABLED"
           ]
         }
       }
@@ -1387,6 +1416,9 @@ export const AMAPI_POLICY_DISCOVERY_SCHEMA = {
         },
         "deviceRadioState": {
           "$ref": "DeviceRadioState"
+        },
+        "deviceWidePolicies": {
+          "$ref": "DeviceWidePolicies"
         },
         "displaySettings": {
           "$ref": "DisplaySettings"

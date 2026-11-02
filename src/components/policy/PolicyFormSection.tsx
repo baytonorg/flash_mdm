@@ -1062,6 +1062,39 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
             onChange={(v) => onChange('outgoingBeamDisabled', v)}
           />
           <EnumField
+            label="NFC"
+            description="Control NFC on fully managed Android 15+ devices. Company-owned work-profile devices use the device-wide NFC control under Personal Usage."
+            value={getPath(config, 'deviceRadioState.nfc') ?? 'NFC_UNSPECIFIED'}
+            onChange={(v) => onChange('deviceRadioState.nfc', v)}
+            options={[
+              { value: 'NFC_UNSPECIFIED', label: 'Unspecified (User Choice)' },
+              { value: 'NFC_USER_CHOICE', label: 'User Choice' },
+              { value: 'NFC_DISABLED', label: 'Disabled' },
+            ]}
+          />
+          <EnumField
+            label="Auto Date/Time/Zone"
+            description="Control whether automatic date, time, and timezone are enforced on a company-owned device."
+            value={getPath(config, 'autoDateAndTimeZone') ?? 'AUTO_DATE_AND_TIME_ZONE_UNSPECIFIED'}
+            onChange={(v) => onChange('autoDateAndTimeZone', v)}
+            options={[
+              { value: 'AUTO_DATE_AND_TIME_ZONE_UNSPECIFIED', label: 'Unspecified' },
+              { value: 'AUTO_DATE_AND_TIME_ZONE_USER_CHOICE', label: 'User Choice' },
+              { value: 'AUTO_DATE_AND_TIME_ZONE_ENFORCED', label: 'Enforced' },
+            ]}
+          />
+          <EnumField
+            label="Enterprise Display Name Visibility"
+            description="Control whether the enterprise display name is shown on the company-owned device, including supported lock-screen surfaces."
+            value={getPath(config, 'enterpriseDisplayNameVisibility') ?? 'ENTERPRISE_DISPLAY_NAME_VISIBILITY_UNSPECIFIED'}
+            onChange={(v) => onChange('enterpriseDisplayNameVisibility', v)}
+            options={[
+              { value: 'ENTERPRISE_DISPLAY_NAME_VISIBILITY_UNSPECIFIED', label: 'Unspecified' },
+              { value: 'ENTERPRISE_DISPLAY_NAME_VISIBLE', label: 'Visible' },
+              { value: 'ENTERPRISE_DISPLAY_NAME_HIDDEN', label: 'Hidden' },
+            ]}
+          />
+          <EnumField
             label="Printing Policy"
             description="Allow or disallow printing where supported."
             value={getPath(config, 'printingPolicy') ?? 'PRINTING_POLICY_UNSPECIFIED'}
@@ -1204,17 +1237,6 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
             description="Allow a temporary network connection during boot if unable to connect to any configured network."
             value={getPath(config, 'networkEscapeHatchEnabled') ?? false}
             onChange={(v) => onChange('networkEscapeHatchEnabled', v)}
-          />
-          <EnumField
-            label="Auto Date/Time/Zone"
-            description="Control whether automatic date, time, and timezone are enforced."
-            value={getPath(config, 'autoDateAndTimeZone') ?? 'AUTO_DATE_AND_TIME_ZONE_UNSPECIFIED'}
-            onChange={(v) => onChange('autoDateAndTimeZone', v)}
-            options={[
-              { value: 'AUTO_DATE_AND_TIME_ZONE_UNSPECIFIED', label: 'Unspecified' },
-              { value: 'AUTO_DATE_AND_TIME_ZONE_USER_CHOICE', label: 'User Choice' },
-              { value: 'AUTO_DATE_AND_TIME_ZONE_ENFORCED', label: 'Enforced' },
-            ]}
           />
           <EnumField
             label="Connectivity: Configure WiFi"
@@ -2003,6 +2025,54 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
               </div>
             )}
           />
+          <RepeaterField
+            label="Persistent Preferred Activities"
+            description="Default intent handlers. Do not use this for kiosk setup; use app role `KIOSK` instead."
+            value={getPath(config, 'persistentPreferredActivities') ?? []}
+            onChange={(v) => onChange('persistentPreferredActivities', v)}
+            defaultItem={{ receiverActivity: '', actions: [], categories: [] }}
+            renderItem={(item, _index, onItemChange) => (
+              <div className="space-y-2">
+                <TextField
+                  label="Receiver Activity"
+                  description="Component name or package name (for example `com.example/.MainActivity`)."
+                  value={item.receiverActivity ?? ''}
+                  onChange={(v) => onItemChange({ ...item, receiverActivity: v.trim() })}
+                  placeholder="com.example.app/.MainActivity"
+                />
+                <RepeaterField
+                  label="Intent Actions"
+                  description="Optional action list to match. Empty means action is ignored."
+                  value={asStringArray(item.actions)}
+                  onChange={(actions) => onItemChange({ ...item, actions: uniqueNonEmptyStrings(actions) })}
+                  defaultItem=""
+                  renderItem={(action, __idx, onActionChange) => (
+                    <TextField
+                      label="Action"
+                      value={typeof action === 'string' ? action : ''}
+                      onChange={onActionChange}
+                      placeholder="android.intent.action.MAIN"
+                    />
+                  )}
+                />
+                <RepeaterField
+                  label="Intent Categories"
+                  description="All categories requested by the intent must be present here to match."
+                  value={asStringArray(item.categories)}
+                  onChange={(categories) => onItemChange({ ...item, categories: uniqueNonEmptyStrings(categories) })}
+                  defaultItem=""
+                  renderItem={(categoryItem, __idx, onCategoryChange) => (
+                    <TextField
+                      label="Category"
+                      value={typeof categoryItem === 'string' ? categoryItem : ''}
+                      onChange={onCategoryChange}
+                      placeholder="android.intent.category.DEFAULT"
+                    />
+                  )}
+                />
+              </div>
+            )}
+          />
         </div>
       );
 
@@ -2036,6 +2106,21 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
               { value: 'BACKUP_SERVICE_DISABLED', label: 'Disabled', description: 'Backups are disabled and the user cannot change this setting.' },
               { value: 'BACKUP_SERVICE_USER_CHOICE', label: 'User choice', description: 'The user can enable or disable the backup service.' },
             ]}
+          />
+          <RepeaterField
+            label="Account Types With Management Disabled"
+            description="Account types that users cannot add, remove, or otherwise manage (for example, com.google)."
+            value={asStringArray(getPath(config, 'accountTypesWithManagementDisabled'))}
+            onChange={(v) => onChange('accountTypesWithManagementDisabled', v)}
+            defaultItem=""
+            renderItem={(item, _index, onItemChange) => (
+              <TextField
+                label="Account Type"
+                value={typeof item === 'string' ? item : ''}
+                onChange={onItemChange}
+                placeholder="com.example.account"
+              />
+            )}
           />
           <EnumField
             label="Google Play Protect Verify Apps"
@@ -2641,6 +2726,17 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
             onChange={(v) => onChange('personalUsagePolicies.screenCaptureDisabled', v)}
           />
           <EnumField
+            label="Device-Wide NFC"
+            description="Control NFC across an Android 15+ company-owned device with a work profile. Fully managed devices use NFC under Device Settings."
+            value={getPath(config, 'deviceWidePolicies.deviceRadioState.nfc') ?? 'NFC_UNSPECIFIED'}
+            onChange={(v) => onChange('deviceWidePolicies.deviceRadioState.nfc', v)}
+            options={[
+              { value: 'NFC_UNSPECIFIED', label: 'Unspecified (User Choice)' },
+              { value: 'NFC_USER_CHOICE', label: 'User Choice' },
+              { value: 'NFC_DISABLED', label: 'Disabled' },
+            ]}
+          />
+          <EnumField
             label="Personal Task Continuity Handoff"
             description="Control whether personal-profile tasks can be handed off between devices."
             value={getPath(config, 'personalUsagePolicies.crossDevicePolicies.taskContinuityHandoff') ?? 'TASK_CONTINUITY_HANDOFF_UNSPECIFIED'}
@@ -2659,7 +2755,7 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
             min={0}
           />
           <RepeaterField
-            label="Account Types With Management Disabled"
+            label="Personal Account Types With Management Disabled"
             description="Account types that users cannot manage in the personal profile (for example, com.google)."
             value={asStringArray(getPath(config, 'personalUsagePolicies.accountTypesWithManagementDisabled'))}
             onChange={(v) => onChange('personalUsagePolicies.accountTypesWithManagementDisabled', v)}
@@ -2698,21 +2794,6 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
                   ]}
                 />
               </div>
-            )}
-          />
-          <RepeaterField
-            label="Account Types With Management Disabled"
-            description="Account types that users cannot manage (for example, com.google)."
-            value={asStringArray(getPath(config, 'accountTypesWithManagementDisabled'))}
-            onChange={(v) => onChange('accountTypesWithManagementDisabled', v)}
-            defaultItem=""
-            renderItem={(item, _index, onItemChange) => (
-              <TextField
-                label="Account Type"
-                value={typeof item === 'string' ? item : ''}
-                onChange={onItemChange}
-                placeholder="com.example.account"
-              />
             )}
           />
         </div>
@@ -3046,65 +3127,6 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
           <h3 className="text-lg font-semibold text-gray-900 mb-1">Advanced</h3>
           <p className="text-sm text-gray-500 mb-6">Additional and less common policy settings.</p>
 
-          <EnumField
-            label="Enterprise Display Name Visibility"
-            description="Control whether the enterprise display name is shown on the device."
-            value={getPath(config, 'enterpriseDisplayNameVisibility') ?? 'ENTERPRISE_DISPLAY_NAME_VISIBILITY_UNSPECIFIED'}
-            onChange={(v) => onChange('enterpriseDisplayNameVisibility', v)}
-            options={[
-              { value: 'ENTERPRISE_DISPLAY_NAME_VISIBILITY_UNSPECIFIED', label: 'Unspecified' },
-              { value: 'ENTERPRISE_DISPLAY_NAME_VISIBLE', label: 'Visible' },
-              { value: 'ENTERPRISE_DISPLAY_NAME_HIDDEN', label: 'Hidden' },
-            ]}
-          />
-          <RepeaterField
-            label="Persistent Preferred Activities"
-            description="Default intent handlers. Do not use this for kiosk setup; use app role `KIOSK` instead."
-            value={getPath(config, 'persistentPreferredActivities') ?? []}
-            onChange={(v) => onChange('persistentPreferredActivities', v)}
-            defaultItem={{ receiverActivity: '', actions: [], categories: [] }}
-            renderItem={(item, _index, onItemChange) => (
-              <div className="space-y-2">
-                <TextField
-                  label="Receiver Activity"
-                  description="Component name or package name (for example `com.example/.MainActivity`)."
-                  value={item.receiverActivity ?? ''}
-                  onChange={(v) => onItemChange({ ...item, receiverActivity: v.trim() })}
-                  placeholder="com.example.app/.MainActivity"
-                />
-                <RepeaterField
-                  label="Intent Actions"
-                  description="Optional action list to match. Empty means action is ignored."
-                  value={asStringArray(item.actions)}
-                  onChange={(actions) => onItemChange({ ...item, actions: uniqueNonEmptyStrings(actions) })}
-                  defaultItem=""
-                  renderItem={(action, __idx, onActionChange) => (
-                    <TextField
-                      label="Action"
-                      value={typeof action === 'string' ? action : ''}
-                      onChange={onActionChange}
-                      placeholder="android.intent.action.MAIN"
-                    />
-                  )}
-                />
-                <RepeaterField
-                  label="Intent Categories"
-                  description="All categories requested by the intent must be present here to match."
-                  value={asStringArray(item.categories)}
-                  onChange={(categories) => onItemChange({ ...item, categories: uniqueNonEmptyStrings(categories) })}
-                  defaultItem=""
-                  renderItem={(categoryItem, __idx, onCategoryChange) => (
-                    <TextField
-                      label="Category"
-                      value={typeof categoryItem === 'string' ? categoryItem : ''}
-                      onChange={onCategoryChange}
-                      placeholder="android.intent.category.DEFAULT"
-                    />
-                  )}
-                />
-              </div>
-            )}
-          />
           <RepeaterField
             label="Setup Actions"
             description="Actions shown during device setup. AMAPI allows at most one setup action."
