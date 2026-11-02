@@ -1451,6 +1451,28 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
             ]}
           />
           <EnumField
+            label="Radio: NFC (Fully Managed)"
+            description="Control NFC on fully managed Android 15+ devices. Use the company-owned work-profile control below for COPE devices."
+            value={getPath(config, 'deviceRadioState.nfc') ?? 'NFC_UNSPECIFIED'}
+            onChange={(v) => onChange('deviceRadioState.nfc', v)}
+            options={[
+              { value: 'NFC_UNSPECIFIED', label: 'Unspecified (User Choice)' },
+              { value: 'NFC_USER_CHOICE', label: 'User Choice' },
+              { value: 'NFC_DISABLED', label: 'Disabled' },
+            ]}
+          />
+          <EnumField
+            label="Device-Wide Radio: NFC (Company-Owned Work Profile)"
+            description="Control device-wide NFC on Android 15+ company-owned devices with a work profile. Use the fully managed control above for fully managed devices."
+            value={getPath(config, 'deviceWidePolicies.deviceRadioState.nfc') ?? 'NFC_UNSPECIFIED'}
+            onChange={(v) => onChange('deviceWidePolicies.deviceRadioState.nfc', v)}
+            options={[
+              { value: 'NFC_UNSPECIFIED', label: 'Unspecified (User Choice)' },
+              { value: 'NFC_USER_CHOICE', label: 'User Choice' },
+              { value: 'NFC_DISABLED', label: 'Disabled' },
+            ]}
+          />
+          <EnumField
             label="User-Initiated Add eSIM"
             description="Allow or block user-added eSIM profiles."
             value={getPath(config, 'deviceRadioState.userInitiatedAddEsimSettings') ?? 'USER_INITIATED_ADD_ESIM_SETTINGS_UNSPECIFIED'}

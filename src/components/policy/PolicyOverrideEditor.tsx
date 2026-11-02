@@ -35,6 +35,7 @@ const AMAPI_SECTIONS: Record<string, string> = {
   openNetworkConfiguration: 'Network Config',
   deviceConnectivityManagement: 'Connectivity',
   deviceRadioState: 'Radio State',
+  deviceWidePolicies: 'Device-Wide Policies',
   privateDnsSettings: 'Private DNS',
   recommendedGlobalProxy: 'Global Proxy',
   wifiConfigsLockdownEnabled: 'WiFi Lockdown',
@@ -116,6 +117,7 @@ const AMAPI_KEY_TO_FORM_CATEGORY: Record<string, string> = {
   autoDateAndTimeZone: 'network',
   wifiConfigsLockdownEnabled: 'network',
   deviceRadioState: 'network',
+  deviceWidePolicies: 'network',
   privateDnsSettings: 'network',
   recommendedGlobalProxy: 'network',
 

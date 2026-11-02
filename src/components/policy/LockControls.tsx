@@ -24,6 +24,8 @@ const LOCKABLE_SECTIONS: Record<string, string> = {
   crossDevicePolicies: 'Cross-Device',
   openNetworkConfiguration: 'Network Config',
   deviceConnectivityManagement: 'Connectivity',
+  deviceRadioState: 'Radio State',
+  deviceWidePolicies: 'Device-Wide Policies',
   privateDnsSettings: 'Private DNS',
   wifiConfigsLockdownEnabled: 'WiFi Lockdown',
   bluetoothConfigDisabled: 'Bluetooth',

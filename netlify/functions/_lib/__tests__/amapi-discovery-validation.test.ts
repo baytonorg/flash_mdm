@@ -12,7 +12,7 @@ describe('pinned AMAPI Discovery policy validation', () => {
     expect(AMAPI_POLICY_DISCOVERY_SOURCE).toBe(
       'https://androidmanagement.googleapis.com/$discovery/rest?version=v1'
     );
-    expect(AMAPI_POLICY_DISCOVERY_REVISION).toBe('20261029');
+    expect(AMAPI_POLICY_DISCOVERY_REVISION).toBe('20261102');
   });
 
   it('rejects unknown policy fields, nested fields, and enum values', () => {
@@ -55,6 +55,14 @@ describe('pinned AMAPI Discovery policy validation', () => {
           }],
         },
       },
+      deviceRadioState: {
+        nfc: 'NFC_DISABLED',
+      },
+      deviceWidePolicies: {
+        deviceRadioState: {
+          nfc: 'NFC_USER_CHOICE',
+        },
+      },
       applications: [{
         packageName: 'com.example.app',
         installType: 'FORCE_INSTALLED',
@@ -70,6 +78,18 @@ describe('pinned AMAPI Discovery policy validation', () => {
     });
 
     expect(errors).toEqual([]);
+  });
+
+  it('rejects invalid NFC policy values and shapes', () => {
+    const errors = validateAmapiPolicyAgainstDiscovery({
+      deviceRadioState: { nfc: 'NFC_FORCED_ON' },
+      deviceWidePolicies: { deviceRadioState: { nfc: false } },
+    });
+
+    expect(errors).toEqual(expect.arrayContaining([
+      expect.stringContaining('deviceRadioState.nfc="NFC_FORCED_ON" is not a valid AMAPI value'),
+      expect.stringContaining('deviceWidePolicies.deviceRadioState.nfc must be a string'),
+    ]));
   });
 
   it('keeps every policy editor path aligned with Discovery or an explicit generation alias', () => {
