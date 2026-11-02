@@ -1062,6 +1062,17 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
             onChange={(v) => onChange('outgoingBeamDisabled', v)}
           />
           <EnumField
+            label="NFC"
+            description="Control NFC on fully managed Android 15+ devices. Company-owned work-profile devices use the device-wide NFC control under Personal Usage."
+            value={getPath(config, 'deviceRadioState.nfc') ?? 'NFC_UNSPECIFIED'}
+            onChange={(v) => onChange('deviceRadioState.nfc', v)}
+            options={[
+              { value: 'NFC_UNSPECIFIED', label: 'Unspecified (User Choice)' },
+              { value: 'NFC_USER_CHOICE', label: 'User Choice' },
+              { value: 'NFC_DISABLED', label: 'Disabled' },
+            ]}
+          />
+          <EnumField
             label="Printing Policy"
             description="Allow or disallow printing where supported."
             value={getPath(config, 'printingPolicy') ?? 'PRINTING_POLICY_UNSPECIFIED'}
@@ -1448,28 +1459,6 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
               { value: 'ULTRA_WIDEBAND_STATE_UNSPECIFIED', label: 'Unspecified' },
               { value: 'ULTRA_WIDEBAND_USER_CHOICE', label: 'User Choice' },
               { value: 'ULTRA_WIDEBAND_DISABLED', label: 'Disabled' },
-            ]}
-          />
-          <EnumField
-            label="Radio: NFC (Fully Managed)"
-            description="Control NFC on fully managed Android 15+ devices. Use the company-owned work-profile control below for COPE devices."
-            value={getPath(config, 'deviceRadioState.nfc') ?? 'NFC_UNSPECIFIED'}
-            onChange={(v) => onChange('deviceRadioState.nfc', v)}
-            options={[
-              { value: 'NFC_UNSPECIFIED', label: 'Unspecified (User Choice)' },
-              { value: 'NFC_USER_CHOICE', label: 'User Choice' },
-              { value: 'NFC_DISABLED', label: 'Disabled' },
-            ]}
-          />
-          <EnumField
-            label="Device-Wide Radio: NFC (Company-Owned Work Profile)"
-            description="Control device-wide NFC on Android 15+ company-owned devices with a work profile. Use the fully managed control above for fully managed devices."
-            value={getPath(config, 'deviceWidePolicies.deviceRadioState.nfc') ?? 'NFC_UNSPECIFIED'}
-            onChange={(v) => onChange('deviceWidePolicies.deviceRadioState.nfc', v)}
-            options={[
-              { value: 'NFC_UNSPECIFIED', label: 'Unspecified (User Choice)' },
-              { value: 'NFC_USER_CHOICE', label: 'User Choice' },
-              { value: 'NFC_DISABLED', label: 'Disabled' },
             ]}
           />
           <EnumField
@@ -2661,6 +2650,17 @@ export default function PolicyFormSection({ category, config, onChange }: Policy
             description="Disable screen capture on the personal profile."
             value={getPath(config, 'personalUsagePolicies.screenCaptureDisabled') ?? false}
             onChange={(v) => onChange('personalUsagePolicies.screenCaptureDisabled', v)}
+          />
+          <EnumField
+            label="Device-Wide NFC"
+            description="Control NFC across an Android 15+ company-owned device with a work profile. Fully managed devices use NFC under Device Settings."
+            value={getPath(config, 'deviceWidePolicies.deviceRadioState.nfc') ?? 'NFC_UNSPECIFIED'}
+            onChange={(v) => onChange('deviceWidePolicies.deviceRadioState.nfc', v)}
+            options={[
+              { value: 'NFC_UNSPECIFIED', label: 'Unspecified (User Choice)' },
+              { value: 'NFC_USER_CHOICE', label: 'User Choice' },
+              { value: 'NFC_DISABLED', label: 'Disabled' },
+            ]}
           />
           <EnumField
             label="Personal Task Continuity Handoff"

@@ -9,38 +9,56 @@ function field(label: string) {
 }
 
 describe('PolicyFormSection NFC controls', () => {
-  it('keeps fully managed and company-owned work-profile paths distinct', () => {
+  it('places the fully managed control with device restrictions', () => {
     const onChange = vi.fn();
     render(
       <PolicyFormSection
-        category="network"
+        category="deviceSettings"
         config={{
           deviceRadioState: { nfc: 'NFC_DISABLED' },
-          deviceWidePolicies: { deviceRadioState: { nfc: 'NFC_USER_CHOICE' } },
         }}
         onChange={onChange}
       />,
     );
 
-    const fullyManaged = field('Radio: NFC (Fully Managed)');
-    const workProfile = field('Device-Wide Radio: NFC (Company-Owned Work Profile)');
-
+    const fullyManaged = field('NFC');
     expect(fullyManaged.getByRole('radio', { name: 'Disabled' })).toBeChecked();
-    expect(workProfile.getByRole('radio', { name: 'User Choice' })).toBeChecked();
+    expect(screen.queryByText('Device-Wide NFC')).not.toBeInTheDocument();
 
     fireEvent.click(fullyManaged.getByRole('radio', { name: 'User Choice' }));
-    fireEvent.click(workProfile.getByRole('radio', { name: 'Disabled' }));
-
-    expect(onChange).toHaveBeenNthCalledWith(1, 'deviceRadioState.nfc', 'NFC_USER_CHOICE');
-    expect(onChange).toHaveBeenNthCalledWith(2, 'deviceWidePolicies.deviceRadioState.nfc', 'NFC_DISABLED');
+    expect(onChange).toHaveBeenCalledWith('deviceRadioState.nfc', 'NFC_USER_CHOICE');
   });
 
-  it('defaults both controls to user choice without mutating the policy', () => {
+  it('places the company-owned work-profile control in Personal Usage', () => {
     const onChange = vi.fn();
-    render(<PolicyFormSection category="network" config={{}} onChange={onChange} />);
+    render(
+      <PolicyFormSection
+        category="personalUsage"
+        config={{ deviceWidePolicies: { deviceRadioState: { nfc: 'NFC_USER_CHOICE' } } }}
+        onChange={onChange}
+      />,
+    );
 
-    expect(field('Radio: NFC (Fully Managed)').getByRole('radio', { name: 'Unspecified (User Choice)' })).toBeChecked();
-    expect(field('Device-Wide Radio: NFC (Company-Owned Work Profile)').getByRole('radio', { name: 'Unspecified (User Choice)' })).toBeChecked();
-    expect(onChange).not.toHaveBeenCalled();
+    const workProfile = field('Device-Wide NFC');
+    expect(screen.getByRole('heading', { name: 'Personal Usage' })).toBeInTheDocument();
+    expect(workProfile.getByRole('radio', { name: 'User Choice' })).toBeChecked();
+    expect(screen.queryByText('NFC', { selector: 'label' })).not.toBeInTheDocument();
+
+    fireEvent.click(workProfile.getByRole('radio', { name: 'Disabled' }));
+    expect(onChange).toHaveBeenCalledWith('deviceWidePolicies.deviceRadioState.nfc', 'NFC_DISABLED');
+  });
+
+  it('defaults both category controls to user choice without mutating the policy', () => {
+    const restrictionsChange = vi.fn();
+    const { unmount } = render(<PolicyFormSection category="deviceSettings" config={{}} onChange={restrictionsChange} />);
+
+    expect(field('NFC').getByRole('radio', { name: 'Unspecified (User Choice)' })).toBeChecked();
+    expect(restrictionsChange).not.toHaveBeenCalled();
+    unmount();
+
+    const personalUsageChange = vi.fn();
+    render(<PolicyFormSection category="personalUsage" config={{}} onChange={personalUsageChange} />);
+    expect(field('Device-Wide NFC').getByRole('radio', { name: 'Unspecified (User Choice)' })).toBeChecked();
+    expect(personalUsageChange).not.toHaveBeenCalled();
   });
 });

@@ -117,9 +117,11 @@ const AMAPI_KEY_TO_FORM_CATEGORY: Record<string, string> = {
   autoDateAndTimeZone: 'network',
   wifiConfigsLockdownEnabled: 'network',
   deviceRadioState: 'network',
-  deviceWidePolicies: 'network',
   privateDnsSettings: 'network',
   recommendedGlobalProxy: 'network',
+
+  // personalUsage
+  deviceWidePolicies: 'personalUsage',
 
   // applications
   installAppsDisabled: 'applications',
