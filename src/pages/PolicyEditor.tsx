@@ -115,7 +115,7 @@ const CATEGORY_HELP: Record<string, CategoryHelp> = {
   deviceSettings: {
     title: 'Device Settings',
     description:
-      'Control general device capabilities such as camera access, screenshots, factory reset protection, account management, USB file transfer, Bluetooth, and external media mounting.',
+      'Control general device capabilities and restrictions such as NFC, camera access, screenshots, factory reset protection, account management, Bluetooth, external media, and automatic date and time.',
   },
   network: {
     title: 'Network',
@@ -125,7 +125,7 @@ const CATEGORY_HELP: Record<string, CategoryHelp> = {
   applications: {
     title: 'Applications',
     description:
-      'Configure which applications are available, force-installed, or blocked. Set the default runtime permission policy and control the Play Store mode (allowlist vs open). Each application entry defines a package name and install type.',
+      'Configure which applications are available, force-installed, or blocked. Set default applications and persistent intent handlers, control the Play Store mode, and define each managed application policy.',
   },
   security: {
     title: 'Security',

@@ -26,4 +26,16 @@ describe('PolicyCategoryNav scenario visibility', () => {
 
     expect(screen.queryByRole('button', { name: 'Cross-Profile' })).not.toBeInTheDocument();
   });
+
+  it('shows Kiosk Mode for dedicated policies', () => {
+    render(
+      <PolicyCategoryNav
+        activeCategory="kioskMode"
+        onCategoryChange={vi.fn()}
+        scenario="dedicated"
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Kiosk Mode' })).toBeInTheDocument();
+  });
 });
