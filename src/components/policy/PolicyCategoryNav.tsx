@@ -40,7 +40,7 @@ const CATEGORIES: CategoryDef[] = [
   { id: 'personalUsage', label: 'Personal Usage', icon: UserCircle, scenarios: ['wp'] },
   { id: 'kioskMode', label: 'Kiosk Mode', icon: Monitor, scenarios: ['fm'] },
   { id: 'complianceRules', label: 'Compliance Rules', icon: Scale },
-  { id: 'crossProfile', label: 'Cross-Profile', icon: ArrowLeftRight },
+  { id: 'crossProfile', label: 'Cross-Profile', icon: ArrowLeftRight, scenarios: ['wp'] },
   { id: 'crossDevice', label: 'Cross-Device', icon: ArrowLeftRight },
   { id: 'location', label: 'Location', icon: MapPin },
   { id: 'advanced', label: 'Advanced', icon: Wrench },
