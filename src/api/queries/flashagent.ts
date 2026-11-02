@@ -72,12 +72,12 @@ export function useUpdateFlashiSettings() {
   });
 }
 
-export function useFlashiWorkspaceSettings(workspaceId?: string) {
+export function useFlashiWorkspaceSettings(workspaceId?: string, canRead = true) {
   return useQuery({
     queryKey: workspaceId
       ? flashagentKeys.workspaceSettings(workspaceId)
       : [...flashagentKeys.all, "workspace-settings", "none"],
-    enabled: Boolean(workspaceId),
+    enabled: Boolean(workspaceId && canRead),
     queryFn: () =>
       apiClient.get<FlashiWorkspaceSettingsResponse>(
         `/api/flashagent/workspace-settings?workspace_id=${encodeURIComponent(workspaceId!)}`,

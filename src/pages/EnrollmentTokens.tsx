@@ -43,6 +43,7 @@ export default function EnrollmentTokens() {
   const { activeEnvironment } = useContextStore();
   const queryClient = useQueryClient();
   const environmentId = activeEnvironment?.id;
+  const isEnterpriseBound = Boolean(activeEnvironment?.enterprise_name);
 
   const [creatorOpen, setCreatorOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<EnrollmentToken | null>(null);
@@ -111,7 +112,7 @@ export default function EnrollmentTokens() {
   };
 
   const handleSync = () => {
-    if (!environmentId) return;
+    if (!environmentId || !isEnterpriseBound) return;
     syncMutation.mutate(environmentId, {
       onSuccess: (data) => {
         setSyncResult(`Imported ${data.imported} token${data.imported !== 1 ? 's' : ''}, invalidated ${data.invalidated} stale token${data.invalidated !== 1 ? 's' : ''}.`);
@@ -180,7 +181,8 @@ export default function EnrollmentTokens() {
           <button
             type="button"
             onClick={handleSync}
-            disabled={syncMutation.isPending}
+            disabled={!isEnterpriseBound || syncMutation.isPending}
+            title={!isEnterpriseBound ? 'Bind this environment to an enterprise before syncing tokens.' : undefined}
             className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50 sm:w-auto"
           >
             <RefreshCw className={`h-4 w-4 ${syncMutation.isPending ? 'animate-spin' : ''}`} />
@@ -189,13 +191,24 @@ export default function EnrollmentTokens() {
           <button
             type="button"
             onClick={() => setCreatorOpen(true)}
-            className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-light transition-colors sm:w-auto"
+            disabled={!isEnterpriseBound}
+            title={!isEnterpriseBound ? 'Bind this environment to an enterprise before creating tokens.' : undefined}
+            className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-light transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
           >
             <Plus className="h-4 w-4" />
             Create Token
           </button>
         </div>
       </div>
+
+      {!isEnterpriseBound && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3" role="status">
+          <p className="text-sm font-medium text-amber-900">Bind this environment before managing enrolment tokens.</p>
+          <p className="mt-1 text-sm text-amber-800">
+            Complete Android Enterprise binding in Settings, then return here to create or sync tokens.
+          </p>
+        </div>
+      )}
 
       {isError && (
         <QueryErrorState

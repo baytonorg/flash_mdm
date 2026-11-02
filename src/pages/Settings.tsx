@@ -200,10 +200,10 @@ function WorkspaceTab() {
     () => getEffectiveSettingsPermissionMatrix((activeWorkspace as { settings?: unknown } | null)?.settings),
     [activeWorkspace]
   );
-  const { data: workspaceFlashiSettings } = useFlashiWorkspaceSettings(activeWorkspace?.id);
   const workspaceRole = activeWorkspace?.user_role ?? null;
   const hasWorkspaceScopedAccess = Boolean(user?.is_superadmin || activeWorkspace?.access_scope === 'workspace');
   const canWorkspaceRead = Boolean(hasWorkspaceScopedAccess && meetsRole(workspaceRole, permissionMatrix.workspace?.read));
+  const { data: workspaceFlashiSettings } = useFlashiWorkspaceSettings(activeWorkspace?.id, canWorkspaceRead);
   const canWorkspaceWrite = Boolean(hasWorkspaceScopedAccess && meetsRole(workspaceRole, permissionMatrix.workspace?.write));
   const canWorkspaceManageSettings = Boolean(
     hasWorkspaceScopedAccess && meetsRole(workspaceRole, permissionMatrix.workspace?.manage_settings)
@@ -716,9 +716,12 @@ function EnvironmentTab() {
     () => getEffectiveSettingsPermissionMatrix((activeWorkspace as { settings?: unknown } | null)?.settings),
     [activeWorkspace]
   );
-  const { data: workspaceFlashiSettings } = useFlashiWorkspaceSettings(activeWorkspace?.id);
   const workspaceRole = activeWorkspace?.user_role ?? null;
   const hasWorkspaceScopedAccess = Boolean(user?.is_superadmin || activeWorkspace?.access_scope === 'workspace');
+  const canWorkspaceRead = Boolean(
+    hasWorkspaceScopedAccess && meetsRole(workspaceRole, permissionMatrix.workspace?.read)
+  );
+  const { data: workspaceFlashiSettings } = useFlashiWorkspaceSettings(activeWorkspace?.id, canWorkspaceRead);
   const environmentRole = hasWorkspaceScopedAccess
     ? (workspaceRole ?? activeEnvironment?.user_role ?? null)
     : (activeEnvironment?.user_role ?? null);
