@@ -52,12 +52,12 @@ describe('flashagent-chat-history security controls', () => {
     mockConsumeToken.mockResolvedValue({ allowed: true, remainingTokens: 9 } as never);
   });
 
-  it('prunes old messages during POST and uses auth.user.id for persisted rows', async () => {
+  it('prunes old messages during POST and uses the API-key principal for persisted rows', async () => {
     mockRequireAuth.mockResolvedValue({
       authType: 'api_key',
       sessionId: null,
       user: {
-        id: '11111111-1111-4111-8111-111111111111',
+        id: 'ak_123',
         email: 'api@example.com',
       },
       apiKey: {
@@ -95,14 +95,15 @@ describe('flashagent-chat-history security controls', () => {
     expect(pruneSql).toContain('make_interval(days => $3)');
     expect(pruneParams).toEqual([
       'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-      '11111111-1111-4111-8111-111111111111',
+      'ak_123',
       30,
     ]);
 
     const [insertSql, insertParams] = mockExecute.mock.calls[1] as [string, unknown[]];
     expect(insertSql).toContain('INSERT INTO flashagent_chat_messages');
-    expect(insertParams).toContain('11111111-1111-4111-8111-111111111111');
-    expect(insertParams).not.toContain('ak_123');
+    expect(insertParams).toContain('ak_123');
+    expect(insertSql).toContain('api_key_id');
+    expect(insertParams).not.toContain('11111111-1111-4111-8111-111111111111');
   });
 
   it('returns chat messages in object envelope for GET', async () => {

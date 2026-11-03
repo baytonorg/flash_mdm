@@ -448,7 +448,7 @@ async function handlePutConfig(request: Request, _route: ParsedRoute, auth: Auth
       body.billing_contact_name?.trim() || null,
       body.billing_business_name?.trim() || null,
       body.billing_email?.trim() || null,
-      auth.authType === 'session' ? auth.user.id : auth.apiKey?.created_by_user_id ?? null,
+      auth.authType === 'session' ? auth.user.id : null,
     ]
   );
 

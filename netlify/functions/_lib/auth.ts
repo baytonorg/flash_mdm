@@ -26,12 +26,24 @@ export interface SessionUser {
   };
 }
 
-export interface AuthContext {
+export interface SessionAuthContext {
   user: SessionUser;
   sessionId: string | null;
-  authType: 'session' | 'api_key';
-  apiKey?: ApiKeyAuthContext;
+  authType: 'session';
+  apiKey?: undefined;
+  principal?: { type: 'user' | 'api_key'; id: string };
+
 }
+
+export interface ApiKeyPrincipalContext {
+  user: Omit<SessionUser, 'id'> & { id: null };
+  sessionId: null;
+  authType: 'api_key';
+  apiKey: ApiKeyAuthContext;
+  principal: { type: 'api_key'; id: string };
+}
+
+export type AuthContext = SessionAuthContext | ApiKeyPrincipalContext;
 
 export interface ApiKeyAuthContext {
   id: string;
@@ -41,7 +53,7 @@ export interface ApiKeyAuthContext {
   workspace_id: string;
   environment_id: string | null;
   role: 'owner' | 'admin' | 'member' | 'viewer';
-  created_by_user_id: string;
+  created_by_user_id: string | null;
   created_by_email?: string | null;
   created_by_name?: string | null;
 }
@@ -70,7 +82,7 @@ export function getSessionTokenFromCookie(request: Request): string | null {
 /** @deprecated Use getSessionTokenFromCookie instead */
 export const getSessionIdFromCookie = getSessionTokenFromCookie;
 
-export async function validateSession(request: Request): Promise<AuthContext | null> {
+export async function validateSession(request: Request): Promise<SessionAuthContext | null> {
   const sessionToken = getSessionTokenFromCookie(request);
   if (!sessionToken) return null;
 
@@ -233,7 +245,7 @@ async function validateApiKey(request: Request): Promise<AuthContext | null> {
     workspace_id: string;
     environment_id: string | null;
     role: 'owner' | 'admin' | 'member' | 'viewer';
-    created_by_user_id: string;
+    created_by_user_id: string | null;
     user_id: string;
     email: string;
     first_name: string | null;
@@ -259,7 +271,7 @@ async function validateApiKey(request: Request): Promise<AuthContext | null> {
             COALESCE(u.totp_enabled, false) AS totp_enabled,
             NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), '') AS created_by_name
      FROM api_keys ak
-     JOIN users u ON u.id = ak.created_by_user_id
+     LEFT JOIN users u ON u.id = ak.created_by_user_id
      WHERE ak.token_hash = $1
        AND ak.revoked_at IS NULL
        AND (ak.expires_at IS NULL OR ak.expires_at > now())`,
@@ -282,19 +294,22 @@ async function validateApiKey(request: Request): Promise<AuthContext | null> {
 
   return {
     user: {
-      id: row.user_id,
-      email: row.email,
-      first_name: row.first_name,
-      last_name: row.last_name,
+      // Compatibility profile for scope-aware handlers. There is no human
+      // actor behind an API-key request, even while its creator still exists.
+      id: null,
+      email: '',
+      first_name: row.key_name,
+      last_name: null,
       // API keys are never platform-superadmin tokens; scope is enforced by apiKey metadata.
       is_superadmin: false,
-      totp_enabled: row.totp_enabled,
+      totp_enabled: false,
       workspace_id: row.workspace_id,
       environment_id: row.environment_id,
       active_group_id: null,
     },
     sessionId: null,
     authType: 'api_key',
+    principal: { type: 'api_key', id: row.api_key_id },
     apiKey: {
       id: row.api_key_id,
       name: row.key_name,
@@ -370,7 +385,7 @@ export async function requireAuth(request: Request): Promise<AuthContext> {
   return auth;
 }
 
-export async function requireSuperadmin(request: Request): Promise<AuthContext> {
+export async function requireSuperadmin(request: Request): Promise<SessionAuthContext> {
   const auth = await requireAuth(request);
   if (auth.authType === 'api_key' || !auth.user.is_superadmin) {
     throw new Response(JSON.stringify({ error: 'Forbidden' }), {
@@ -381,7 +396,7 @@ export async function requireSuperadmin(request: Request): Promise<AuthContext> 
   return auth;
 }
 
-export async function requireSessionAuth(request: Request): Promise<AuthContext> {
+export async function requireSessionAuth(request: Request): Promise<SessionAuthContext> {
   const auth = await requireAuth(request);
   if (auth.authType !== 'session') {
     throw new Response(JSON.stringify({ error: 'Forbidden: session authentication required' }), {

@@ -91,6 +91,22 @@ export default function MainLayout() {
     fetchWorkspaces();
   }, [fetchSession, fetchWorkspaces]);
 
+  useEffect(() => {
+    let refreshing = false;
+    const refreshAccess = async () => {
+      if (document.visibilityState === 'hidden' || refreshing) return;
+      refreshing = true;
+      try { await fetchSession(); await fetchWorkspaces(); }
+      finally { refreshing = false; }
+    };
+    window.addEventListener('focus', refreshAccess);
+    document.addEventListener('visibilitychange', refreshAccess);
+    return () => {
+      window.removeEventListener('focus', refreshAccess);
+      document.removeEventListener('visibilitychange', refreshAccess);
+    };
+  }, [fetchSession, fetchWorkspaces]);
+
   // Redirect to environment setup if the user needs it
   useEffect(() => {
     if (user?.needs_environment_setup) {

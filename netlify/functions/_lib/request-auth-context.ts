@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 export interface AuditRequestAuthContext {
   authType: 'session' | 'api_key';
   user: {
-    id: string;
+    id: string | null;
     email: string;
   };
   apiKey?: {
@@ -14,7 +14,7 @@ export interface AuditRequestAuthContext {
     workspace_id: string;
     environment_id: string | null;
     role: 'owner' | 'admin' | 'member' | 'viewer';
-    created_by_user_id: string;
+    created_by_user_id: string | null;
     created_by_email?: string | null;
     created_by_name?: string | null;
   };

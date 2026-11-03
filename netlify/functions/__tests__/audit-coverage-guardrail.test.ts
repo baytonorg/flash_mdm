@@ -35,7 +35,9 @@ function isMutatingHandlerSource(source: string): boolean {
 }
 
 function hasAuditWrite(source: string): boolean {
-  return source.includes('logAudit(') || source.includes('INSERT INTO audit_log');
+  return source.includes('logAudit(') || source.includes('INSERT INTO audit_log')
+    || (source.includes("from './_lib/membership-lifecycle.js'") && source.includes('changeMemberships(')
+      && hasAuditWrite(fs.readFileSync(path.join(FUNCTIONS_DIR, '_lib/membership-lifecycle.ts'), 'utf8')));
 }
 
 describe('audit coverage guardrail', () => {

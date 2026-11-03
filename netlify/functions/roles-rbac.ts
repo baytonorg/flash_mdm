@@ -195,7 +195,7 @@ export default async function handler(request: Request, _context: Context) {
         const nextFeatures = setEnvironmentRbacSettings(
           env.enterprise_features,
           canonicalMatrix,
-          auth.authType === 'session' ? auth.user.id : auth.apiKey?.created_by_user_id ?? null
+          auth.authType === 'session' ? auth.user.id : null
         );
 
         await execute(
@@ -255,7 +255,7 @@ export default async function handler(request: Request, _context: Context) {
       const nextSettings = setWorkspaceRbacSettings(
         current.settings,
         canonicalMatrix,
-        auth.authType === 'session' ? auth.user.id : auth.apiKey?.created_by_user_id ?? null
+        auth.authType === 'session' ? auth.user.id : null
       );
 
       await execute(

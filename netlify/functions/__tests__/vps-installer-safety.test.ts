@@ -62,6 +62,15 @@ describe('VPS installer operational safety', () => {
     expect(malformed.status).not.toBe(0);
   });
 
+  it('runs the candidate migration manifest before activating or stopping the current worker', () => {
+    const source = readFileSync(installer, 'utf8');
+    const migration = source.indexOf('node --import tsx scripts/run-migrations.ts');
+    expect(migration).toBeGreaterThan(0);
+    expect(migration).toBeLessThan(source.indexOf('info "Activating candidate release..."'));
+    expect(migration).toBeLessThan(source.indexOf('sudo systemctl stop flashmdm-worker'));
+    expect(source.slice(migration,source.indexOf('info "Activating candidate release..."'))).toContain('previous release remains active');
+  });
+
   it('atomically switches and restores the active release link', () => {
     const dir = mkdtempSync(join(tmpdir(), 'flash-release-'));
     const first = join(dir, 'release-1');

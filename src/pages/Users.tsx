@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
+import TransferOwnershipModal from '@/components/users/TransferOwnershipModal';
 import { useQuery } from '@tanstack/react-query';
 import { useContextStore } from '@/stores/context';
 import { apiClient } from '@/api/client';
@@ -447,6 +448,7 @@ function InviteModal({
 // ---- Main Users page ----
 
 export default function Users() {
+  const [transferOwnershipOpen, setTransferOwnershipOpen] = useState(false);
   const { activeWorkspace, activeEnvironment, activeGroup } = useContextStore();
   const authUser = useAuthStore((s) => s.user);
   const workspaceId = activeWorkspace?.id ?? '';
@@ -640,6 +642,14 @@ export default function Users() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Users</h1>
+        {currentUser?.role === 'owner' && currentUser.access_scope !== 'scoped' && authUser?.id && <button type="button" className="rounded border border-border px-3 py-2 text-sm" onClick={()=>setTransferOwnershipOpen(true)}>Transfer ownership</button>}
+        <button type="button" className="rounded border border-border px-3 py-2 text-sm text-gray-700" onClick={async () => {
+          if (!window.confirm('Leave this workspace and cancel pending invitations addressed to you here? Your account, independent API keys and access in other workspaces stay intact. A sole workspace owner must establish another owner first.')) return;
+          try {
+            await apiClient.post('/api/workspaces/users/leave', { workspace_id: workspaceId, confirm_leave: true, cancel_pending_invites: true });
+            window.location.assign('/');
+          } catch (error) { window.alert(error instanceof Error ? error.message : 'Unable to leave workspace'); }
+        }}>Leave workspace</button>
         {canManageUsers && (
           <button
             onClick={() => setInviteOpen(true)}
@@ -686,11 +696,12 @@ export default function Users() {
           actions={bulkActions}
           onAction={(key) => {
             if (key === 'remove') {
-              if (!window.confirm(`Remove ${bulkSelection.selectedCount} user(s) from workspace?`)) return;
+              if (!window.confirm(`Remove ${bulkSelection.selectedCount} user(s) from this workspace and cancel their pending workspace invitations? Accounts, independent API keys and access elsewhere are preserved. The eligible batch is atomic.`)) return;
               bulkUsersAction.mutate({
                 workspace_id: workspaceId,
                 operation: 'remove',
                 selection: bulkSelection.selectionPayload,
+                options: { cancel_pending_invites: true },
               }, {
                 onSuccess: (data) => {
                   if (data.failed > 0) window.alert(`Bulk remove completed with ${data.failed} failure(s).`);
@@ -705,6 +716,7 @@ export default function Users() {
         />
       )}
 
+      {transferOwnershipOpen && authUser?.id && <TransferOwnershipModal workspaceId={workspaceId} userId={authUser.id} onClose={()=>setTransferOwnershipOpen(false)} />}
       {canManageUsers && (
         <InviteModal
           open={inviteOpen}

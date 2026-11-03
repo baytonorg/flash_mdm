@@ -25,5 +25,6 @@ jobs:
       - run: npm run build
       - run: npm run openapi:check
       - run: npm test
+      - run: npm run test:membership-postgres
       - run: npm --prefix website ci
       - run: npm --prefix website run build

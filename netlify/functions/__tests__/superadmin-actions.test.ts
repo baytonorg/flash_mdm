@@ -1,3 +1,9 @@
+vi.mock('../_lib/user-offboarding.js', () => ({ deleteUserAccount: vi.fn(), userDeletionPreflight: vi.fn() }));
+vi.mock('../_lib/environment-deletion.js', () => ({ deleteEnvironmentData: vi.fn() }));
+vi.mock('../_lib/membership-lifecycle.js', () => ({ lockMembershipWorkspaces: vi.fn() }));
+vi.mock('../_lib/signup-link-reference-lock.js', () => ({ withSignupLinkReferenceLock: (fn: () => unknown) => fn() }));
+import { deleteUserAccount } from '../_lib/user-offboarding.js';
+import { deleteEnvironmentData } from '../_lib/environment-deletion.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../_lib/auth.js', () => ({
@@ -233,7 +239,8 @@ describe('superadmin-actions security boundaries', () => {
     );
   });
 
-  it('blocks permanent delete while user still has workspace memberships', async () => {
+  it('preserves a survivor-ownership conflict from the offboarding service', async () => {
+    vi.mocked(deleteUserAccount).mockRejectedValueOnce(new Response(JSON.stringify({ error: 'Establish another workspace-wide owner first' }), { status: 409 }));
     mockRequireSuperadmin.mockResolvedValue({
       sessionId: 'sess_1',
       user: { id: 'sa_1', is_superadmin: true },
@@ -256,7 +263,7 @@ describe('superadmin-actions security boundaries', () => {
 
     expect(res.status).toBe(409);
     await expect(res.json()).resolves.toEqual({
-      error: 'Remove user from all workspaces before permanent deletion',
+      error: 'Establish another workspace-wide owner first',
     });
   });
 
@@ -267,39 +274,14 @@ describe('superadmin-actions security boundaries', () => {
     } as never);
     mockQueryOne.mockResolvedValueOnce({ id: 'ws_1' } as never);
 
-    const txQuery = vi.fn().mockResolvedValue({ rowCount: 1 });
-    mockTransaction.mockImplementationOnce(async (fn: (client: { query: typeof txQuery }) => Promise<unknown>) => {
-      return fn({ query: txQuery });
-    });
-
-    const res = await handler(
-      makeRequest({
-        action: 'purge_data',
-        target_id: 'ws_1',
-        params: {
-          support_reason: 'Customer requested workspace reset',
-          customer_notice_acknowledged: true,
-        },
-      }),
-      {} as never
-    );
-
+    const txQuery = vi.fn().mockResolvedValue({ rows: [{ id: 'env_1' }], rowCount: 1 });
+    mockTransaction.mockImplementationOnce(async fn => fn({ query: txQuery } as never));
+    const res = await handler(makeRequest({ action: 'purge_data', target_id: 'ws_1',
+      params: { support_reason: 'Customer requested workspace reset', customer_notice_acknowledged: true } }), {} as never);
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({
-      message: 'Workspace data purged',
-    });
     expect(mockTransaction).toHaveBeenCalledTimes(1);
-    expect(txQuery).toHaveBeenCalledTimes(2);
-    expect(txQuery).toHaveBeenNthCalledWith(
-      1,
-      'DELETE FROM environments WHERE workspace_id = $1',
-      ['ws_1']
-    );
-    expect(txQuery).toHaveBeenNthCalledWith(
-      2,
-      'DELETE FROM licenses WHERE workspace_id = $1',
-      ['ws_1']
-    );
+    expect(deleteEnvironmentData).toHaveBeenCalledWith(expect.anything(), 'env_1', false);
+    expect(txQuery).toHaveBeenCalledWith('DELETE FROM licenses WHERE workspace_id = $1', ['ws_1']);
   });
 
   it('cancels workspace Stripe subscription and closes grants', async () => {

@@ -1,5 +1,6 @@
+import { changeMemberships, type MembershipRole } from './_lib/membership-lifecycle.js';
 import type { Context } from '@netlify/functions';
-import { query, queryOne, execute, transaction } from './_lib/db.js';
+import { query, queryOne } from './_lib/db.js';
 import { requireAuth } from './_lib/auth.js';
 import {
   requireEnvironmentResourcePermission,
@@ -8,7 +9,6 @@ import {
   getWorkspaceRole,
   requireWorkspacePermission,
 } from './_lib/rbac.js';
-import { logAudit } from './_lib/audit.js';
 import { jsonResponse, errorResponse, parseJsonBody, getSearchParams, getClientIp, isValidUuid } from './_lib/helpers.js';
 
 function areValidUuids(values: string[]): boolean {
@@ -27,6 +27,7 @@ type WorkspaceUsersBulkBody = {
   selection?: BulkSelection;
   options?: {
     role?: string;
+    cancel_pending_invites?: boolean;
     access_scope?: 'workspace' | 'scoped';
     environment_ids?: string[];
     group_ids?: string[];
@@ -127,6 +128,32 @@ export default async (request: Request, context: Context) => {
     });
   }
 
+  if (request.method === 'POST' && segments[0] === 'transfer-ownership') {
+    if (auth.authType !== 'session') return errorResponse('Session authentication is required', 403);
+    const body = await parseJsonBody<{ workspace_id: string; successor_id: string; previous_owner_role: 'admin' | 'member' | 'viewer' | 'leave'; successor_consent_acknowledged?: boolean; cancel_pending_invites?: boolean }>(request);
+    if (!isValidUuid(body.workspace_id) || !isValidUuid(body.successor_id) || body.successor_id === auth.user.id) return errorResponse('Choose another existing workspace member');
+    if (!['admin', 'member', 'viewer', 'leave'].includes(body.previous_owner_role) || body.successor_consent_acknowledged !== true) return errorResponse('Choose your resulting access and confirm the successor agreed to workspace-wide ownership');
+    const current = await getWorkspaceMembershipForUpdate(body.workspace_id, auth.user.id);
+    if (current?.role !== 'owner' || current.access_scope !== 'workspace') return errorResponse('Only a current workspace-wide owner can transfer their ownership', 403);
+    await changeMemberships({ workspaceId: body.workspace_id, auth, callerRole: 'owner', selfService: true, requireCurrentWorkspaceOwner: true, ip: getClientIp(request), changes: [
+      { userId: body.successor_id, operation: 'role', role: 'owner', accessScope: 'workspace' },
+      { userId: auth.user.id, operation: body.previous_owner_role === 'leave' ? 'remove' : 'role', role: body.previous_owner_role === 'leave' ? undefined : body.previous_owner_role, cancelPendingInvites: body.cancel_pending_invites },
+    ] });
+    return jsonResponse({ message: 'Ownership transferred. Independent child roles and API keys were preserved.' });
+  }
+
+  // Deliberate self-service offboarding. It preserves identity and other workspaces.
+  if (request.method === 'POST' && segments[0] === 'leave') {
+    if (auth.authType !== 'session') return errorResponse('Session authentication is required', 403);
+    const body = await parseJsonBody<{ workspace_id: string; confirm_leave?: boolean; cancel_pending_invites?: boolean }>(request);
+    if (!isValidUuid(body.workspace_id) || body.confirm_leave !== true) return errorResponse('A workspace and explicit leave confirmation are required');
+    const callerRole = await getWorkspaceRole(auth.user.id, body.workspace_id);
+    if (!callerRole) return errorResponse('No workspace membership', 404);
+    await changeMemberships({ workspaceId: body.workspace_id, auth, callerRole, selfService: true, ip: getClientIp(request),
+      changes: [{ userId: auth.user.id, operation: 'remove', cancelPendingInvites: body.cancel_pending_invites }] });
+    return jsonResponse({ message: 'You left the workspace. Your account and other workspace access were preserved.' });
+  }
+
   // POST /api/workspaces/users/bulk
   if (request.method === 'POST' && segments[0] === 'bulk') {
     const body = await parseJsonBody<WorkspaceUsersBulkBody>(request);
@@ -209,8 +236,8 @@ export default async (request: Request, context: Context) => {
         continue;
       }
 
-      const targetMembership = await queryOne<{ role: string }>(
-        'SELECT role FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2',
+      const targetMembership = await queryOne<{ role: string; access_scope?: string }>(
+        'SELECT role, access_scope FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2',
         [body.workspace_id, targetUserId]
       );
       if (!targetMembership) {
@@ -218,155 +245,30 @@ export default async (request: Request, context: Context) => {
         continue;
       }
 
-      if (callerRole !== 'owner' && !auth.user.is_superadmin && targetMembership.role === 'owner') {
+      if (callerRole !== 'owner' && !auth.user.is_superadmin && targetMembership.role === 'owner' && targetMembership.access_scope !== 'scoped') {
         results.push({ id: targetUserId, ok: false, error: 'Only owners can modify another owner' });
         continue;
       }
 
+      results.push({ id: targetUserId, ok: true });
+    }
+
+    const eligible = results.filter(r => r.ok);
+    if (eligible.length) {
       try {
-        if (body.operation === 'remove') {
-          await execute(
-            'DELETE FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2',
-            [body.workspace_id, targetUserId]
-          );
-          await execute(
-            `DELETE FROM environment_memberships
-             WHERE user_id = $1
-               AND environment_id IN (SELECT id FROM environments WHERE workspace_id = $2)`,
-            [targetUserId, body.workspace_id]
-          );
-          await execute(
-            `DELETE FROM group_memberships
-             WHERE user_id = $1
-               AND group_id IN (
-                 SELECT g.id FROM groups g
-                 JOIN environments e ON e.id = g.environment_id
-                 WHERE e.workspace_id = $2
-               )`,
-            [targetUserId, body.workspace_id]
-          );
-          await logAudit({
-            workspace_id: body.workspace_id,
-            user_id: auth.user.id,
-            action: 'workspace.user_removed',
-            resource_type: 'workspace_membership',
-            resource_id: targetUserId,
-            details: { removed_user_id: targetUserId, source: 'bulk' },
-            ip_address: getClientIp(request),
-          });
-        } else if (body.operation === 'access_overwrite') {
-          const roleOverride = options.role;
-          if (roleOverride) {
-            if (callerRole !== 'owner' && !auth.user.is_superadmin) {
-              if (roleOverride === 'owner') {
-                throw new Error('Only owners can promote to owner');
-              }
-              if (targetMembership.role === 'owner') {
-                throw new Error('Only owners can change another owner\'s role');
-              }
-            }
-            await transaction(async (client) => {
-              await client.query(
-                'UPDATE workspace_memberships SET role = $1 WHERE workspace_id = $2 AND user_id = $3',
-                [roleOverride, body.workspace_id, targetUserId]
-              );
-              await client.query(
-                `UPDATE environment_memberships em
-                 SET role = $1
-                 FROM environments e
-                 WHERE em.environment_id = e.id
-                   AND e.workspace_id = $2
-                   AND em.user_id = $3`,
-                [roleOverride, body.workspace_id, targetUserId]
-              );
-              await client.query(
-                `UPDATE group_memberships gm
-                 SET role = $1
-                 FROM groups g
-                 JOIN environments e ON e.id = g.environment_id
-                 WHERE gm.group_id = g.id
-                   AND e.workspace_id = $2
-                   AND gm.user_id = $3`,
-                [roleOverride, body.workspace_id, targetUserId]
-              );
-            });
-          }
-
-          const effectiveRole = roleOverride ?? targetMembership.role;
-          await transaction(async (client) => {
-            try {
-              await client.query(
-                `UPDATE workspace_memberships
-                 SET access_scope = $1
-                 WHERE workspace_id = $2 AND user_id = $3`,
-                [options.access_scope, body.workspace_id, targetUserId]
-              );
-            } catch (err) {
-              const message = err instanceof Error ? err.message : String(err);
-              if (!message.includes('column "access_scope" of relation "workspace_memberships" does not exist')) throw err;
-              throw new Error('Database migration required: workspace_memberships.access_scope is missing. Run migrations first.');
-            }
-
-            await client.query(
-              `DELETE FROM environment_memberships
-               WHERE user_id = $1
-                 AND environment_id IN (SELECT id FROM environments WHERE workspace_id = $2)`,
-              [targetUserId, body.workspace_id]
-            );
-            for (const envId of envIds) {
-              await client.query(
-                `INSERT INTO environment_memberships (environment_id, user_id, role)
-                 VALUES ($1, $2, $3)
-                 ON CONFLICT (environment_id, user_id) DO UPDATE SET role = EXCLUDED.role`,
-                [envId, targetUserId, effectiveRole]
-              );
-            }
-
-            await client.query(
-              `DELETE FROM group_memberships
-               WHERE user_id = $1
-                 AND group_id IN (
-                   SELECT g.id
-                   FROM groups g
-                   JOIN environments e ON e.id = g.environment_id
-                   WHERE e.workspace_id = $2
-                 )`,
-              [targetUserId, body.workspace_id]
-            );
-            for (const groupId of groupIds) {
-              await client.query(
-                `INSERT INTO group_memberships (group_id, user_id, role)
-                 VALUES ($1, $2, $3)
-                 ON CONFLICT (group_id, user_id) DO UPDATE SET role = EXCLUDED.role`,
-                [groupId, targetUserId, effectiveRole]
-              );
-            }
-          });
-
-          await logAudit({
-            workspace_id: body.workspace_id,
-            user_id: auth.user.id,
-            action: 'workspace.user_access_updated',
-            resource_type: 'workspace_membership',
-            resource_id: targetUserId,
-            details: {
-              target_user_id: targetUserId,
-              access_scope: options.access_scope,
-              environment_ids: envIds,
-              group_ids: groupIds,
-              role_override: roleOverride ?? null,
-              source: 'bulk',
-            },
-            ip_address: getClientIp(request),
-          });
-        } else {
-          results.push({ id: targetUserId, ok: false, error: `Unsupported operation: ${body.operation}` });
-          continue;
-        }
-
-        results.push({ id: targetUserId, ok: true });
+        await changeMemberships({
+          workspaceId: body.workspace_id, auth, callerRole, ip: getClientIp(request),
+          changes: eligible.map(r => ({
+            userId: r.id, operation: body.operation === 'remove' ? 'remove' : 'access',
+            role: options.role as MembershipRole | undefined,
+            assignmentRole: options.role as MembershipRole | undefined,
+            accessScope: options.access_scope, environmentIds: envIds, groupIds,
+            cancelPendingInvites: options.cancel_pending_invites,
+          })),
+        });
       } catch (err) {
-        results.push({ id: targetUserId, ok: false, error: err instanceof Error ? err.message : 'Unknown error' });
+        const message = err instanceof Response ? (await err.json()).error : 'Membership update failed; no eligible member changes were committed';
+        for (const result of eligible) { result.ok = false; result.error = message; }
       }
     }
 
@@ -412,58 +314,24 @@ export default async (request: Request, context: Context) => {
       if (body.role === 'owner') {
         return errorResponse('Only owners can promote to owner', 403);
       }
-      const targetMembership = await queryOne<{ role: string }>(
-        'SELECT role FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2',
+      const targetMembership = await queryOne<{ role: string; access_scope?: string }>(
+        'SELECT role, access_scope FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2',
         [body.workspace_id, body.user_id]
       );
-      if (targetMembership?.role === 'owner') {
+      if (targetMembership?.role === 'owner' && targetMembership.access_scope !== 'scoped') {
         return errorResponse('Only owners can change another owner\'s role', 403);
       }
     }
 
     // Verify target user is a member
-    const existing = await queryOne<{ role: string }>(
-      'SELECT role FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2',
+    const existing = await queryOne<{ role: string; access_scope?: string }>(
+      'SELECT role, access_scope FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2',
       [body.workspace_id, body.user_id]
     );
     if (!existing) return errorResponse('User is not a member of this workspace', 404);
 
-    await transaction(async (client) => {
-      await client.query(
-        'UPDATE workspace_memberships SET role = $1 WHERE workspace_id = $2 AND user_id = $3',
-        [body.role, body.workspace_id, body.user_id]
-      );
-      // Keep scoped env/group membership roles aligned with the workspace RBAC role.
-      await client.query(
-        `UPDATE environment_memberships em
-         SET role = $1
-         FROM environments e
-         WHERE em.environment_id = e.id
-           AND e.workspace_id = $2
-           AND em.user_id = $3`,
-        [body.role, body.workspace_id, body.user_id]
-      );
-      await client.query(
-        `UPDATE group_memberships gm
-         SET role = $1
-         FROM groups g
-         JOIN environments e ON e.id = g.environment_id
-         WHERE gm.group_id = g.id
-           AND e.workspace_id = $2
-           AND gm.user_id = $3`,
-        [body.role, body.workspace_id, body.user_id]
-      );
-    });
-
-    await logAudit({
-      workspace_id: body.workspace_id,
-      user_id: auth.user.id,
-      action: 'workspace.user_role_changed',
-      resource_type: 'workspace_membership',
-      resource_id: body.user_id,
-      details: { target_user_id: body.user_id, old_role: existing.role, new_role: body.role },
-      ip_address: getClientIp(request),
-    });
+    await changeMemberships({ workspaceId: body.workspace_id, auth, callerRole,
+      ip: getClientIp(request), changes: [{ userId: body.user_id, operation: 'role', role: body.role as MembershipRole }] });
 
     return jsonResponse({ message: 'Role updated' });
   }
@@ -475,6 +343,8 @@ export default async (request: Request, context: Context) => {
       user_id: string;
       access_scope: 'workspace' | 'scoped';
       scoped_role?: string;
+      workspace_role?: string;
+      cancel_pending_invites?: boolean;
       environment_ids?: string[];
       group_ids?: string[];
       acting_environment_id?: string;
@@ -493,6 +363,7 @@ export default async (request: Request, context: Context) => {
         return errorResponse(`scoped_role must be one of: ${validRoles.join(', ')}`);
       }
     }
+    if (body.workspace_role && !['owner', 'admin', 'member', 'viewer'].includes(body.workspace_role)) return errorResponse('Invalid workspace_role');
 
     let callerRole: string;
     let scopedEnvironmentManager = false;
@@ -569,7 +440,7 @@ export default async (request: Request, context: Context) => {
     const targetMembership = await getWorkspaceMembershipForUpdate(body.workspace_id, body.user_id);
     if (!targetMembership) return errorResponse('User is not a member of this workspace', 404);
 
-    if (callerRole !== 'owner' && !auth.user.is_superadmin && targetMembership.role === 'owner') {
+    if (callerRole !== 'owner' && !auth.user.is_superadmin && targetMembership.role === 'owner' && targetMembership.access_scope !== 'scoped') {
       return errorResponse('Only owners can change another owner', 403);
     }
     if (body.scoped_role === 'owner' && callerRole !== 'owner' && !auth.user.is_superadmin) {
@@ -578,6 +449,7 @@ export default async (request: Request, context: Context) => {
     const scopedRoleToApply = body.scoped_role ?? targetMembership.role;
 
     if (scopedEnvironmentManager) {
+      if (body.workspace_role) return errorResponse('Environment managers cannot change workspace roles', 403);
       if (body.access_scope !== 'scoped') {
         return errorResponse('Environment-scoped access changes must use scoped mode', 400);
       }
@@ -638,133 +510,17 @@ export default async (request: Request, context: Context) => {
         }
       }
 
-      await transaction(async (client) => {
-        await client.query(
-          `DELETE FROM environment_memberships
-           WHERE user_id = $1
-             AND environment_id = $2`,
-          [body.user_id, actingEnvironmentId]
-        );
-
-        if (envIds.includes(actingEnvironmentId)) {
-          await client.query(
-            `INSERT INTO environment_memberships (environment_id, user_id, role)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (environment_id, user_id) DO UPDATE SET role = EXCLUDED.role`,
-            [actingEnvironmentId, body.user_id, scopedRoleToApply]
-          );
-        }
-
-        await client.query(
-          `DELETE FROM group_memberships
-           WHERE user_id = $1
-             AND group_id IN (
-               SELECT id FROM groups WHERE environment_id = $2
-             )`,
-          [body.user_id, actingEnvironmentId]
-        );
-
-        for (const groupId of groupIds) {
-          await client.query(
-            `INSERT INTO group_memberships (group_id, user_id, role)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (group_id, user_id) DO UPDATE SET role = EXCLUDED.role`,
-            [groupId, body.user_id, scopedRoleToApply]
-          );
-        }
-      });
-
-      await logAudit({
-        workspace_id: body.workspace_id,
-        environment_id: actingEnvironmentId,
-        user_id: auth.user.id,
-        action: 'workspace.user_environment_access_updated',
-        resource_type: 'workspace_membership',
-        resource_id: body.user_id,
-        details: {
-          target_user_id: body.user_id,
-          acting_environment_id: actingEnvironmentId,
-          scoped_role: body.scoped_role ?? null,
-          environment_ids: envIds,
-          group_ids: groupIds,
-        },
-        ip_address: getClientIp(request),
-      });
-
+      await changeMemberships({ workspaceId: body.workspace_id, auth, callerRole,
+        ip: getClientIp(request), changes: [{ userId: body.user_id, operation: 'access', accessScope: 'scoped',
+          assignmentRole: body.scoped_role as MembershipRole | undefined, cancelPendingInvites: body.cancel_pending_invites,
+          environmentIds: envIds, groupIds, actingEnvironmentId }] });
       return jsonResponse({ message: 'User environment access assignment updated' });
     }
 
-    await transaction(async (client) => {
-      try {
-        await client.query(
-          `UPDATE workspace_memberships
-           SET access_scope = $1
-           WHERE workspace_id = $2 AND user_id = $3`,
-          [body.access_scope, body.workspace_id, body.user_id]
-        );
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (!message.includes('column "access_scope" of relation "workspace_memberships" does not exist')) throw err;
-        throw new Response(JSON.stringify({
-          error: 'Database migration required: workspace_memberships.access_scope is missing. Run migrations first.'
-        }), { status: 500, headers: { 'Content-Type': 'application/json' } });
-      }
-
-      await client.query(
-        `DELETE FROM environment_memberships
-         WHERE user_id = $1
-           AND environment_id IN (SELECT id FROM environments WHERE workspace_id = $2)`,
-        [body.user_id, body.workspace_id]
-      );
-      if (envIds.length > 0) {
-        for (const envId of envIds) {
-          await client.query(
-            `INSERT INTO environment_memberships (environment_id, user_id, role)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (environment_id, user_id) DO UPDATE SET role = EXCLUDED.role`,
-            [envId, body.user_id, scopedRoleToApply]
-          );
-        }
-      }
-
-      await client.query(
-        `DELETE FROM group_memberships
-         WHERE user_id = $1
-           AND group_id IN (
-             SELECT g.id
-             FROM groups g
-             JOIN environments e ON e.id = g.environment_id
-             WHERE e.workspace_id = $2
-           )`,
-        [body.user_id, body.workspace_id]
-      );
-      if (groupIds.length > 0) {
-        for (const groupId of groupIds) {
-          await client.query(
-            `INSERT INTO group_memberships (group_id, user_id, role)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (group_id, user_id) DO UPDATE SET role = EXCLUDED.role`,
-            [groupId, body.user_id, scopedRoleToApply]
-          );
-        }
-      }
-    });
-
-    await logAudit({
-      workspace_id: body.workspace_id,
-      user_id: auth.user.id,
-      action: 'workspace.user_access_updated',
-      resource_type: 'workspace_membership',
-      resource_id: body.user_id,
-      details: {
-        target_user_id: body.user_id,
-        access_scope: body.access_scope,
-        scoped_role: body.scoped_role ?? null,
-        environment_ids: envIds,
-        group_ids: groupIds,
-      },
-      ip_address: getClientIp(request),
-    });
+    await changeMemberships({ workspaceId: body.workspace_id, auth, callerRole,
+      ip: getClientIp(request), changes: [{ userId: body.user_id, operation: 'access',
+        accessScope: body.access_scope, role: body.workspace_role as MembershipRole | undefined, assignmentRole: body.scoped_role as MembershipRole | undefined, cancelPendingInvites: body.cancel_pending_invites,
+        environmentIds: envIds, groupIds }] });
 
     return jsonResponse({ message: 'User access assignment updated' });
   }
@@ -787,52 +543,17 @@ export default async (request: Request, context: Context) => {
 
     // Non-owner admins cannot remove owners
     if (callerRole !== 'owner' && !auth.user.is_superadmin) {
-      const targetMembership = await queryOne<{ role: string }>(
-        'SELECT role FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2',
+      const targetMembership = await queryOne<{ role: string; access_scope?: string }>(
+        'SELECT role, access_scope FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2',
         [workspaceId, targetUserId]
       );
-      if (targetMembership?.role === 'owner') {
+      if (targetMembership?.role === 'owner' && targetMembership.access_scope !== 'scoped') {
         return errorResponse('Only owners can remove another owner', 403);
       }
     }
 
-    const result = await execute(
-      'DELETE FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2',
-      [workspaceId, targetUserId]
-    );
-
-    if (result.rowCount === 0) {
-      return errorResponse('User is not a member of this workspace', 404);
-    }
-
-    // Also remove environment and group memberships for this workspace
-    await execute(
-      `DELETE FROM environment_memberships
-       WHERE user_id = $1
-         AND environment_id IN (SELECT id FROM environments WHERE workspace_id = $2)`,
-      [targetUserId, workspaceId]
-    );
-
-    await execute(
-      `DELETE FROM group_memberships
-       WHERE user_id = $1
-         AND group_id IN (
-           SELECT g.id FROM groups g
-           JOIN environments e ON e.id = g.environment_id
-           WHERE e.workspace_id = $2
-         )`,
-      [targetUserId, workspaceId]
-    );
-
-    await logAudit({
-      workspace_id: workspaceId,
-      user_id: auth.user.id,
-      action: 'workspace.user_removed',
-      resource_type: 'workspace_membership',
-      resource_id: targetUserId,
-      details: { removed_user_id: targetUserId },
-      ip_address: getClientIp(request),
-    });
+    await changeMemberships({ workspaceId, auth, callerRole, ip: getClientIp(request),
+      changes: [{ userId: targetUserId, operation: 'remove', cancelPendingInvites: params.get('cancel_pending_invites') === 'true' }] });
 
     return jsonResponse({ message: 'User removed from workspace' });
   }
@@ -902,7 +623,7 @@ async function getWorkspaceMembershipForUpdate(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (!message.includes('column "access_scope" does not exist')) throw err;
-    const legacy = await queryOne<{ role: string }>(
+    const legacy = await queryOne<{ role: string; access_scope?: string }>(
       `SELECT role
        FROM workspace_memberships
        WHERE workspace_id = $1
@@ -1011,7 +732,7 @@ function filterGroupAssignments(assignments: GroupAssignmentRow[], groupIds: str
 }
 
 async function hasScopedInviteCapability(userId: string, workspaceId: string): Promise<boolean> {
-  const envGrant = await queryOne<{ role: string }>(
+  const envGrant = await queryOne<{ role: string; access_scope?: string }>(
     `SELECT em.role
      FROM environment_memberships em
      JOIN environments e ON e.id = em.environment_id
@@ -1023,7 +744,7 @@ async function hasScopedInviteCapability(userId: string, workspaceId: string): P
   );
   if (envGrant) return true;
 
-  const groupGrant = await queryOne<{ role: string }>(
+  const groupGrant = await queryOne<{ role: string; access_scope?: string }>(
     `SELECT gm.role
      FROM group_memberships gm
      JOIN groups g ON g.id = gm.group_id
@@ -1037,7 +758,8 @@ async function hasScopedInviteCapability(userId: string, workspaceId: string): P
   return !!groupGrant;
 }
 
-async function listWorkspaceUsers(workspaceId: string, userId?: string): Promise<WorkspaceUserRow[]> {
+async function listWorkspaceUsers(workspaceId: string, userId?: string | null): Promise<WorkspaceUserRow[]> {
+  if (userId === null) return [];
   const params = userId ? [workspaceId, userId] : [workspaceId];
   const userFilter = userId ? 'AND wm.user_id = $2' : '';
   try {
@@ -1069,7 +791,8 @@ async function listWorkspaceUsers(workspaceId: string, userId?: string): Promise
   }
 }
 
-async function listEnvironmentAssignments(workspaceId: string, userId?: string): Promise<EnvironmentAssignmentRow[]> {
+async function listEnvironmentAssignments(workspaceId: string, userId?: string | null): Promise<EnvironmentAssignmentRow[]> {
+  if (userId === null) return [];
   const params = userId ? [workspaceId, userId] : [workspaceId];
   const userFilter = userId ? 'AND em.user_id = $2' : '';
   return query<EnvironmentAssignmentRow>(
@@ -1083,7 +806,8 @@ async function listEnvironmentAssignments(workspaceId: string, userId?: string):
   );
 }
 
-async function listGroupAssignments(workspaceId: string, userId?: string): Promise<GroupAssignmentRow[]> {
+async function listGroupAssignments(workspaceId: string, userId?: string | null): Promise<GroupAssignmentRow[]> {
+  if (userId === null) return [];
   const params = userId ? [workspaceId, userId] : [workspaceId];
   const userFilter = userId ? 'AND gm.user_id = $2' : '';
   return query<GroupAssignmentRow>(

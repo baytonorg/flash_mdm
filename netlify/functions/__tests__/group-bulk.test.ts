@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+vi.mock('../_lib/group-lifecycle.js', () => ({updateGroupLifecycle:vi.fn(async()=>({affected_devices:0})),deleteGroupLifecycle:vi.fn(async()=>({affected_devices:0})),requireGroupCreationScope:vi.fn()}));
+vi.mock('../_lib/policy-reconcile-wake.js', () => ({wakePolicyReconciliation:vi.fn()}));
+import {updateGroupLifecycle} from '../_lib/group-lifecycle.js';
 
 vi.mock('../_lib/db.js', () => ({
   query: vi.fn(),
@@ -67,9 +70,7 @@ describe('POST /api/groups/bulk', () => {
     expect(res.status).toBe(200);
     expect(body.succeeded).toBe(1);
     expect(body.failed).toBe(0);
-    expect(mockExecute).toHaveBeenCalledWith(expect.stringContaining('DELETE FROM policy_assignments'), ['11111111-1111-4111-8111-111111111111']);
-    expect(mockExecute).toHaveBeenCalledWith(expect.stringContaining('DELETE FROM app_deployments'), ['11111111-1111-4111-8111-111111111111']);
-    expect(mockExecute).toHaveBeenCalledWith(expect.stringContaining('DELETE FROM network_deployments'), ['11111111-1111-4111-8111-111111111111']);
+    expect(updateGroupLifecycle).toHaveBeenCalledWith(expect.objectContaining({groupId:'11111111-1111-4111-8111-111111111111',clearDirectAssignments:true}));
   });
 
   it('bulk move reports per-item cycle failure', async () => {

@@ -1,3 +1,5 @@
+vi.mock('../_lib/invite-membership.js', () => ({ applyInviteOffer: vi.fn().mockResolvedValue({ id: 'fixture', alreadyAccepted: false }) }));
+import { applyInviteOffer } from '../_lib/invite-membership.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockClientQuery = vi.fn();
@@ -175,7 +177,8 @@ describe('auth-register invite-only mode', () => {
     mockQueryOne
       .mockResolvedValueOnce({ count: '5' } as never) // user count
       .mockResolvedValueOnce({ id: 'invite_1', permissions: { invite_type: 'workspace_access' } } as never) // pending invite
-      .mockResolvedValueOnce(null as never); // existing user lookup
+      .mockResolvedValueOnce(null as never) // existing user lookup
+      .mockResolvedValueOnce({ id: 'invite_1', workspace_id: 'fixture', status: 'pending' } as never);
     mockGetPlatformSettings.mockResolvedValueOnce({
       invite_only_registration: true,
       licensing_enabled: true,
@@ -201,6 +204,7 @@ describe('auth-register invite-only mode', () => {
       expect.arrayContaining(['hash:magic-token', 'new@example.com'])
     );
     expect(mockClientQuery.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO workspaces'))).toBe(false);
+    expect(applyInviteOffer).toHaveBeenCalledWith(expect.anything(), 'hash:token_123', expect.any(String), 'new@example.com');
   });
 
   it('requires workspace name for platform invite onboarding and still allows registration in invite-only mode', async () => {

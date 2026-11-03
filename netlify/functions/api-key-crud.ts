@@ -18,7 +18,7 @@ type ApiKeyRow = {
   environment_id: string | null;
   role: 'owner' | 'admin' | 'member' | 'viewer';
   token_prefix: string;
-  created_by_user_id: string;
+  created_by_user_id: string | null;
   created_by_email: string | null;
   created_by_name: string | null;
   created_at: string;

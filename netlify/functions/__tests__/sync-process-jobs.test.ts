@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+vi.mock('../_lib/device-policy-reconcile.js',()=>({reconcileDevicePolicy:vi.fn()}));
+import {reconcileDevicePolicy} from '../_lib/device-policy-reconcile.js';
 
 vi.mock('../_lib/db.js', () => ({
   query: vi.fn(),
@@ -107,6 +109,19 @@ beforeEach(() => {
 });
 
 describe('sync-process-background job queue processing', () => {
+  it('dispatches durable policy reconciliation and marks completion only after delivery',async()=>{
+    mockTransaction.mockImplementationOnce(async()=>[{id:'policy_job',job_type:'device_policy_reconcile',environment_id:'env1',payload:{device_id:'fixture-device'},attempts:0}] as never).mockImplementationOnce(async()=>[] as never);
+    await handler(makeRequest(),{} as never);
+    expect(reconcileDevicePolicy).toHaveBeenCalledWith('fixture-device');
+    expect(mockExecute).toHaveBeenCalledWith(expect.stringContaining("status = 'completed'"),['policy_job']);
+  });
+  it('retains a failed policy reconciliation for retry instead of claiming completion',async()=>{
+    mockTransaction.mockImplementationOnce(async()=>[{id:'failed_policy_job',job_type:'device_policy_reconcile',environment_id:'env1',payload:{device_id:'fixture-device'},attempts:0}] as never).mockImplementationOnce(async()=>[] as never);
+    vi.mocked(reconcileDevicePolicy).mockRejectedValueOnce(new Error('fixture provider failure'));
+    await handler(makeRequest(),{} as never);
+    expect(mockExecute).not.toHaveBeenCalledWith(expect.stringContaining("status = 'completed'"),['failed_policy_job']);
+    expect(mockExecute).toHaveBeenCalledWith(expect.stringContaining("status = 'pending'"),expect.arrayContaining(['failed_policy_job']));
+  });
   it('reschedules command reconciliation with a bounded delay instead of replaying a command', async () => {
     const reconciliationJob = {
       id: 'job_reconcile_1',

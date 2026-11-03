@@ -1,4 +1,5 @@
 import type { Context } from '@netlify/functions';
+import { reconcileDevicePolicy } from './_lib/device-policy-reconcile.js';
 import { query, queryOne, execute, transaction } from './_lib/db.js';
 import {
   amapiCall,
@@ -1965,6 +1966,13 @@ export default async (request: Request, _context: Context) => {
                 }
               }
             }
+            break;
+          }
+
+          case 'device_policy_reconcile': {
+            const id=payload.device_id;
+            if(typeof id!=='string'||!id)throw new Error('Device policy reconciliation needs a device identity');
+            await reconcileDevicePolicy(id);
             break;
           }
 

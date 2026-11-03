@@ -1,3 +1,5 @@
+vi.mock('../_lib/membership-lifecycle.js', () => ({ changeMemberships: vi.fn().mockResolvedValue(undefined) }));
+import { changeMemberships } from '../_lib/membership-lifecycle.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../_lib/db.js', () => ({
@@ -421,14 +423,8 @@ describe('workspace-users access assignments', () => {
 
     expect(res.status).toBe(200);
     expect(mockRequireWorkspacePermission).toHaveBeenCalledWith(expect.anything(), '11111111-1111-4111-8111-111111111111', 'manage_users');
-    expect(mockTransaction).toHaveBeenCalledTimes(1);
-    expect((client.query as any).mock.calls.some((c: any[]) => String(c[0]).includes('UPDATE workspace_memberships'))).toBe(true);
-    expect((client.query as any).mock.calls.some((c: any[]) => String(c[0]).includes('INSERT INTO environment_memberships'))).toBe(true);
-    expect((client.query as any).mock.calls.some((c: any[]) => String(c[0]).includes('INSERT INTO group_memberships'))).toBe(true);
-    expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({
-      action: 'workspace.user_access_updated',
-      workspace_id: '11111111-1111-4111-8111-111111111111',
-      resource_id: '33333333-3333-4333-8333-333333333333',
+    expect(changeMemberships).toHaveBeenCalledWith(expect.objectContaining({
+      changes: [expect.objectContaining({ operation: 'access', accessScope: 'scoped', environmentIds: ['44444444-4444-4444-8444-444444444444', '55555555-5555-4555-8555-555555555555'], groupIds: ['66666666-6666-4666-8666-666666666666'] })],
     }));
   });
 
@@ -521,29 +517,9 @@ describe('workspace-users access assignments', () => {
       'environment',
       'manage_users'
     );
-    expect((client.query as any).mock.calls.some((c: any[]) => String(c[0]).includes('DELETE FROM environment_memberships'))).toBe(true);
-    const envInsertCall = (client.query as any).mock.calls.find((c: any[]) =>
-      String(c[0]).includes('INSERT INTO environment_memberships')
-    );
-    expect(envInsertCall).toBeTruthy();
-    expect(envInsertCall[1]).toEqual([
-      '44444444-4444-4444-8444-444444444444',
-      '33333333-3333-4333-8333-333333333333',
-      'member',
-    ]);
-    expect((client.query as any).mock.calls.some((c: any[]) => String(c[0]).includes('DELETE FROM group_memberships'))).toBe(true);
-    const groupInsertCall = (client.query as any).mock.calls.find((c: any[]) =>
-      String(c[0]).includes('INSERT INTO group_memberships')
-    );
-    expect(groupInsertCall).toBeTruthy();
-    expect(groupInsertCall[1]).toEqual([
-      '66666666-6666-4666-8666-666666666666',
-      '33333333-3333-4333-8333-333333333333',
-      'member',
-    ]);
-    expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({
-      action: 'workspace.user_environment_access_updated',
-      environment_id: '44444444-4444-4444-8444-444444444444',
+    expect(changeMemberships).toHaveBeenCalledWith(expect.objectContaining({
+      changes: [expect.objectContaining({ operation: 'access', actingEnvironmentId: '44444444-4444-4444-8444-444444444444',
+        environmentIds: ['44444444-4444-4444-8444-444444444444'], groupIds: ['66666666-6666-4666-8666-666666666666'] })],
     }));
   });
 

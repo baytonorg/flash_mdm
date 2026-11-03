@@ -79,11 +79,12 @@ describe('Users bulk actions', () => {
 
     await user.click(screen.getByRole('button', { name: 'Remove from Workspace' }));
 
-    expect(confirmSpy).toHaveBeenCalledWith('Remove 1 user(s) from workspace?');
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('cancel their pending workspace invitations'));
     expect(mocks.bulkMutate).toHaveBeenCalledWith(
       {
         workspace_id: 'ws1',
         operation: 'remove',
+        options: { cancel_pending_invites: true },
         selection: { ids: ['u2'] },
       },
       expect.any(Object),

@@ -433,7 +433,7 @@ export default function Groups() {
         actions={bulkActions}
         onAction={(key) => {
           if (key === 'delete') {
-            if (!window.confirm(`Delete ${bulkSelection.selectedCount} selected group(s)?`)) return;
+              if (!window.confirm(`Delete ${bulkSelection.selectedCount} selected group(s) and their descendants? Direct grants and local assignments are removed, devices become ungrouped and effective policies are reconciled in the background. Linked enrolment/sign-in/invitation/signup references block deletion. Accounts, API keys and external policy resources are retained.`)) return;
             setBulkWarning(null);
             bulkGroupAction.mutate(
               {
@@ -490,8 +490,8 @@ export default function Groups() {
         title="Delete Group"
         message={
           deleteTarget && hasChildren(deleteTarget.id)
-            ? `"${deleteTarget.name}" has child groups. Deleting it will affect all nested groups. Are you sure?`
-            : `Are you sure you want to delete "${deleteTarget?.name ?? ''}"? This action cannot be undone.`
+            ? `Delete "${deleteTarget.name}" and all descendants? Local group grants and assignments are removed and devices become ungrouped. Effective policies are reconciled in the background. Linked enrolment/sign-in/invitation/signup references block deletion. Accounts, API keys and external policy resources are retained. This cannot be undone.`
+            : `Delete "${deleteTarget?.name ?? ''}"? Local group grants and assignments are removed and devices become ungrouped. Effective policies are reconciled in the background. Linked enrolment/sign-in/invitation/signup references block deletion. Accounts, API keys and external policy resources are retained. This cannot be undone.`
         }
         confirmLabel="Delete"
         variant="danger"

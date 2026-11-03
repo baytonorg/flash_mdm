@@ -1,3 +1,7 @@
+vi.mock('../_lib/invite-membership.js', () => ({ applyInviteOffer: vi.fn().mockResolvedValue({ id: 'fixture', alreadyAccepted: false }) }));
+import { applyInviteOffer } from '../_lib/invite-membership.js';
+vi.mock('../_lib/invite-offer-write.js', () => ({writeInviteOffer:vi.fn(async(input)=>({id:input.inviteId,resent:false}))}));
+import {writeInviteOffer} from '../_lib/invite-offer-write.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockClientQuery = vi.fn();
@@ -90,6 +94,7 @@ function makeAcceptRequest(token: string): Request {
 }
 
 beforeEach(() => {
+  vi.mocked(writeInviteOffer).mockClear();
   mockClientQuery.mockReset();
   mockQuery.mockReset();
   mockQueryOne.mockReset();
@@ -124,6 +129,7 @@ beforeEach(() => {
 describe('workspace invite acceptance hardening', () => {
   it('rejects owner invites from non-owner workspace admins', async () => {
     mockRequireAuth.mockResolvedValue({
+      authType: 'session',
       sessionId: 'sess_admin',
       user: {
         id: 'user_admin',
@@ -153,7 +159,9 @@ describe('workspace invite acceptance hardening', () => {
   });
 
   it('re-sends an existing active workspace invite instead of blocking duplicate invite creation', async () => {
+    vi.mocked(writeInviteOffer).mockResolvedValueOnce({id:'invite_existing',resent:true});
     mockRequireAuth.mockResolvedValue({
+      authType: 'session',
       sessionId: 'sess_admin',
       user: {
         id: 'user_admin',
@@ -182,14 +190,14 @@ describe('workspace invite acceptance hardening', () => {
 
     expect(res.status).toBe(200);
     expect(body).toMatchObject({ message: 'Invite re-sent', invite_id: 'invite_existing' });
-    expect(mockExecute).toHaveBeenCalledTimes(1);
-    expect(String(mockExecute.mock.calls[0]?.[0])).toContain('UPDATE user_invites');
+    expect(writeInviteOffer).toHaveBeenCalledOnce();
     expect(mockSendEmail).toHaveBeenCalledOnce();
     expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({ action: 'workspace.invite_resent' }));
   });
 
   it('rejects workspace-wide invites from scoped workspace admins', async () => {
     mockRequireAuth.mockResolvedValue({
+      authType: 'session',
       sessionId: 'sess_admin',
       user: {
         id: 'user_admin',
@@ -221,6 +229,7 @@ describe('workspace invite acceptance hardening', () => {
 
   it('rejects platform invites from non-superadmin callers', async () => {
     mockRequireAuth.mockResolvedValue({
+      authType: 'session',
       sessionId: 'sess_admin',
       user: {
         id: 'user_admin',
@@ -249,6 +258,7 @@ describe('workspace invite acceptance hardening', () => {
 
   it('allows superadmin platform invites without a workspace target', async () => {
     mockRequireAuth.mockResolvedValue({
+      authType: 'session',
       sessionId: 'sess_sa',
       user: {
         id: 'user_sa',
@@ -272,14 +282,13 @@ describe('workspace invite acceptance hardening', () => {
     expect(res.status).toBe(201);
     await expect(res.json()).resolves.toMatchObject({ message: 'Invite sent' });
     expect(mockRequireWorkspaceRole).not.toHaveBeenCalled();
-    expect(mockExecute).toHaveBeenCalled();
-    const insertCall = mockExecute.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO user_invites'));
-    expect(insertCall?.[1]).toEqual(expect.arrayContaining([null, 'msp-owner@example.com', 'owner']));
+    expect(writeInviteOffer).toHaveBeenCalledWith(expect.objectContaining({workspaceId:null,email:'msp-owner@example.com',role:'owner'}));
     expect(mockSendEmail).toHaveBeenCalledOnce();
   });
 
   it('uses the current public origin when composing an invitation URL', async () => {
     mockRequireAuth.mockResolvedValue({
+      authType: 'session',
       sessionId: 'sess_sa',
       user: {
         id: 'user_sa',
@@ -309,6 +318,7 @@ describe('workspace invite acceptance hardening', () => {
 
   it('allows a scoped environment admin invite without workspace-wide access', async () => {
     mockRequireAuth.mockResolvedValue({
+      authType: 'session',
       sessionId: 'sess_env_admin',
       user: {
         id: 'user_env_admin',
@@ -342,12 +352,13 @@ describe('workspace invite acceptance hardening', () => {
       expect.objectContaining({ user: expect.objectContaining({ id: 'user_env_admin' }) }),
       'env_1'
     );
-    expect(mockExecute).toHaveBeenCalled();
+    expect(writeInviteOffer).toHaveBeenCalled();
     expect(mockSendEmail).toHaveBeenCalledOnce();
   });
 
   it('allows scoped owner invites when inviter is owner in the target environment', async () => {
     mockRequireAuth.mockResolvedValue({
+      authType: 'session',
       sessionId: 'sess_env_owner',
       user: {
         id: 'user_env_owner',
@@ -376,13 +387,13 @@ describe('workspace invite acceptance hardening', () => {
 
     expect(res.status).toBe(201);
     await expect(res.json()).resolves.toMatchObject({ message: 'Invite sent' });
-    const insertCall = mockExecute.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO user_invites'));
-    expect(insertCall?.[1]).toEqual(expect.arrayContaining(['owner-invitee@example.com', 'owner']));
+    expect(writeInviteOffer).toHaveBeenCalledWith(expect.objectContaining({email:'owner-invitee@example.com',role:'owner'}));
     expect(mockSendEmail).toHaveBeenCalledOnce();
   });
 
   it('rejects scoped owner invites when inviter is only admin in the target environment', async () => {
     mockRequireAuth.mockResolvedValue({
+      authType: 'session',
       sessionId: 'sess_env_admin',
       user: {
         id: 'user_env_admin',
@@ -412,8 +423,9 @@ describe('workspace invite acceptance hardening', () => {
     expect(mockExecute).not.toHaveBeenCalled();
   });
 
-  it('creates invite successfully on legacy user_invites schema without environment_ids/group_ids columns', async () => {
+  it('delegates canonical scope persistence to the transactional offer writer', async () => {
     mockRequireAuth.mockResolvedValue({
+      authType: 'session',
       sessionId: 'sess_admin',
       user: {
         id: 'user_admin',
@@ -444,14 +456,16 @@ describe('workspace invite acceptance hardening', () => {
 
     expect(res.status).toBe(201);
     expect(body).toMatchObject({ message: 'Invite sent' });
-    expect(mockExecute).toHaveBeenCalledTimes(2);
-    expect(String(mockExecute.mock.calls[1]?.[0])).toContain('environment_id, group_id');
+    expect(writeInviteOffer).toHaveBeenCalledWith(expect.objectContaining({environmentIds:[],groupIds:[]}));
+    expect(mockExecute).not.toHaveBeenCalled();
     expect(mockSendEmail).toHaveBeenCalledOnce();
     expect(mockLogAudit).toHaveBeenCalledOnce();
   });
 
   it('blocks accepting an invite when signed-in email does not match invite email', async () => {
+    vi.mocked(applyInviteOffer).mockRejectedValueOnce(new Response(JSON.stringify({ error: 'Invite email does not match the signed-in account' }), { status: 403 }));
     mockRequireAuth.mockResolvedValue({
+      authType: 'session',
       sessionId: 'sess_1',
       user: { id: 'user_1', email: 'signed-in@example.com' },
     } as never);
@@ -472,12 +486,12 @@ describe('workspace invite acceptance hardening', () => {
     await expect(res.json()).resolves.toEqual({
       error: 'Invite email does not match the signed-in account',
     });
-    expect(mockTransaction).not.toHaveBeenCalled();
-    expect(mockClientQuery).not.toHaveBeenCalled();
+    expect(mockTransaction).toHaveBeenCalledOnce();
   });
 
   it('accepts invite into the authenticated account and never creates a new user', async () => {
     mockRequireAuth.mockResolvedValue({
+      authType: 'session',
       sessionId: 'sess_2',
       user: { id: 'user_auth', email: 'member@example.com' },
     } as never);
@@ -497,15 +511,13 @@ describe('workspace invite acceptance hardening', () => {
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ message: 'Invite accepted' });
     expect(mockTransaction).toHaveBeenCalledTimes(1);
-    expect(mockClientQuery).toHaveBeenCalled();
-    expect(mockClientQuery.mock.calls[0]?.[0]).toContain('INSERT INTO workspace_memberships');
-    expect(mockClientQuery.mock.calls[0]?.[1]).toEqual(['ws_2', 'user_auth', 'member', 'scoped']);
-    expect(mockClientQuery.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO users'))).toBe(false);
+    expect(applyInviteOffer).toHaveBeenCalledWith(expect.anything(), expect.any(String), 'user_auth', 'member@example.com');
     expect(mockLogAudit).toHaveBeenCalledOnce();
   });
 
   it('accepts workspace-less platform invite without adding workspace memberships', async () => {
     mockRequireAuth.mockResolvedValue({
+      authType: 'session',
       sessionId: 'sess_platform',
       user: { id: 'user_platform', email: 'msp@example.com' },
     } as never);
@@ -526,16 +538,12 @@ describe('workspace invite acceptance hardening', () => {
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ message: 'Invite accepted' });
     expect(mockTransaction).toHaveBeenCalledTimes(1);
-    expect(
-      mockClientQuery.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO workspace_memberships'))
-    ).toBe(false);
-    expect(
-      mockClientQuery.mock.calls.some(([sql]) => String(sql).includes('UPDATE user_invites SET status = \'accepted\''))
-    ).toBe(true);
+    expect(applyInviteOffer).toHaveBeenCalledWith(expect.anything(), expect.any(String), 'user_platform', 'msp@example.com');
   });
 
-  it('returns migration error when accepting a scoped invite but workspace access_scope column is missing', async () => {
+  it('returns a scoped-offer validation error without masking its status', async () => {
     mockRequireAuth.mockResolvedValue({
+      authType: 'session',
       sessionId: 'sess_3',
       user: { id: 'user_auth', email: 'member@example.com' },
     } as never);
@@ -549,9 +557,9 @@ describe('workspace invite acceptance hardening', () => {
       environment_ids: JSON.stringify(['env_1']),
       group_ids: '[]',
     } as never);
-    mockClientQuery.mockRejectedValueOnce(
-      new Error('column "access_scope" of relation "workspace_memberships" does not exist')
-    );
+    vi.mocked(applyInviteOffer).mockRejectedValueOnce(new Response(JSON.stringify({
+      error: 'Database migration required: workspace_memberships.access_scope is missing. Run migrations first.',
+    }), { status: 500 }));
 
     const res = await handler(makeAcceptRequest('token789'), {} as never);
 

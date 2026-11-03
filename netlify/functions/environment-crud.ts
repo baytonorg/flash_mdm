@@ -1,3 +1,5 @@
+import { deleteEnvironmentData } from './_lib/environment-deletion.js';
+import { lockMembershipWorkspaces } from './_lib/membership-lifecycle.js';
 import type { Context } from '@netlify/functions';
 import { query, queryOne, execute, transaction } from './_lib/db.js';
 import { requireAuth } from './_lib/auth.js';
@@ -160,7 +162,13 @@ export default async (request: Request, _context: Context) => {
         }>(
           `SELECT
               wm.access_scope,
-              CASE WHEN COALESCE(u.metadata->>'needs_environment_setup', 'false') = 'true' THEN true ELSE false END AS needs_environment_setup,
+              (COALESCE(u.metadata->>'needs_environment_setup', 'false') = 'true'
+                AND COALESCE(u.metadata->>'environment_setup_workspace_id', (
+                  SELECT a.workspace_id::text FROM audit_log a WHERE a.user_id = u.id AND a.action = 'auth.register.signup_link'
+                    AND a.details->>'allow_environment_creation' = 'true' ORDER BY a.created_at DESC LIMIT 1
+                )) = $1::uuid::text
+                AND NOT EXISTS (SELECT 1 FROM audit_log a WHERE a.user_id = u.id AND a.workspace_id = $1
+                  AND a.action = 'environment.created' AND a.details->>'onboarding_setup_create' = 'true')) AS needs_environment_setup,
               (
                 SELECT COUNT(*)
                 FROM environment_memberships em
@@ -211,14 +219,31 @@ export default async (request: Request, _context: Context) => {
     const defaultPolicyId = crypto.randomUUID();
 
     await transaction(async (client) => {
+      await lockMembershipWorkspaces(client, [body.workspace_id]);
+      if (onboardingSetupCreate) {
+        const entitlement = await client.query(`SELECT u.id FROM users u JOIN workspace_memberships wm ON wm.user_id = u.id
+          WHERE u.id = $1 AND wm.workspace_id = $2 AND wm.access_scope = 'scoped'
+            AND u.metadata->>'needs_environment_setup' = 'true'
+            AND COALESCE(u.metadata->>'environment_setup_workspace_id', (
+              SELECT a.workspace_id::text FROM audit_log a WHERE a.user_id = u.id AND a.action = 'auth.register.signup_link'
+                AND a.details->>'allow_environment_creation' = 'true' ORDER BY a.created_at DESC LIMIT 1)) = $2::uuid::text
+            AND NOT EXISTS (SELECT 1 FROM environment_memberships em JOIN environments e ON e.id = em.environment_id WHERE em.user_id = u.id AND e.workspace_id = $2)
+            AND NOT EXISTS (SELECT 1 FROM audit_log a WHERE a.user_id = u.id AND a.workspace_id = $2 AND a.action = 'environment.created' AND a.details->>'onboarding_setup_create' = 'true')
+          FOR UPDATE OF u`, [auth.user.id, body.workspace_id]);
+        if (!entitlement.rows.length) throw errorResponse('First-environment creation entitlement changed or has already been used. Ask a workspace owner to review access.', 409);
+        await client.query(`UPDATE users SET metadata = COALESCE(metadata, '{}'::jsonb) || '{"needs_environment_setup":false}'::jsonb WHERE id = $1`, [auth.user.id]);
+      }
       await client.query(
         'INSERT INTO environments (id, workspace_id, name) VALUES ($1, $2, $3)',
         [id, body.workspace_id, body.name]
       );
 
-      // Customer onboarding setup flow grants owner on their first environment.
-      await client.query(
-        'INSERT INTO environment_memberships (environment_id, user_id, role) VALUES ($1, $2, $3)',
+      // Only human creators receive a human membership. Keys retain resource grants.
+      if (auth.authType === 'session') await client.query(
+        `INSERT INTO environment_memberships (environment_id, user_id, role)
+         SELECT $1::uuid, $2::uuid, $3 WHERE EXISTS (
+           SELECT 1 FROM workspace_memberships wm JOIN environments e ON e.workspace_id = wm.workspace_id
+           WHERE e.id = $1 AND wm.user_id = $2)`,
         [id, auth.user.id, environmentRole]
       );
 
@@ -234,9 +259,11 @@ export default async (request: Request, _context: Context) => {
         'INSERT INTO group_closures (ancestor_id, descendant_id, depth) VALUES ($1, $2, $3)',
         [rootGroupId, rootGroupId, 0]
       );
-      await client.query(
+      if (auth.authType === 'session') await client.query(
         `INSERT INTO group_memberships (group_id, user_id, role, permissions)
-         VALUES ($1, $2, $3, $4)
+         SELECT $1::uuid, $2::uuid, $3, $4::jsonb WHERE EXISTS (
+           SELECT 1 FROM workspace_memberships wm JOIN environments e ON e.workspace_id = wm.workspace_id
+           JOIN groups g ON g.environment_id = e.id WHERE g.id = $1 AND wm.user_id = $2)
          ON CONFLICT (group_id, user_id) DO UPDATE SET role = EXCLUDED.role, permissions = EXCLUDED.permissions`,
         [
           rootGroupId,
@@ -438,67 +465,8 @@ export default async (request: Request, _context: Context) => {
       // keys. Share a lock with their write path so validation/cleanup cannot
       // race a create or assignment update.
       await withSignupLinkReferenceLock(() => transaction(async (client) => {
-        // Lock the parent before checking credentials so new FK-backed keys
-        // cannot appear between the preflight and the cascade.
-        await client.query('SELECT id FROM environments WHERE id = $1 FOR UPDATE', [action]);
-        const dependencies = await client.query<{ has_keys: boolean; has_signup_links: boolean }>(
-          `SELECT EXISTS (SELECT 1 FROM api_keys WHERE environment_id = $1) AS has_keys,
-                  EXISTS (SELECT 1 FROM signup_links
-                    WHERE (scope_type = 'environment' AND scope_id = $1)
-                       OR auto_assign_environment_ids @> jsonb_build_array($1::text)
-                       OR EXISTS (SELECT 1 FROM groups g WHERE g.environment_id = $1
-                         AND ((signup_links.scope_type = 'group' AND signup_links.scope_id = g.id)
-                           OR signup_links.auto_assign_group_ids @> jsonb_build_array(g.id::text)))) AS has_signup_links`,
-          [action]
-        );
-        if ((dependencies.rows[0]?.has_keys || dependencies.rows[0]?.has_signup_links) && !confirmAccessCleanup) {
-          throw errorResponse('Confirm deletion of this environment\'s API keys and dedicated signup links, and removal of its shared-link assignments, before deleting the environment.', 409);
-        }
-        if (confirmAccessCleanup) {
-          const keys = await client.query('DELETE FROM api_keys WHERE environment_id = $1', [action]);
-          const links = await client.query(`DELETE FROM signup_links WHERE (scope_type = 'environment' AND scope_id = $1)
-            OR (scope_type = 'group' AND scope_id IN (SELECT id FROM groups WHERE environment_id = $1))`, [action]);
-          const shared = await client.query(`UPDATE signup_links SET
-            auto_assign_environment_ids = COALESCE((SELECT jsonb_agg(value) FROM jsonb_array_elements(COALESCE(auto_assign_environment_ids, '[]'::jsonb)) WHERE value <> to_jsonb($1::text)), '[]'::jsonb),
-            auto_assign_group_ids = COALESCE((SELECT jsonb_agg(value) FROM jsonb_array_elements(COALESCE(auto_assign_group_ids, '[]'::jsonb)) WHERE value NOT IN (SELECT to_jsonb(id::text) FROM groups WHERE environment_id = $1::uuid)), '[]'::jsonb),
-            updated_at = now()
-            WHERE auto_assign_environment_ids @> jsonb_build_array($1::text)
-               OR EXISTS (SELECT 1 FROM groups g WHERE g.environment_id = $1::uuid AND signup_links.auto_assign_group_ids @> jsonb_build_array(g.id::text))`, [action]);
-          accessCleanup = { keys_deleted: keys.rowCount ?? 0, signup_links_deleted: links.rowCount ?? 0, shared_links_updated: shared.rowCount ?? 0 };
-        }
-        // Legacy tables from early schema versions do not cascade on environment delete.
-        // Clear those references explicitly to avoid FK violations for valid deletes.
-        const cleanupStatements = [
-          `UPDATE audit_log SET details = COALESCE(details, '{}'::jsonb) || jsonb_build_object('deleted_environment_id', environment_id),
-             environment_id = NULL WHERE environment_id = $1`,
-          `UPDATE audit_log SET details = COALESCE(details, '{}'::jsonb) || jsonb_build_object('deleted_device_id', device_id),
-             device_id = NULL WHERE device_id IN (SELECT id FROM devices WHERE environment_id = $1)`,
-          'DELETE FROM pubsub_events WHERE environment_id = $1',
-          'DELETE FROM job_queue WHERE environment_id = $1',
-        ];
-
-        for (const sql of cleanupStatements) {
-          await client.query('SAVEPOINT environment_cleanup');
-          try {
-            await client.query(sql, [action]);
-          } catch (cleanupErr) {
-            // Some older databases may not have every legacy table/column.
-            // Missing relation/column should not block environment deletion.
-            if (isMissingRelationOrColumnError(cleanupErr)) {
-              await client.query('ROLLBACK TO SAVEPOINT environment_cleanup');
-              console.warn('environment-crud delete legacy cleanup skipped:', {
-                environment_id: action,
-                sql,
-                code: getPgCode(cleanupErr),
-              });
-            } else {
-              throw cleanupErr;
-            }
-          }
-          await client.query('RELEASE SAVEPOINT environment_cleanup');
-        }
-
-        await client.query('DELETE FROM environments WHERE id = $1', [action]);
+        await lockMembershipWorkspaces(client, [envToDelete.workspace_id]);
+        accessCleanup = await deleteEnvironmentData(client, action, confirmAccessCleanup);
       }));
     } catch (err) {
       if (err instanceof Response) return err;

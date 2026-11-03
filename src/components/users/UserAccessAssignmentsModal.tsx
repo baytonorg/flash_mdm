@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Loader2, X } from 'lucide-react';
 import { apiClient } from '@/api/client';
-import { useRemoveWorkspaceUser, useUpdateWorkspaceUserAccess, useUpdateWorkspaceUserRole, type WorkspaceUser } from '@/api/queries/users';
+import { effectiveMembershipAccess, type AccessGrantState } from '@/lib/membershipAccess';
+import { useRemoveWorkspaceUser, useUpdateWorkspaceUserAccess, type WorkspaceUser } from '@/api/queries/users';
 
 interface EnvironmentOption {
   id: string;
@@ -68,13 +69,13 @@ export default function UserAccessAssignmentsModal({
   onSaved,
 }: Props) {
   const updateAccess = useUpdateWorkspaceUserAccess();
-  const updateRole = useUpdateWorkspaceUserRole();
   const removeWorkspaceUser = useRemoveWorkspaceUser();
   const [accessScope, setAccessScope] = useState<'workspace' | 'scoped'>('workspace');
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] = useState<string[]>([]);
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
   const [role, setRole] = useState('member');
   const [scopedRole, setScopedRole] = useState('member');
+  const [cancelPendingInvites, setCancelPendingInvites] = useState(false);
   const [feedback, setFeedback] = useState<{ error?: string; success?: string }>({});
 
   const usersQuery = useQuery<{ users: WorkspaceUser[] }>({
@@ -136,6 +137,7 @@ export default function UserAccessAssignmentsModal({
     setRole(user.role ?? 'member');
     setScopedRole(scopedEnvironmentRole ?? user.role ?? 'member');
     setFeedback({});
+    setCancelPendingInvites(false);
   }, [open, user, environmentScopedManager, actingEnvironmentId, scopedEnvironmentRole]);
 
   if (!open) return null;
@@ -155,7 +157,7 @@ export default function UserAccessAssignmentsModal({
   }
 
   const isLoading = usersQuery.isLoading || environmentsQuery.isLoading || groupsQuery.isLoading;
-  const isPending = updateAccess.isPending || updateRole.isPending || removeWorkspaceUser.isPending;
+  const isPending = updateAccess.isPending || removeWorkspaceUser.isPending;
   const canAssignWorkspaceOwner = isSuperadmin || currentUserRole === 'owner';
   const canAssignScopedOwner = isSuperadmin || currentUserRole === 'owner' || currentEnvironmentRole === 'owner';
   const workspaceRoleOptions = canAssignWorkspaceOwner
@@ -169,6 +171,17 @@ export default function UserAccessAssignmentsModal({
   const effectiveAccessScope: 'workspace' | 'scoped' = environmentScopedManager ? 'scoped' : accessScope;
   const showWorkspaceRoleSelect = canManageWorkspaceUsers;
   const showScopedRoleSelect = environmentScopedManager || !showWorkspaceRoleSelect || effectiveAccessScope === 'scoped';
+  const beforeAccess: AccessGrantState = {
+    workspaceRole: user?.role ?? 'member', workspaceWide: user?.access_scope !== 'scoped',
+    environments: user?.environment_assignments ?? [], groups: user?.group_assignments ?? [],
+  };
+  const changedScopedRole = scopedRole !== (scopedEnvironmentRole ?? user?.role ?? 'member');
+  const afterAccess: AccessGrantState = {
+    workspaceRole: environmentScopedManager ? beforeAccess.workspaceRole : role,
+    workspaceWide: effectiveAccessScope === 'workspace',
+    environments: selectedEnvironmentIds.map(id => ({environment_id:id,role:changedScopedRole ? scopedRole : beforeAccess.environments.find(e=>e.environment_id===id)?.role ?? role})),
+    groups: selectedGroupIds.map(id => ({group_id:id,role:changedScopedRole ? scopedRole : beforeAccess.groups.find(g=>g.group_id===id)?.role ?? role})),
+  };
 
   const toggleId = (ids: string[], id: string, checked: boolean) =>
     checked ? Array.from(new Set([...ids, id])) : ids.filter((x) => x !== id);
@@ -176,13 +189,6 @@ export default function UserAccessAssignmentsModal({
   const handleSave = async () => {
     setFeedback({});
     try {
-      if (!environmentScopedManager && user && role !== user.role) {
-        await updateRole.mutateAsync({
-          workspace_id: workspaceId,
-          user_id: userId,
-          role,
-        });
-      }
       const environmentIds = environmentScopedManager && actingEnvironmentId
         ? selectedEnvironmentIds.filter((id) => id === actingEnvironmentId)
         : selectedEnvironmentIds;
@@ -191,7 +197,9 @@ export default function UserAccessAssignmentsModal({
         workspace_id: workspaceId,
         user_id: userId,
         access_scope: effectiveAccessScope,
-        scoped_role: scopedRole,
+        cancel_pending_invites: cancelPendingInvites,
+        workspace_role: !environmentScopedManager && user && role !== user.role ? role : undefined,
+        scoped_role: scopedRole !== (scopedEnvironmentRole ?? user?.role ?? 'member') ? scopedRole : undefined,
         environment_ids: environmentIds,
         group_ids: groupIds,
         acting_environment_id: environmentScopedManager ? actingEnvironmentId ?? undefined : undefined,
@@ -219,6 +227,7 @@ export default function UserAccessAssignmentsModal({
           workspace_id: workspaceId,
           user_id: userId,
           access_scope: 'scoped',
+          cancel_pending_invites: cancelPendingInvites,
           environment_ids: [],
           group_ids: [],
           acting_environment_id: actingEnvironmentId ?? undefined,
@@ -350,7 +359,7 @@ export default function UserAccessAssignmentsModal({
                         </p>
                       ) : (
                         <p className="mt-1 text-xs text-gray-500">
-                          Applied to direct environment and group grants in this workspace scope.
+                          Changing this replaces roles on the selected direct grants. Leaving it unchanged preserves their individual roles.
                         </p>
                       )}
                     </div>
@@ -456,10 +465,18 @@ export default function UserAccessAssignmentsModal({
             </div>
 
             <div className="rounded-lg border border-blue-100 bg-blue-50/50 px-3 py-2 text-xs text-blue-900">
-              Current direct assignment: {effectiveAccessScope === 'workspace'
+              Removing a direct grant can reveal inherited access. Workspace role changes preserve independent child roles. Current direct assignment: {effectiveAccessScope === 'workspace'
                 ? 'workspace-wide'
                 : `${selectedEnvironmentIds.length} environment grant(s), ${selectedGroupIds.length} group grant(s)`}
             </div>
+            <details className="rounded-lg border border-gray-200 p-3 text-xs text-gray-700">
+              <summary className="cursor-pointer font-medium">Effective access before and after saving</summary>
+              <p className="mt-2">Direct roles take precedence over inherited roles. Removing a direct grant can expose stronger parent access. This preview covers the loaded scopes; the server revalidates the final state.</p>
+              <table className="mt-2 w-full text-left"><thead><tr><th>Scope</th><th>Current access</th><th>After saving</th></tr></thead>
+                <tbody>{visibleEnvironments.map(e => <tr key={e.id}><td>{e.name}</td><td>{effectiveMembershipAccess(beforeAccess,e.id)}</td><td>{effectiveMembershipAccess(afterAccess,e.id)}</td></tr>)}
+                {visibleGroups.map(g => <tr key={g.id}><td>{g.name}</td><td>{effectiveMembershipAccess(beforeAccess,g.environment_id,g.id,visibleGroups)}</td><td>{effectiveMembershipAccess(afterAccess,g.environment_id,g.id,visibleGroups)}</td></tr>)}</tbody>
+              </table>
+            </details>
 
             <div className="rounded-lg border border-red-200 bg-red-50/60 px-3 py-3">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -482,6 +499,12 @@ export default function UserAccessAssignmentsModal({
                   {removeWorkspaceUser.isPending || updateAccess.isPending ? 'Removing…' : 'Remove User'}
                 </button>
               </div>
+              {(
+                <label className="mt-2 flex gap-2 text-xs text-red-800">
+                  <input type="checkbox" checked={cancelPendingInvites} onChange={e => setCancelPendingInvites(e.target.checked)} />
+                  Cancel affected pending invitations so they cannot restore access removed by this change.
+                </label>
+              )}
               {inheritedWorkspaceUser && (
                 <p className="mt-2 text-xs text-red-700">
                   This user is inherited from workspace scope and cannot be removed at environment scope.

@@ -1,4 +1,6 @@
 import type { Context } from '@netlify/functions';
+import { changeDeviceGroup } from './_lib/device-group-lifecycle.js';
+import { wakePolicyReconciliation } from './_lib/policy-reconcile-wake.js';
 import { queryOne, query, execute } from './_lib/db.js';
 import { requireAuth } from './_lib/auth.js';
 import { requireEnvironmentResourcePermission, requireGroupPermission } from './_lib/rbac.js';
@@ -557,23 +559,10 @@ export default async (request: Request, context: Context) => {
         if (!targetGroup) return errorResponse('Group not found in this environment', 404);
       }
 
-      await execute(
-        'UPDATE devices SET group_id = $1, updated_at = now() WHERE id = $2',
-        [newGroupId, device.id]
-      );
+      await changeDeviceGroup({auth,deviceId:device.id,groupId:newGroupId,ip:getClientIp(request)});
+      await wakePolicyReconciliation();
 
-      await logAudit({
-        user_id: auth.user.id,
-        session_id: auth.sessionId,
-        environment_id: device.environment_id,
-        action: 'device.group_changed',
-        resource_type: 'device',
-        resource_id: device.id,
-        details: { previous_group_id: device.group_id, new_group_id: newGroupId },
-        ip_address: getClientIp(request),
-      });
-
-      return jsonResponse({ message: 'Device group updated', group_id: newGroupId });
+      return jsonResponse({ message: 'Device group updated; effective policy reconciliation is queued', group_id: newGroupId, policy_reconciliation: 'queued' });
     }
 
     // Handle name update
@@ -655,6 +644,7 @@ export default async (request: Request, context: Context) => {
          policy_compliant = $11,
          last_status_report_at = now(),
          snapshot = $12,
+         applied_policy_version = COALESCE($13::bigint, applied_policy_version),
          updated_at = now()
        WHERE id = $1`,
       [
@@ -670,6 +660,7 @@ export default async (request: Request, context: Context) => {
         (fresh.managementMode as string) ?? null,
         fresh.policyCompliant === true,
         JSON.stringify(fresh),
+        fresh.appliedPolicyVersion ?? null,
       ]
     );
 

@@ -109,7 +109,7 @@ async function createEnrollmentTokenForZeroTouch(opts: {
   workspaceId: string;
   enterpriseName: string;
   projectId: string;
-  userId: string;
+  userId: string | null;
   tokenName?: string | null;
   groupId?: string | null;
   allowPersonalUsage?: string;

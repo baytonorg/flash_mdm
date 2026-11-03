@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+vi.mock('../_lib/group-lifecycle.js', () => ({ updateGroupLifecycle: vi.fn(async () => ({affected_devices:0})), deleteGroupLifecycle:vi.fn(), requireGroupCreationScope:vi.fn() }));
+vi.mock('../_lib/policy-reconcile-wake.js', () => ({wakePolicyReconciliation:vi.fn()}));
+import {updateGroupLifecycle} from '../_lib/group-lifecycle.js';
 
 vi.mock('../_lib/db.js', () => ({
   query: vi.fn(),
@@ -118,20 +121,9 @@ describe('group-crud reparenting', () => {
       'group',
       'write'
     );
-    expect(mockTransaction).toHaveBeenCalledTimes(1);
-    expect(client.query).toHaveBeenCalledTimes(3);
-    expect(vi.mocked(client.query).mock.calls[0]?.[0]).toContain('UPDATE groups SET');
-    expect(vi.mocked(client.query).mock.calls[1]?.[0]).toContain('DELETE FROM group_closures');
-    expect(vi.mocked(client.query).mock.calls[2]?.[0]).toContain('INSERT INTO group_closures');
+    expect(updateGroupLifecycle).toHaveBeenCalledWith(expect.objectContaining({groupId:'88888888-8888-4888-8888-888888888888',parentId:'77777777-7777-4777-8777-777777777777',name:'Moved Group'}));
     expect(mockExecute).not.toHaveBeenCalled();
-    expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({
-      action: 'group.updated',
-      details: expect.objectContaining({
-        parent_changed: true,
-        previous_parent_group_id: null,
-        new_parent_group_id: '77777777-7777-4777-8777-777777777777',
-      }),
-    }));
+    expect(mockLogAudit).not.toHaveBeenCalled(); // Service owns the transactional audit.
   });
 
   it('supports moving a group to root (null parent)', async () => {
@@ -147,9 +139,7 @@ describe('group-crud reparenting', () => {
     );
 
     expect(res.status).toBe(200);
-    expect(mockTransaction).toHaveBeenCalledTimes(1);
-    expect(client.query).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(client.query).mock.calls[1]?.[0]).toContain('DELETE FROM group_closures');
+    expect(updateGroupLifecycle).toHaveBeenCalledWith(expect.objectContaining({parentId:null}));
   });
 
   it('rejects moves that would create a cycle', async () => {

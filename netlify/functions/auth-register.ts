@@ -1,3 +1,6 @@
+import { applyInviteOffer } from './_lib/invite-membership.js';
+import { withSignupLinkReferenceLock } from './_lib/signup-link-reference-lock.js';
+import { lockMembershipWorkspaces } from './_lib/membership-lifecycle.js';
 import type { Context } from '@netlify/functions';
 import { queryOne, execute, transaction } from './_lib/db.js';
 import { generateToken, hashToken } from './_lib/crypto.js';
@@ -10,9 +13,7 @@ import { getPlatformSettings } from './_lib/platform-settings.js';
 import { setSessionCookie, SESSION_MAX_AGE_MILLISECONDS } from './_lib/auth.js';
 import { MIN_PASSWORD_LENGTH, MAX_PASSWORD_LENGTH } from './_lib/password-policy.js';
 import {
-  upsertWorkspaceMembershipFromInvite,
   getInviteForAccept,
-  parseJsonStringArray,
   getInviteTypeFromPermissions as getInviteTypeFromPermissionsShared,
 } from './workspace-invite.js';
 
@@ -184,12 +185,19 @@ export default async (request: Request, _context: Context) => {
   }
 
   // Create everything in a transaction
-  await transaction(async (client) => {
+  const createAccount = () => transaction(async (client) => {
     // Re-check first-user status inside the transaction with an advisory lock
     // to prevent race conditions where two concurrent registrations both see count=0
     await client.query('SELECT pg_advisory_xact_lock(42)');
     const recheck = await client.query<{ count: string }>('SELECT COUNT(*) as count FROM users');
     const confirmedFirstUser = parseInt(recheck.rows[0]?.count ?? '0', 10) === 0;
+    if (resolvedSignupLink) {
+      const current = (await client.query('SELECT * FROM signup_links WHERE id = $1 AND enabled = true FOR SHARE', [resolvedSignupLink.id])).rows[0];
+      if (!current || Object.entries(resolvedSignupLink).some(([key, value]) => JSON.stringify(current[key]) !== JSON.stringify(value))) throw errorResponse('Signup link changed. Reload the link and try again.', 409);
+      const scope = current.scope_type === 'workspace' ? current.scope_id : (await client.query('SELECT workspace_id FROM environments WHERE id = $1', [current.scope_id])).rows[0]?.workspace_id;
+      if (!scope) throw errorResponse('Signup scope no longer exists', 409);
+      await lockMembershipWorkspaces(client, [scope]);
+    }
 
     // Create user
     const userId = randomUUID();
@@ -200,45 +208,9 @@ export default async (request: Request, _context: Context) => {
     );
 
     if (isWorkspaceInviteOnboardingRegistration) {
-      if (fullInvite && fullInvite.status === 'pending' && fullInvite.workspace_id) {
-        const envIds = parseJsonStringArray(fullInvite.environment_ids);
-        const groupIds = parseJsonStringArray(fullInvite.group_ids);
-        const accessScope = envIds.length > 0 || groupIds.length > 0 ? 'scoped' : 'workspace';
-
-        // Add workspace membership
-        await upsertWorkspaceMembershipFromInvite(client, {
-          workspaceId: fullInvite.workspace_id,
-          userId,
-          role: fullInvite.role,
-          accessScope: accessScope as 'workspace' | 'scoped',
-        });
-
-        // Add environment memberships
-        for (const envId of envIds) {
-          await client.query(
-            `INSERT INTO environment_memberships (environment_id, user_id, role)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (environment_id, user_id) DO UPDATE SET role = EXCLUDED.role`,
-            [envId, userId, fullInvite.role]
-          );
-        }
-
-        // Add group memberships
-        for (const gId of groupIds) {
-          await client.query(
-            `INSERT INTO group_memberships (group_id, user_id, role)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (group_id, user_id) DO UPDATE SET role = EXCLUDED.role`,
-            [gId, userId, fullInvite.role]
-          );
-        }
-
-        // Mark invite as accepted
-        await client.query(
-          `UPDATE user_invites SET status = 'accepted', accepted_at = now() WHERE id = $1`,
-          [fullInvite.id]
-        );
-      }
+      if (!fullInvite) throw errorResponse('Invitation is no longer available', 409);
+      const inviteToken = redirectPath!.split('/invite/')[1]?.split('/')[0] ?? '';
+      await applyInviteOffer(client, hashToken(inviteToken), userId, email);
 
       // Audit
       await client.query(
@@ -279,8 +251,8 @@ export default async (request: Request, _context: Context) => {
         if (resolvedSignupLink.allow_environment_creation) {
           // Flag user for post-login environment setup
           await client.query(
-            `UPDATE users SET metadata = COALESCE(metadata, '{}'::jsonb) || '{"needs_environment_setup": true}'::jsonb WHERE id = $1`,
-            [userId]
+            `UPDATE users SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('needs_environment_setup', true, 'environment_setup_workspace_id', $2::text) WHERE id = $1`,
+            [userId, resolvedSignupLink.scope_id]
           );
         } else {
           // Auto-assign to environments
@@ -443,6 +415,8 @@ export default async (request: Request, _context: Context) => {
        JSON.stringify({ is_superadmin: confirmedFirstUser, workspace_name: workspaceName }), getClientIp(request)]
     );
   });
+
+  await (resolvedSignupLink ? withSignupLinkReferenceLock(createAccount) : createAccount());
 
   // For workspace invite onboarding: create session directly and skip magic link
   if (isWorkspaceInviteOnboardingRegistration) {

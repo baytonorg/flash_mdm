@@ -103,7 +103,14 @@ export const useContextStore = create<ContextState>((set, get) => ({
       const refreshedActiveWorkspace = currentActiveWorkspaceId
         ? workspaces.find((w) => w.id === currentActiveWorkspaceId) ?? null
         : null;
-      set({ workspaces, activeWorkspace: refreshedActiveWorkspace ?? get().activeWorkspace, isLoading: false });
+      set({ workspaces, activeWorkspace: refreshedActiveWorkspace, isLoading: false,
+        ...(!refreshedActiveWorkspace && currentActiveWorkspaceId ? { environments: [], activeEnvironment: null, groups: [], activeGroup: null } : {}) });
+      if (!workspaces.length) saveContext();
+      if (refreshedActiveWorkspace) {
+        await get().fetchEnvironments(refreshedActiveWorkspace.id);
+        const environment = get().activeEnvironment;
+        if (environment) await get().fetchGroups(environment.id);
+      }
 
       // Auto-select: restore saved workspace or pick the first one
       if (workspaces.length > 0 && !get().activeWorkspace) {
@@ -150,6 +157,7 @@ export const useContextStore = create<ContextState>((set, get) => ({
   fetchEnvironments: async (workspaceId: string) => {
     try {
       const data = await apiClient.get<{ environments: Environment[] }>(`/api/environments/list?workspace_id=${workspaceId}`);
+      if (get().activeWorkspace && get().activeWorkspace?.id !== workspaceId) return;
       const environments = data.environments;
       const currentActiveEnvironmentId = get().activeEnvironment?.id;
       const refreshedActiveEnvironment = currentActiveEnvironmentId
@@ -160,7 +168,9 @@ export const useContextStore = create<ContextState>((set, get) => ({
         activeEnvironment: currentActiveEnvironmentId
           ? refreshedActiveEnvironment
           : get().activeEnvironment,
+        ...(currentActiveEnvironmentId && !refreshedActiveEnvironment ? { groups: [], activeGroup: null } : {}),
       });
+      if (currentActiveEnvironmentId && !refreshedActiveEnvironment) saveContext(get().activeWorkspace?.id);
     } catch {
       // ignore
     }

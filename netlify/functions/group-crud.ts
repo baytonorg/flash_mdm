@@ -1,4 +1,7 @@
 import type { Context } from '@netlify/functions';
+import { updateGroupLifecycle, deleteGroupLifecycle, requireGroupCreationScope } from './_lib/group-lifecycle.js';
+import { wakePolicyReconciliation } from './_lib/policy-reconcile-wake.js';
+import { lockMembershipWorkspaces } from './_lib/membership-lifecycle.js';
 import { query, queryOne, execute, transaction } from './_lib/db.js';
 import { requireAuth } from './_lib/auth.js';
 import {
@@ -6,7 +9,6 @@ import {
   requireEnvironmentAccessScopeForResourcePermission,
 } from './_lib/rbac.js';
 import { logAudit } from './_lib/audit.js';
-import { getPolicyAmapiContext, assignPolicyToDeviceWithDerivative } from './_lib/policy-derivatives.js';
 import { jsonResponse, errorResponse, parseJsonBody, getClientIp, getSearchParams, isValidUuid } from './_lib/helpers.js';
 
 /**
@@ -152,7 +154,7 @@ export default async (request: Request, context: Context) => {
           await performGroupDelete(auth, request, rootId);
           results.push({ id: rootId, ok: true });
         } catch (err) {
-          results.push({ id: rootId, ok: false, error: err instanceof Error ? err.message : 'Unknown error' });
+          results.push({ id: rootId, ok: false, error: await groupOperationError(err) });
         }
       }
 
@@ -192,7 +194,7 @@ export default async (request: Request, context: Context) => {
           });
           results.push({ id: groupId, ok: true });
         } catch (err) {
-          results.push({ id: groupId, ok: false, error: err instanceof Error ? err.message : 'Unknown error' });
+          results.push({ id: groupId, ok: false, error: await groupOperationError(err) });
         }
       }
 
@@ -267,6 +269,10 @@ export default async (request: Request, context: Context) => {
 
     await transaction(async (client) => {
       // Create group
+      const workspace = (await client.query('SELECT workspace_id FROM environments WHERE id = $1', [body.environment_id])).rows[0];
+      if (!workspace) throw errorResponse('Environment no longer exists', 409);
+      await lockMembershipWorkspaces(client, [workspace.workspace_id]);
+      await requireGroupCreationScope(client,auth,body.environment_id,parentGroupId);
       await client.query(
         `INSERT INTO groups (id, environment_id, parent_group_id, name, description)
          VALUES ($1, $2, $3, $4, $5)`,
@@ -295,15 +301,15 @@ export default async (request: Request, context: Context) => {
         }
       }
 
-      // Add creator to group
-      await client.query(
+      // API keys are principals, not human creator memberships.
+      if (auth.authType === 'session') await client.query(
         `INSERT INTO group_memberships (group_id, user_id, role, permissions)
-         VALUES ($1, $2, 'admin', $3)`,
+         SELECT $1::uuid, $2::uuid, 'admin', $3::jsonb WHERE EXISTS (
+           SELECT 1 FROM workspace_memberships wm JOIN environments e ON e.workspace_id = wm.workspace_id
+           JOIN groups g ON g.environment_id = e.id WHERE g.id = $1 AND wm.user_id = $2)`,
         [groupId, auth.user.id, JSON.stringify({ devices: true, policies: true, apps: true, reports: true, settings: true, users: true })]
       );
-    });
-
-    await logAudit({
+      await logAudit({
       environment_id: body.environment_id,
       user_id: auth.user.id,
       action: 'group.created',
@@ -311,6 +317,7 @@ export default async (request: Request, context: Context) => {
       resource_id: groupId,
       details: { name: body.name, parent_group_id: parentGroupId },
       ip_address: getClientIp(request),
+      },client);
     });
 
     return jsonResponse({
@@ -378,67 +385,8 @@ export default async (request: Request, context: Context) => {
       }
     }
 
-    const updates: string[] = [];
-    const values: unknown[] = [];
-    let idx = 1;
-
-    if (body.name) { updates.push(`name = $${idx++}`); values.push(body.name); }
-    if (body.description !== undefined) { updates.push(`description = $${idx++}`); values.push(body.description); }
-    if (parentChanged) { updates.push(`parent_group_id = $${idx++}`); values.push(requestedParentId); }
-    updates.push('updated_at = now()');
-
-    values.push(body.id);
-
-    if (parentChanged) {
-      await transaction(async (client) => {
-        await client.query(`UPDATE groups SET ${updates.join(', ')} WHERE id = $${idx}`, values);
-
-        // Remove old ancestor -> subtree paths (but keep internal subtree closure rows).
-        await client.query(
-          `DELETE FROM group_closures gc
-           USING group_closures old_anc, group_closures sub
-           WHERE old_anc.descendant_id = $1
-             AND old_anc.ancestor_id <> $1
-             AND sub.ancestor_id = $1
-             AND gc.ancestor_id = old_anc.ancestor_id
-             AND gc.descendant_id = sub.descendant_id`,
-          [body.id]
-        );
-
-        // Add new ancestor -> subtree paths for the new parent chain.
-        if (requestedParentId) {
-          await client.query(
-            `INSERT INTO group_closures (ancestor_id, descendant_id, depth)
-             SELECT new_anc.ancestor_id, sub.descendant_id, new_anc.depth + sub.depth + 1
-             FROM group_closures new_anc
-             CROSS JOIN group_closures sub
-             WHERE new_anc.descendant_id = $2
-               AND sub.ancestor_id = $1
-             ON CONFLICT (ancestor_id, descendant_id)
-             DO UPDATE SET depth = EXCLUDED.depth`,
-            [body.id, requestedParentId]
-          );
-        }
-      });
-    } else {
-      await execute(`UPDATE groups SET ${updates.join(', ')} WHERE id = $${idx}`, values);
-    }
-
-    await logAudit({
-      environment_id: groupToUpdate.environment_id,
-      user_id: auth.user.id,
-      action: 'group.updated',
-      resource_type: 'group',
-      resource_id: body.id,
-      details: {
-        name_changed: body.name !== undefined,
-        description_changed: body.description !== undefined,
-        parent_changed: parentChanged,
-        previous_parent_group_id: groupToUpdate.parent_group_id,
-        new_parent_group_id: parentChanged ? requestedParentId : groupToUpdate.parent_group_id,
-      },
-      ip_address: getClientIp(request),
-    });
+    const result = await updateGroupLifecycle({auth,groupId:body.id,parentId:requestedParentId,name:body.name,description:body.description,ip:getClientIp(request)});
+    if(result.affected_devices)await wakePolicyReconciliation();
 
     return jsonResponse({ message: 'Group updated' });
   }
@@ -507,71 +455,8 @@ async function performGroupMove(
     if (wouldCreateCycle) throw new Error('Cannot move a group under one of its descendants');
   }
 
-  const parentChanged = targetParentId !== groupToUpdate.parent_group_id;
-  if (parentChanged) {
-    await transaction(async (client) => {
-      await client.query(
-        'UPDATE groups SET parent_group_id = $1, updated_at = now() WHERE id = $2',
-        [targetParentId, groupId]
-      );
-
-      await client.query(
-        `DELETE FROM group_closures gc
-         USING group_closures old_anc, group_closures sub
-         WHERE old_anc.descendant_id = $1
-           AND old_anc.ancestor_id <> $1
-           AND sub.ancestor_id = $1
-           AND gc.ancestor_id = old_anc.ancestor_id
-           AND gc.descendant_id = sub.descendant_id`,
-        [groupId]
-      );
-
-      if (targetParentId) {
-        await client.query(
-          `INSERT INTO group_closures (ancestor_id, descendant_id, depth)
-           SELECT new_anc.ancestor_id, sub.descendant_id, new_anc.depth + sub.depth + 1
-           FROM group_closures new_anc
-           CROSS JOIN group_closures sub
-           WHERE new_anc.descendant_id = $2
-             AND sub.ancestor_id = $1
-           ON CONFLICT (ancestor_id, descendant_id)
-           DO UPDATE SET depth = EXCLUDED.depth`,
-          [groupId, targetParentId]
-        );
-      }
-    });
-  }
-
-  if (clearDirectAssignments) {
-    await execute(
-      "DELETE FROM policy_assignments WHERE scope_type = 'group' AND scope_id = $1",
-      [groupId]
-    );
-    await execute(
-      "DELETE FROM app_deployments WHERE scope_type = 'group' AND scope_id = $1",
-      [groupId]
-    );
-    await execute(
-      "DELETE FROM network_deployments WHERE scope_type = 'group' AND scope_id = $1",
-      [groupId]
-    );
-  }
-
-  await logAudit({
-    environment_id: groupToUpdate.environment_id,
-    user_id: auth.user.id,
-    action: 'group.updated',
-    resource_type: 'group',
-    resource_id: groupId,
-    details: {
-      parent_changed: parentChanged,
-      previous_parent_group_id: groupToUpdate.parent_group_id,
-      new_parent_group_id: targetParentId,
-      clear_direct_assignments: clearDirectAssignments,
-      source: 'bulk',
-    },
-    ip_address: getClientIp(request),
-  });
+  const result=await updateGroupLifecycle({auth,groupId,parentId:targetParentId,clearDirectAssignments,ip:getClientIp(request)});
+  if(result.affected_devices)await wakePolicyReconciliation();
 }
 
 async function performGroupDelete(
@@ -584,91 +469,12 @@ async function performGroupDelete(
   if (!groupToDelete) throw new Error('Group not found');
   await requireEnvironmentResourcePermission(auth, groupToDelete.environment_id, 'group', 'delete');
 
-  const descendants = await query<{ descendant_id: string }>(
-    'SELECT descendant_id FROM group_closures WHERE ancestor_id = $1',
-    [groupId]
-  );
-  const ids = descendants.map((d) => d.descendant_id);
-  if (ids.length > 0) {
-    const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
-    const affectedDevices = await query<{ id: string; amapi_name: string }>(
-      `SELECT id, amapi_name FROM devices WHERE group_id IN (${placeholders}) AND deleted_at IS NULL`,
-      ids
-    );
+  const result=await deleteGroupLifecycle({auth,groupId,ip:getClientIp(request)});
+  if(result.affected_devices)await wakePolicyReconciliation();
+}
 
-    await execute(
-      `UPDATE devices SET group_id = NULL, updated_at = now() WHERE group_id IN (${placeholders}) AND deleted_at IS NULL`,
-      ids
-    );
-    await execute(
-      `DELETE FROM app_deployments WHERE scope_type = 'group' AND scope_id IN (${placeholders})`,
-      ids
-    );
-    await execute(
-      `DELETE FROM network_deployments WHERE scope_type = 'group' AND scope_id IN (${placeholders})`,
-      ids
-    );
-    await execute(
-      `DELETE FROM policy_assignments WHERE scope_type = 'group' AND scope_id IN (${placeholders})`,
-      ids
-    );
-    await execute(
-      `DELETE FROM policy_derivatives WHERE scope_type = 'group' AND scope_id IN (${placeholders})`,
-      ids
-    );
-    await execute(`DELETE FROM groups WHERE id IN (${placeholders})`, ids);
-
-    const amapiContext = await getPolicyAmapiContext(groupToDelete.environment_id);
-    if (amapiContext && affectedDevices.length > 0) {
-      for (const device of affectedDevices) {
-        try {
-          let resolvedPolicyId: string | null = null;
-          const da = await queryOne<{ policy_id: string }>(
-            "SELECT policy_id FROM policy_assignments WHERE scope_type = 'device' AND scope_id = $1",
-            [device.id]
-          );
-          resolvedPolicyId = da?.policy_id ?? null;
-          if (!resolvedPolicyId) {
-            const ea = await queryOne<{ policy_id: string }>(
-              "SELECT policy_id FROM policy_assignments WHERE scope_type = 'environment' AND scope_id = $1",
-              [groupToDelete.environment_id]
-            );
-            resolvedPolicyId = ea?.policy_id ?? null;
-          }
-          if (resolvedPolicyId) {
-            const policyRow = await queryOne<{ config: Record<string, unknown> | string | null }>(
-              'SELECT config FROM policies WHERE id = $1',
-              [resolvedPolicyId]
-            );
-            const rawConfig = typeof policyRow?.config === 'string'
-              ? JSON.parse(policyRow.config)
-              : (policyRow?.config ?? {});
-            const { openNetworkConfiguration: _o, deviceConnectivityManagement: _d, applications: _a, ...cleanBase } = rawConfig as Record<string, unknown>;
-            await assignPolicyToDeviceWithDerivative({
-              policyId: resolvedPolicyId,
-              environmentId: groupToDelete.environment_id,
-              deviceId: device.id,
-              deviceAmapiName: device.amapi_name,
-              amapiContext,
-              baseConfig: cleanBase,
-            });
-          }
-        } catch (err) {
-          console.warn('group-crud: device re-sync after group delete failed (non-fatal)', {
-            device_id: device.id,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-    }
-  }
-
-  await logAudit({
-    user_id: auth.user.id,
-    action: 'group.deleted',
-    resource_type: 'group',
-    resource_id: groupId,
-    details: { source: 'bulk_or_single' },
-    ip_address: getClientIp(request),
-  });
+async function groupOperationError(error:unknown) {
+  if(error instanceof Response) {try {return (await error.json()).error??'Group operation was rejected';}catch{return 'Group operation was rejected';}}
+  if(error&&typeof error==='object'&&'code' in error)return 'Group operation failed; no local changes were committed. Review related records.';
+  return error instanceof Error?error.message:'Group operation failed';
 }
