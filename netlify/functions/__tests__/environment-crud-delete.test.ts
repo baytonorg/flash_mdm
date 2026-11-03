@@ -70,7 +70,7 @@ describe('environment-crud delete hardening', () => {
 
     const client = {
       query: vi.fn().mockImplementation(async (sql: string) => {
-        if (sql.startsWith('UPDATE audit_log SET environment_id')) throw { code: '42P01' };
+        if (sql.startsWith('UPDATE audit_log SET details') && sql.includes('deleted_environment_id')) throw { code: '42P01' };
         if (sql.startsWith('DELETE FROM pubsub_events')) throw { code: '42703' };
         return { rows: [], rowCount: 1 };
       }),

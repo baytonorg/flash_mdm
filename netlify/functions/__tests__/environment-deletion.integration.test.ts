@@ -149,6 +149,7 @@ describe.skipIf(!connectionString)('deletion against disposable PostgreSQL with 
     await f.q('UPDATE audit_log SET device_id=$1 WHERE environment_id=$2', [f.device, f.env]);
     expect((await remove(f.env)).status).toBe(200);
     expect((await f.q('SELECT environment_id, device_id FROM audit_log WHERE workspace_id=$1', [f.ws])).rows).toEqual([{ environment_id: null, device_id: null }]);
+    expect((await f.q('SELECT details FROM audit_log WHERE workspace_id=$1', [f.ws])).rows[0].details).toEqual({ deleted_environment_id: f.env, deleted_device_id: f.device });
     expect((await f.q('SELECT * FROM environments WHERE id=$1', [f.env])).rowCount).toBe(0);
   });
 

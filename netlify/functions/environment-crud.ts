@@ -465,8 +465,10 @@ export default async (request: Request, _context: Context) => {
         // Legacy tables from early schema versions do not cascade on environment delete.
         // Clear those references explicitly to avoid FK violations for valid deletes.
         const cleanupStatements = [
-          'UPDATE audit_log SET environment_id = NULL WHERE environment_id = $1',
-          'UPDATE audit_log SET device_id = NULL WHERE device_id IN (SELECT id FROM devices WHERE environment_id = $1)',
+          `UPDATE audit_log SET details = COALESCE(details, '{}'::jsonb) || jsonb_build_object('deleted_environment_id', environment_id),
+             environment_id = NULL WHERE environment_id = $1`,
+          `UPDATE audit_log SET details = COALESCE(details, '{}'::jsonb) || jsonb_build_object('deleted_device_id', device_id),
+             device_id = NULL WHERE device_id IN (SELECT id FROM devices WHERE environment_id = $1)`,
           'DELETE FROM pubsub_events WHERE environment_id = $1',
           'DELETE FROM job_queue WHERE environment_id = $1',
         ];
