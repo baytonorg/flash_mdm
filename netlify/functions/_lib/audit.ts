@@ -25,7 +25,7 @@ type PgLikeError = {
   table?: string;
 };
 
-function sanitizeAuditValue(value: unknown): unknown {
+export function sanitizeAuditValue(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(sanitizeAuditValue);
   }

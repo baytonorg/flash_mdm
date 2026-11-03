@@ -3,7 +3,7 @@ import { query, queryOne } from './_lib/db.js';
 import { requireAuth } from './_lib/auth.js';
 import { requireEnvironmentResourcePermission } from './_lib/rbac.js';
 import { jsonResponse, errorResponse, getSearchParams } from './_lib/helpers.js';
-import { _sanitizeAuditValue } from './_lib/audit.js';
+import { sanitizeAuditValue } from './_lib/audit.js';
 
 export default async (request: Request, context: Context) => {
   try {
@@ -147,7 +147,7 @@ export default async (request: Request, context: Context) => {
 
     return jsonResponse({
       entries: params.get('export') === 'true'
-        ? entries.map(({ ip_address: _ip, details, ...entry }) => ({ ...entry, details: _sanitizeAuditValue(details) }))
+        ? entries.map(({ ip_address: _ip, details, ...entry }) => ({ ...entry, details: sanitizeAuditValue(details) }))
         : entries,
       total,
       page,

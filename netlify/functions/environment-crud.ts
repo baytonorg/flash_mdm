@@ -431,7 +431,7 @@ export default async (request: Request, _context: Context) => {
     await requireEnvironmentPermission(auth, action, 'delete');
 
     const confirmAccessCleanup = getSearchParams(request).get('confirm_access_cleanup') === 'true';
-    let accessCleanup = { api_keys_deleted: 0, signup_links_deleted: 0, shared_links_updated: 0 };
+    let accessCleanup = { keys_deleted: 0, signup_links_deleted: 0, shared_links_updated: 0 };
     try {
       await transaction(async (client) => {
         // Lock the parent before checking credentials so new FK-backed keys
@@ -460,7 +460,7 @@ export default async (request: Request, _context: Context) => {
             updated_at = now()
             WHERE auto_assign_environment_ids @> jsonb_build_array($1::text)
                OR EXISTS (SELECT 1 FROM groups g WHERE g.environment_id = $1::uuid AND signup_links.auto_assign_group_ids @> jsonb_build_array(g.id::text))`, [action]);
-          accessCleanup = { api_keys_deleted: keys.rowCount ?? 0, signup_links_deleted: links.rowCount ?? 0, shared_links_updated: shared.rowCount ?? 0 };
+          accessCleanup = { keys_deleted: keys.rowCount ?? 0, signup_links_deleted: links.rowCount ?? 0, shared_links_updated: shared.rowCount ?? 0 };
         }
         // Legacy tables from early schema versions do not cascade on environment delete.
         // Clear those references explicitly to avoid FK violations for valid deletes.
