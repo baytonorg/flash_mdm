@@ -6,6 +6,7 @@ vi.mock('../_lib/db.js', () => ({
   query: vi.fn(),
   queryOne: vi.fn(),
   execute: vi.fn(),
+  withClient: vi.fn(async (fn: (client: { query: typeof mockClientQuery }) => Promise<unknown>) => fn({ query: mockClientQuery })),
   transaction: vi.fn(async (fn: (client: { query: typeof mockClientQuery }) => Promise<unknown>) => fn({ query: mockClientQuery })),
 }));
 
@@ -27,12 +28,13 @@ vi.mock('../_lib/audit.js', () => ({
   logAudit: vi.fn(),
 }));
 
-import { queryOne, execute } from '../_lib/db.js';
+import { query, queryOne, execute } from '../_lib/db.js';
 import { requireAuth } from '../_lib/auth.js';
 import { requireWorkspaceResourcePermission, requireEnvironmentResourcePermission } from '../_lib/rbac.js';
 import handler from '../signup-link-crud.ts';
 
 const mockQueryOne = vi.mocked(queryOne);
+const mockQuery = vi.mocked(query);
 const mockExecute = vi.mocked(execute);
 const mockRequireAuth = vi.mocked(requireAuth);
 const mockRequireWorkspaceResourcePermission = vi.mocked(requireWorkspaceResourcePermission);
@@ -50,7 +52,11 @@ function makeCreateRequest(body: Record<string, unknown>): Request {
 
 beforeEach(() => {
   mockClientQuery.mockReset();
+  mockClientQuery.mockImplementation(async (sql: string) => ({
+    rows: String(sql).includes('pg_try_advisory_lock') ? [{ locked: true }] : [{ unlocked: true }],
+  }));
   mockQueryOne.mockReset();
+  mockQuery.mockReset();
   mockExecute.mockReset();
   mockRequireAuth.mockReset();
   mockRequireWorkspaceResourcePermission.mockReset();
@@ -62,9 +68,41 @@ beforeEach(() => {
   } as never);
   mockRequireWorkspaceResourcePermission.mockResolvedValue('admin' as never);
   mockRequireEnvironmentResourcePermission.mockResolvedValue('admin' as never);
+  mockQuery.mockResolvedValue([{ id: 'scope_1' }] as never);
 });
 
 describe('signup-link-crud default_role validation', () => {
+  it('does not acquire the reference lock for an unauthenticated write', async () => {
+    mockRequireAuth.mockRejectedValueOnce(new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 }));
+
+    const res = await handler(
+      makeCreateRequest({ scope_type: 'environment', scope_id: 'env_1', default_role: 'viewer' }),
+      {} as never
+    );
+
+    expect(res.status).toBe(401);
+    expect(mockClientQuery).not.toHaveBeenCalled();
+  });
+
+  it('retries without holding a pool client when another reference writer has the lock', async () => {
+    mockClientQuery
+      .mockResolvedValueOnce({ rows: [{ locked: false }] })
+      .mockResolvedValueOnce({ rows: [{ locked: true }] })
+      .mockResolvedValueOnce({ rows: [{ unlocked: true }] });
+
+    const res = await handler(
+      makeCreateRequest({ scope_type: 'environment', scope_id: 'env_1', default_role: 'viewer' }),
+      {} as never
+    );
+
+    expect(res.status).toBe(201);
+    expect(mockClientQuery.mock.calls.map(([sql]) => String(sql))).toEqual([
+      expect.stringContaining('pg_try_advisory_lock'),
+      expect.stringContaining('pg_try_advisory_lock'),
+      expect.stringContaining('pg_advisory_unlock'),
+    ]);
+  });
+
   it('accepts admin default role on workspace link create', async () => {
     mockQueryOne.mockResolvedValueOnce(null as never); // no slug collision
 
@@ -81,6 +119,31 @@ describe('signup-link-crud default_role validation', () => {
 
     expect(res.status).toBe(201);
     expect(mockExecute).toHaveBeenCalled();
+    expect(mockClientQuery.mock.calls.map(([sql]) => String(sql))).toEqual([
+      expect.stringContaining('pg_try_advisory_lock'),
+      expect.stringContaining('pg_advisory_unlock'),
+    ]);
+  });
+
+  it('rejects a create whose scope disappeared while waiting for the reference lock', async () => {
+    mockQuery.mockResolvedValueOnce([] as never);
+
+    const res = await handler(
+      makeCreateRequest({
+        scope_type: 'environment',
+        scope_id: 'env_1',
+        default_role: 'viewer',
+      }),
+      {} as never
+    );
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toEqual({ error: 'Signup link scope no longer exists' });
+    expect(mockExecute).not.toHaveBeenCalled();
+    expect(mockClientQuery.mock.calls.map(([sql]) => String(sql))).toEqual([
+      expect.stringContaining('pg_try_advisory_lock'),
+      expect.stringContaining('pg_advisory_unlock'),
+    ]);
   });
 
   it('accepts admin default role on environment link create', async () => {

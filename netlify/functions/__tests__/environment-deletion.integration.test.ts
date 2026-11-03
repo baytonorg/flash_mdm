@@ -9,6 +9,10 @@ vi.mock('../_lib/db.js', () => ({
   query: async (sql: string, values: unknown[]) => (await database.pool!.query(sql, values)).rows,
   queryOne: async (sql: string, values: unknown[]) => (await database.pool!.query(sql, values)).rows[0] ?? null,
   execute: async (sql: string, values: unknown[]) => database.pool!.query(sql, values),
+  withClient: async (fn: (client: pg.PoolClient) => Promise<unknown>) => {
+    const client = await database.pool!.connect();
+    try { return await fn(client); } finally { client.release(); }
+  },
   transaction: async (fn: (client: pg.PoolClient) => Promise<unknown>) => {
     const client = await database.pool!.connect();
     try {
@@ -36,6 +40,7 @@ import { requireEnvironmentPermission, requireEnvironmentResourcePermission } fr
 import { amapiCall, getAmapiErrorHttpStatus } from '../_lib/amapi.js';
 import bind from '../environment-bind.ts';
 import crud from '../environment-crud.ts';
+import signupLinks from '../signup-link-crud.ts';
 
 const connectionString = process.env.FLASH_DELETION_TEST_URL;
 if (connectionString) {
@@ -212,6 +217,33 @@ describe.skipIf(!connectionString)('deletion against disposable PostgreSQL with 
     } finally {
       await f.q('DROP TRIGGER fixture_reject_delete ON environments');
       await f.q('DROP FUNCTION fixture_reject_delete()');
+    }
+  });
+
+  it('does not allow a signup-link write to land after environment cleanup has passed', async () => {
+    const f = await fixture();
+    await f.q(`CREATE FUNCTION fixture_pause_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.5); RETURN OLD; END $$`);
+    await f.q('CREATE TRIGGER fixture_pause_delete BEFORE DELETE ON environments FOR EACH ROW EXECUTE FUNCTION fixture_pause_delete()');
+    try {
+      const deletion = remove(f.env, true);
+      await expect.poll(async () => {
+        const result = await f.q("SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname=current_database() AND wait_event='PgSleep'");
+        return result.rows[0]?.count ?? 0;
+      }).toBeGreaterThan(0);
+
+      const createLink = signupLinks(new Request('http://localhost/api/signup-links', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scope_type: 'environment', scope_id: f.env, default_role: 'viewer' }),
+      }), {} as never);
+
+      expect((await deletion).status).toBe(200);
+      const linkResponse = await createLink;
+      expect(linkResponse.status).toBe(409);
+      expect(await linkResponse.json()).toEqual({ error: 'Signup link scope no longer exists' });
+      expect((await f.q('SELECT * FROM signup_links WHERE scope_id=$1', [f.env])).rowCount).toBe(0);
+    } finally {
+      await f.q('DROP FUNCTION IF EXISTS fixture_pause_delete() CASCADE');
     }
   });
 });
