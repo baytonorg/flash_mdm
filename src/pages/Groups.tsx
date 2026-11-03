@@ -197,10 +197,10 @@ function GroupModal({ open, onClose, groups, editingGroup, environmentId }: Grou
                 </option>
               ))}
             </select>
-            {isEditing && parentChanged && descendantCount > 0 && (
+            {isEditing && parentChanged && (
               <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                This move will reparent the entire subtree ({descendantCount}{' '}
-                {descendantCount === 1 ? 'child group' : 'child groups'}).
+                This move includes {descendantCount} {descendantCount === 1 ? 'child group' : 'child groups'}.
+                Direct membership grants stay with their groups. Inherited access, policies, apps and networks follow the new ancestry, which can increase or reduce access. Device policy reconciliation is queued after the local move.
               </div>
             )}
           </div>
@@ -527,6 +527,7 @@ export default function Groups() {
             <p className="mb-3 text-sm text-gray-600">
               Move {bulkSelection.selectedCount} selected group(s) to a new parent.
             </p>
+            <p className="mb-3 text-sm text-gray-600">Each selected subtree moves with its direct membership grants. Inherited access and device configuration follow the new ancestry, which can increase or reduce access. Device policy reconciliation runs in the background. Clearing direct assignments removes the selected groups' policy, app and network assignments, while retaining their membership grants.</p>
             <label className="mb-1 block text-sm font-medium text-gray-700">Target Parent Group</label>
             <select
               value={bulkMoveParentId}

@@ -388,7 +388,7 @@ export default async (request: Request, context: Context) => {
     const result = await updateGroupLifecycle({auth,groupId:body.id,parentId:requestedParentId,name:body.name,description:body.description,ip:getClientIp(request)});
     if(result.affected_devices)await wakePolicyReconciliation();
 
-    return jsonResponse({ message: 'Group updated' });
+    return jsonResponse({ message: 'Group updated', policy_reconciliation: result.affected_devices ? 'queued' : 'not_required', affected_devices: result.affected_devices });
   }
 
   // DELETE /api/groups/:id
