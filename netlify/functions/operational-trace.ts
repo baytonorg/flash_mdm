@@ -65,7 +65,7 @@ export default async function handler(request: Request, _context: Context) {
       } catch {
         return errorResponse("Invalid activity batch");
       }
-      if (!Array.isArray(body.events) || body.events.length > 50)
+      if (!body || !Array.isArray(body.events) || body.events.length > 50)
         return errorResponse("Invalid activity batch");
       if (
         Number.isInteger(body.dropped) &&
@@ -130,6 +130,7 @@ export default async function handler(request: Request, _context: Context) {
         if (typeof event.checked === "boolean") details.checked = event.checked;
         if (
           typeof event.client_time === "string" &&
+          /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(event.client_time) &&
           Number.isFinite(Date.parse(event.client_time))
         )
           details.client_time = event.client_time.slice(0, 32);

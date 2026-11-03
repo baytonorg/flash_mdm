@@ -1,4 +1,4 @@
-import { recordApiResult, activityInteraction } from '@/lib/operationalActivity';
+import { recordApiResult, activityInteraction, withActivityIdentityBoundary } from '@/lib/operationalActivity';
 export class ApiError extends Error {
   status: number;
   data: unknown;
@@ -86,10 +86,13 @@ class ApiClient {
   }
 
   post<T>(path: string, body?: unknown): Promise<T> {
-    return this.request<T>(path, {
+    const send = () => this.request<T>(path, {
       method: 'POST',
       body: body ? JSON.stringify(body) : undefined,
     });
+    const identityChange = /^\/api\/auth\/(login|logout|register|magic-link-complete|password-reset-complete)$/.test(path)
+      || (path === '/api/superadmin/actions' && !!body && typeof body === 'object' && 'action' in body && ['impersonate', 'stop_impersonation'].includes(String(body.action)));
+    return identityChange ? withActivityIdentityBoundary(send) : send();
   }
 
   put<T>(path: string, body?: unknown): Promise<T> {

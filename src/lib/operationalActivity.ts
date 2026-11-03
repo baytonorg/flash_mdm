@@ -13,12 +13,14 @@ let sending = false;
 let dropped = 0;
 let interaction: string | undefined;
 let interactionExpiresAt = 0;
+let identityTransitions = 0;
 export function activityInteraction() { return Date.now() < interactionExpiresAt ? interaction : undefined; }
 export function recordActivity(
   kind: string,
   details: Record<string, unknown> = {},
 ) {
   if (!installed || !enabled) return;
+  if (identityTransitions) { dropped++; return; }
   if (queue.length >= 200) {
     dropped++;
     return;
@@ -69,6 +71,15 @@ async function flushActivity() {
   } finally {
     sending = false;
   }
+}
+// Dispatch old-session evidence before a cookie-changing action. Do not carry
+// pending interactions across identities or delay authentication on diagnostics.
+export async function withActivityIdentityBoundary<T>(work: () => Promise<T>): Promise<T> {
+  void flushActivity();
+  dropped += queue.length; queue.length = 0;
+  identityTransitions++;
+  try { return await work(); }
+  finally { identityTransitions--; }
 }
 export function installOperationalActivity() {
   if (installed || typeof window === "undefined") return;

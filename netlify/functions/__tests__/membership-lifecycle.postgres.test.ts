@@ -284,7 +284,7 @@ suite('membership lifecycle with PostgreSQL and actual handlers', () => {
       const admin=await traceHandler(request(ownerToken),{} as never);expect(admin.status).toBe(200);
       expect((await traceHandler(request(targetToken),{} as never)).status).toBe(403);
       expect((await traceHandler(new Request('http://localhost/api/superadmin/operational-trace',{headers:{authorization:'Bearer '+key.token}}),{} as never)).status).toBe(403);
-      const event=new Request('http://localhost/api/activity',{method:'POST',headers:{cookie:'flash_session='+targetToken,'content-type':'application/json','x-requested-with':'XMLHttpRequest'},body:JSON.stringify({events:[{kind:'navigation',route:'/policies',actor:{type:'human',id:owner},password:'fixture-never-log-this'}]})});
+      const event=new Request('http://localhost/api/activity',{method:'POST',headers:{cookie:'flash_session='+targetToken,'content-type':'application/json','x-requested-with':'XMLHttpRequest'},body:JSON.stringify({events:[{kind:'navigation',route:'/policies',actor:{type:'human',id:owner},password:'fixture-never-log-this',client_time:'2026-11-03 (fixture-never-log-this)'}]})});
       expect((await traceHttp(event,()=>traceHandler(event,{} as never))).status).toBe(204);
       await closeOperationalTrace();
       const text=(await Promise.all((await readdir(directory)).filter(n=>n.endsWith('.ndjson')).map(n=>readFile(join(directory,n),'utf8')))).join('');
@@ -293,6 +293,8 @@ suite('membership lifecycle with PostgreSQL and actual handlers', () => {
       expect(navigation.actor.id).toBe(target);expect(navigation.feature).toBe('policies');
       const anonymous=new Request('http://localhost/api/activity',{method:'POST',headers:{'content-type':'application/json','x-requested-with':'XMLHttpRequest'},body:JSON.stringify({events:[{kind:'invalid',route:'/login',actor:{type:'human',id:owner}}]})});
       expect((await traceHttp(anonymous,()=>traceHandler(anonymous,{} as never))).status).toBe(204);
+      const malformed=new Request('http://localhost/api/activity',{method:'POST',headers:{'content-type':'application/json','x-requested-with':'XMLHttpRequest'},body:'null'});
+      expect((await traceHandler(malformed,{} as never)).status).toBe(400);
     }finally{await closeOperationalTrace();delete process.env.FLASH_TRACE_DIR;await rm(directory,{recursive:true,force:true});}
   });
 

@@ -12,6 +12,8 @@ The VPS runtime records a detailed development diagnostic trace separately from 
 
 Request/response bodies, cookies, passwords, tokens, MFA material, signing/service keys and arbitrary exception messages never enter this event contract. Successful responses contribute only allowlisted booleans/counts/statuses. Large or streaming responses have bounded outcome inspection; unavailable detail is labelled. Unexpected HTML from an API is a protocol failure. Existing application/edge journals remain separate evidence sources.
 
+Browser identity is established from the ingestion request's session. Login, logout, registration and impersonation transitions dispatch the old queue first and discard ambiguous pending interactions with visible loss accounting. They never delay authentication on diagnostic delivery. Client timestamps and interactions remain reported evidence rather than independent proof of the actor at an earlier instant.
+
 ## Storage and performance
 
 The installer supplies `FLASH_TRACE_DIR=<installation>/data/operational-trace` and a web/worker component label through systemd. It preserves the application `.env` and all credentials. The directory is private mode 0700; new files are mode 0600. Symlinks are not followed by the reader/writer.
