@@ -100,7 +100,10 @@ describe('environment-bind finalize enterprise create payload', () => {
     const res = await handler(makeRequest({ environment_id: 'env_1', action: 'delete_enterprise' }), {} as never);
     expect(res.status).toBe(502);
     expect((await res.json()).error).toContain('Retry Unbind');
-    expect(mockLogAudit).not.toHaveBeenCalled();
+    expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'environment.enterprise_cleanup_failed',
+      details: { previous_enterprise: 'enterprises/old', remote_deleted: true },
+    }));
   });
 
   it('does not contact Google when enterprise cleanup already completed', async () => {

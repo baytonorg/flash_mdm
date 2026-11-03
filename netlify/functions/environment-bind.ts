@@ -165,6 +165,7 @@ export default async (request: Request, _context: Context) => {
       }
 
       // 1. Delete enterprise from Google AMAPI
+      let remoteAlreadyAbsent = false;
       try {
         await amapiCall(
           env.enterprise_name,
@@ -187,12 +188,23 @@ export default async (request: Request, _context: Context) => {
             Number.isFinite(status) ? status : 502
           );
         }
+        remoteAlreadyAbsent = true;
       }
 
       // 2. Run local cleanup (same as unbind)
       try {
         await cleanupEnterpriseReferences(body.environment_id);
       } catch {
+        await logAudit({
+          workspace_id: env.workspace_id,
+          environment_id: body.environment_id,
+          user_id: auth.user.id,
+          action: 'environment.enterprise_cleanup_failed',
+          resource_type: 'environment',
+          resource_id: body.environment_id,
+          details: { previous_enterprise: previousEnterprise, remote_deleted: true },
+          ip_address: getClientIp(request),
+        });
         return errorResponse('Google enterprise is deleted, but Flash cleanup failed. Retry Unbind to finish local cleanup.', 502);
       }
 
@@ -203,7 +215,7 @@ export default async (request: Request, _context: Context) => {
         action: 'environment.enterprise_deleted',
         resource_type: 'environment',
         resource_id: body.environment_id,
-        details: { previous_enterprise: previousEnterprise },
+        details: { previous_enterprise: previousEnterprise, remote_already_absent: remoteAlreadyAbsent },
         ip_address: getClientIp(request),
       });
 
