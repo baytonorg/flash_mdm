@@ -1,14 +1,14 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, readFile, readdir, rm, stat, chmod, writeFile, symlink } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat, chmod, mkdir, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { traceWindow, TraceWriter } from '../_lib/trace-writer.js';
 import { traceHttp, setTraceActor, traceEvent, traceSpan, closeOperationalTrace, traceError } from '../_lib/operational-trace.js';
 import { setCurrentAuditAuthContext, getCurrentAuditAuthContext } from '../_lib/request-auth-context.js';
-import { readTraceTail, buildTraceReport, traceStatus } from '../_lib/trace-reader.js';
-import { traceWindowBounds } from '../_lib/trace-checkpoints.js';
-import { normaliseTracePath, responseOutcome } from '../../../shared/trace-contract.js';
+import { readTraceTail, buildTraceReport, traceStatus, streamTraceWindow } from '../_lib/trace-reader.js';
+import { writeTraceCheckpoint, traceComparisons, traceWindowBounds } from '../_lib/trace-checkpoints.js';
+import { normaliseTracePath, responseOutcome, traceHttpMethod } from '../../../shared/trace-contract.js';
 
 let directory: string;
 beforeEach(async () => { directory = await mkdtemp(join(tmpdir(), 'flash-trace-test-')); delete process.env.FLASH_TRACE_DIR; delete process.env.FLASH_TRACE_COMPONENT; });
@@ -150,5 +150,124 @@ describe('correlated request evidence', () => {
     expect(report.totals.active_humans).toBe(1);
     expect(report.actors.find(a => a.actor?.id === 'rollback-only')?.meaningful_events).toBe(0);
     expect((await readTraceTail(directory, { actor: 'support' })).events).toHaveLength(1);
+  });
+});
+
+
+describe('trace evidence integrity', () => {
+  it('masks bearer positions even when a signup slug is a static label or UUID', () => {
+    const paths = [
+      ['/join/w/dashboard','/join/w/:value'], ['/join/e/workspaces','/join/e/:value'],
+      ['/jOin/W/settings','/join/w/:value'], ['/j%6Fin/w/settings','/join/w/:value'], ['/INVITE/devices','/invite/:value'],
+      ['/join/dashboard','/join/:value'], ['/invite/settings','/invite/:value'],
+      ['/api/invites/settings/accept','/api/invites/:value/accept'],
+      ['/api/signup-links/resolve/11111111-1111-4111-8111-111111111111','/api/signup-links/resolve/:value'],
+      ['/.netlify/functions/signup-link-resolve/workspaces','/.netlify/functions/signup-link-resolve/:value'],
+      ['/api/workspaces/list','/api/workspaces/list'],
+    ];
+    for(const [source, expected] of paths) {
+      expect(normaliseTracePath(source)).toBe(expected);
+      expect(normaliseTracePath(expected)).toBe(expected);
+    }
+  });
+  it('keeps custom workflow audit labels out of diagnostics on both write paths', async () => {
+    const { logAudit } = await import('../_lib/audit.js');
+    const sentinel = 'unrestricted fixture form text';
+    process.env.FLASH_TRACE_DIR = directory;
+    const success = { query: async () => ({}) } as never;
+    const failure = { query: async () => { throw new Error('fixture unavailable'); } } as never;
+    await logAudit({ action: 'auth.login' }, success);
+    await logAudit({ action: sentinel, resource_type: sentinel, resource_id: sentinel }, success);
+    await expect(logAudit({ action: sentinel }, failure)).rejects.toThrow('fixture unavailable');
+    await closeOperationalTrace();
+    const events = await records();
+    expect(events.map(row => row.data.action)).toEqual(['auth.login', 'custom', 'custom']);
+    expect(JSON.stringify(events)).not.toContain(sentinel);
+    expect(traceHttpMethod('post')).toBe('POST');
+    expect(traceHttpMethod(sentinel)).toBe('OTHER');
+  });
+  it('retains real stack locations and excludes multiline messages and untrusted codes', () => {
+    const secret = 'fixture-confidential';
+    const error = Object.assign(new Error('first line\n    at x (/tmp/' + secret + '.js:1:2)'), { code: secret.toUpperCase() });
+    error.stack = error.toString() + '\n    at task (/srv/netlify/functions/_lib/db.ts:12:34)\n    at task (/tmp/' + secret + '.ts:45:67)';
+    expect(traceError(error)).toMatchObject({ error_class: 'Error', frames: ['db:12:34', expect.stringMatching(/^source-[0-9a-f]{12}:45:67$/)] });
+    expect(JSON.stringify(traceError(error)).toLowerCase()).not.toContain(secret);
+    const broken = new Error('bad stack');
+    Object.defineProperty(broken, 'stack', { get() { throw Error('diagnostic error'); } });
+    expect(traceError(broken)).toEqual({error_class:'Error',frames:[]});
+  });
+  it('includes browser exceptions and delivery uncertainty in problems and follows server IDs', async () => {
+    process.env.FLASH_TRACE_DIR = directory;
+    const response = await traceHttp(new Request('http://localhost/api/workflows'), async () => Response.json({ status: 'delivery_uncertain' }));
+    const id = response.headers.get('x-flash-request-id')!;
+    await traceHttp(new Request('http://localhost/api/activity'), async () => {
+      traceEvent('ui.api_result', {server_request_id:id});
+      traceEvent('ui.javascript_error'); traceEvent('ui.react_error');
+      return new Response(null,{status:204});
+    });
+    await closeOperationalTrace();
+    const problems = await readTraceTail(directory,{outcome:'problems'});
+    expect(problems.events.map(e => e.event).sort()).toEqual(['http.end','ui.javascript_error','ui.react_error']);
+    expect(problems.events.find(e => e.event === 'http.end')?.data.outcome).toBe('delivery_uncertain');
+    expect((await readTraceTail(directory,{requestId:id})).events.some(e => e.event === 'ui.api_result')).toBe(true);
+  });
+  it('counts structurally invalid records and ignores malformed heartbeats',async()=>{
+    const window=traceWindow(), time=new Date().toISOString();
+    await writeFile(join(directory,window+'.web.1.00000.ndjson'), [
+      'x'.repeat(256*1024), 'null', JSON.stringify({schema:1,event:'http.end',time,actor:{id:{}},data:{}}),
+      JSON.stringify({schema:1,event:'http.end',time,data:{status:200}})
+    ].join('\n')+'\n');
+    await writeFile(join(directory,window+'.web.1.health.json'),'null');
+    const tail=await readTraceTail(directory,{actor:'human'});
+    expect(tail.invalid_lines).toBe(3);
+    const report=await buildTraceReport(directory,new Date(Date.now()-60000),new Date(Date.now()+60000));
+    expect(report.coverage).toMatchObject({invalid_lines:3,invalid_health_records:1,component_coverage_incomplete:true});
+    expect(report.totals.http_requests).toBe(1);
+  });
+  it('bounds a download to the original size and fails on a missing listed segment',async()=>{
+    const window=traceWindow(), first=join(directory,window+'.web.1.00000.ndjson'), second=join(directory,window+'.web.1.00001.ndjson');
+    await writeFile(first,'first\n'); await writeFile(second,'second\n');
+    const download=streamTraceWindow(directory,window);
+    expect((await download.next()).value?.toString()).toBe('first\n');
+    await writeFile(second,'second\nnew record\n');
+    let remainder=''; for await (const chunk of download) remainder+=chunk.toString();
+    expect(remainder).toContain('second'); expect(remainder).not.toContain('new record');
+    const missing=streamTraceWindow(directory,window);
+    await missing.next(); await rm(second);
+    await expect((async()=>{for await (const _ of missing) void _;})()).rejects.toMatchObject({code:'ENOENT'});
+  });
+  it('retains valid checkpoint evidence alongside corrupt higher and equal count candidates', async()=>{
+    const window='2026-10-15', {from,to}=traceWindowBounds(window);
+    await writeFile(join(directory,window+'.web.1.health.json'), JSON.stringify({schema:1,window,component:'web',closed:true,
+      started_at:from.toISOString(),window_started_at:from.toISOString(),observed_at:to.toISOString(),heartbeat_gaps:0}));
+    const path=join(directory,'reports'); await mkdir(path,{mode:0o700});
+    await writeFile(join(path,window+'.000000000200.v2.json'),'{');
+    await writeFile(join(path,window+'.000000000100.v2.json'),'{');
+    const report=await buildTraceReport(directory,from,to);
+    await writeTraceCheckpoint(directory,window,{...report,totals:{...report.totals,events:100,http_requests:12}});
+    const comparison=await traceComparisons(directory,to);
+    expect(comparison.seven_days).toMatchObject({windows_available:1,http_requests:12,partial_history:true});
+  });
+  it('requires both component heartbeats and selects seven completed London days across autumn DST', async () => {
+    for(let day=21;day<=27;day++){
+      const window='2026-10-'+day,{from,to}=traceWindowBounds(window);
+      for(const component of ['worker','web']){
+        await writeFile(join(directory,window+'.'+component+'.1.health.json'),JSON.stringify({schema:1,window,component,closed:true,
+          started_at:from.toISOString(),window_started_at:from.toISOString(),observed_at:to.toISOString(),heartbeat_gaps:0}));
+      }
+      const report=await buildTraceReport(directory,from,to);
+      expect(report.coverage.component_coverage_incomplete).toBe(false);
+      await Promise.all([1,12,2,8].map(n=>writeTraceCheckpoint(directory,window,{...report,totals:{...report.totals,events:n,http_requests:n}})));
+    }
+    const {from,to}=traceWindowBounds('2026-10-27');
+    const comparisons=await traceComparisons(directory,new Date(+to+60000));
+    expect(comparisons.seven_days).toMatchObject({windows_available:7,http_requests:84,partial_history:false});
+    const worker=join(directory,'2026-10-27.worker.1.health.json'), original=JSON.parse(await readFile(worker,'utf8'));
+    await writeFile(worker,JSON.stringify({...original,heartbeat_gaps:1}));
+    expect((await buildTraceReport(directory,from,to)).coverage.component_coverage_incomplete).toBe(true);
+    await writeFile(worker,JSON.stringify({...original,observed_at:new Date(+from+300000).toISOString()}));
+    expect((await buildTraceReport(directory,from,to)).coverage.component_coverage_incomplete).toBe(true);
+    await rm(worker);
+    expect((await buildTraceReport(directory,from,to)).coverage.component_coverage_incomplete).toBe(true);
   });
 });

@@ -1,8 +1,11 @@
+import type { PoolClient } from 'pg';
+import { lockMembershipWorkspaces } from './_lib/membership-lifecycle.js';
+import { requireEnvironmentLifecyclePermission } from './_lib/scope-authority.js';
 import type { Context } from '@netlify/functions';
 import { query, queryOne, execute, transaction } from './_lib/db.js';
 import { requireAuth } from './_lib/auth.js';
 import { requireEnvironmentResourcePermission } from './_lib/rbac.js';
-import { amapiCall, getAmapiErrorHttpStatus } from './_lib/amapi.js';
+import { amapiCall, prepareAmapiCall, getAmapiErrorHttpStatus } from './_lib/amapi.js';
 import { logAudit } from './_lib/audit.js';
 import { jsonResponse, errorResponse, parseJsonBody, getClientIp } from './_lib/helpers.js';
 import { BRAND } from './_lib/brand.js';
@@ -70,6 +73,7 @@ export default async (request: Request, _context: Context) => {
       environment_id: string;
       enterprise_token?: string;
       existing_enterprise_name?: string;
+      expected_enterprise_name?: string;
       action?: 'unbind' | 'delete_enterprise' | 'cancel_bind';
     }>(request);
 
@@ -126,100 +130,73 @@ export default async (request: Request, _context: Context) => {
     }
 
     // ── Unbind enterprise ─────────────────────────────────────────────────
-    if (body.action === 'unbind') {
-      if (!env.enterprise_name) {
-        return errorResponse('Environment is not bound to an enterprise', 400);
-      }
-
+    if (body.action === 'unbind' || body.action === 'delete_enterprise') {
+      const remote = body.action === 'delete_enterprise';
       const previousEnterprise = env.enterprise_name;
-      await cleanupEnterpriseReferences(body.environment_id);
-
-      await logAudit({
-        workspace_id: env.workspace_id,
-        environment_id: body.environment_id,
-        user_id: auth.user.id,
-        action: 'environment.enterprise_unbound',
-        resource_type: 'environment',
-        resource_id: body.environment_id,
-        details: { previous_enterprise: previousEnterprise },
-        ip_address: getClientIp(request),
-      });
-
-      return jsonResponse({ unbound: true, previous_enterprise: previousEnterprise });
-    }
-
-    // ── Delete enterprise (AMAPI DELETE + local cleanup) ────────────────
-    if (body.action === 'delete_enterprise') {
-      if (!env.enterprise_name) {
-        return jsonResponse({ deleted: true, previous_enterprise: null });
+      if (!body.expected_enterprise_name) return errorResponse('Confirm the exact enterprise name before changing this binding', 400);
+      if (!previousEnterprise) {
+        if (!remote) return errorResponse('Environment is not bound to an enterprise', 400);
+        const prior = await queryOne(`SELECT 1 FROM audit_log WHERE environment_id = $1
+          AND resource_type = 'environment' AND resource_id = $1 AND action = 'environment.enterprise_deleted'
+          AND details->>'previous_enterprise' = $2 LIMIT 1`,
+          [env.id, body.expected_enterprise_name]);
+        if (prior) return jsonResponse({ deleted: true, previous_enterprise: body.expected_enterprise_name });
+        return errorResponse('Flash is unbound. Google deletion of the confirmed enterprise cannot be verified.', 409);
+      }
+      if (body.expected_enterprise_name !== previousEnterprise) {
+        return errorResponse('The enterprise binding changed. Refresh and confirm the current enterprise.', 409);
       }
 
-      const previousEnterprise = env.enterprise_name;
-
-      const workspace = await queryOne<{ gcp_project_id: string | null }>(
-        'SELECT gcp_project_id FROM workspaces WHERE id = $1',
-        [env.workspace_id]
-      );
-      if (!workspace?.gcp_project_id) {
-        return errorResponse('Workspace has no GCP project configured');
+      let dispatch: ((signal?: AbortSignal) => Promise<unknown>) | undefined;
+      if (remote) {
+        const workspace = await queryOne<{ gcp_project_id: string | null }>(
+          'SELECT gcp_project_id FROM workspaces WHERE id = $1', [env.workspace_id]);
+        if (!workspace?.gcp_project_id) return errorResponse('Workspace has no GCP project configured');
+        dispatch = await prepareAmapiCall(previousEnterprise, env.workspace_id, {
+          method: 'DELETE', projectId: workspace.gcp_project_id, enterpriseName: previousEnterprise,
+          resourceType: 'enterprises', resourceId: previousEnterprise.split('/').pop(),
+        });
       }
-
-      // 1. Delete enterprise from Google AMAPI
+      let remoteComplete = false;
       let remoteAlreadyAbsent = false;
       try {
-        await amapiCall(
-          env.enterprise_name,
-          env.workspace_id,
-          {
-            method: 'DELETE',
-            projectId: workspace.gcp_project_id,
-            enterpriseName: env.enterprise_name,
-            resourceType: 'enterprises',
-            resourceId: env.enterprise_name.split('/').pop(),
+        await transaction(async client => {
+          await lockMembershipWorkspaces(client, [env.workspace_id]);
+          const binding = await client.query('SELECT enterprise_name FROM environments WHERE id = $1 FOR UPDATE', [env.id]);
+          if (binding.rows[0]?.enterprise_name !== previousEnterprise) {
+            throw errorResponse('The enterprise binding changed. Refresh before retrying.', 409);
           }
-        );
-      } catch (err) {
-        const status = getAmapiErrorHttpStatus(err) ?? 502;
-        // A retry after remote success must still complete local cleanup.
-        // Other failures, including uncertain delivery, preserve the binding.
-        if (status !== 404) {
-          return errorResponse(
-            `Failed to delete enterprise from Google: ${err instanceof Error ? err.message : 'Unknown error'}`,
-            Number.isFinite(status) ? status : 502
-          );
-        }
-        remoteAlreadyAbsent = true;
-      }
-
-      // 2. Run local cleanup (same as unbind)
-      try {
-        await cleanupEnterpriseReferences(body.environment_id);
-      } catch {
-        await logAudit({
-          workspace_id: env.workspace_id,
-          environment_id: body.environment_id,
-          user_id: auth.user.id,
-          action: 'environment.enterprise_cleanup_failed',
-          resource_type: 'environment',
-          resource_id: body.environment_id,
-          details: { previous_enterprise: previousEnterprise, remote_deleted: true },
-          ip_address: getClientIp(request),
+          await requireEnvironmentLifecyclePermission(client, auth, env.id, 'manage_settings');
+          if (dispatch) {
+            try {
+              await dispatch(AbortSignal.timeout(30000));
+            } catch (err) {
+              const status = getAmapiErrorHttpStatus(err);
+              if (status !== 404) throw errorResponse(
+                'Google enterprise deletion could not be confirmed. Flash retained the binding.', status ?? 502);
+              remoteAlreadyAbsent = true;
+            }
+            remoteComplete = true;
+          }
+          await cleanupEnterpriseReferences(client, env.id);
+          await logAudit({
+            workspace_id: env.workspace_id, environment_id: env.id, user_id: auth.user.id,
+            action: remote ? 'environment.enterprise_deleted' : 'environment.enterprise_unbound',
+            resource_type: 'environment', resource_id: env.id,
+            details: { previous_enterprise: previousEnterprise, ...(remote ? { remote_already_absent: remoteAlreadyAbsent } : {}) },
+            ip_address: getClientIp(request),
+          }, client);
         });
-        return errorResponse('Google enterprise is deleted, but Flash cleanup failed. Retry Unbind to finish local cleanup.', 502);
+      } catch (err) {
+        if (!remoteComplete) throw err;
+        await logAudit({
+          workspace_id: env.workspace_id, environment_id: env.id, user_id: auth.user.id,
+          action: 'environment.enterprise_cleanup_failed', resource_type: 'environment', resource_id: env.id,
+          details: { previous_enterprise: previousEnterprise, remote_deleted: true }, ip_address: getClientIp(request),
+        });
+        return errorResponse('Google enterprise is deleted, but Flash cleanup could not be confirmed. Retry Unbind for the same enterprise.', 502);
       }
-
-      await logAudit({
-        workspace_id: env.workspace_id,
-        environment_id: body.environment_id,
-        user_id: auth.user.id,
-        action: 'environment.enterprise_deleted',
-        resource_type: 'environment',
-        resource_id: body.environment_id,
-        details: { previous_enterprise: previousEnterprise, remote_already_absent: remoteAlreadyAbsent },
-        ip_address: getClientIp(request),
-      });
-
-      return jsonResponse({ deleted: true, previous_enterprise: previousEnterprise });
+      return jsonResponse({ [remote ? 'deleted' : 'unbound']: true, previous_enterprise: previousEnterprise });
     }
 
     if (env.enterprise_name) {
@@ -687,43 +664,41 @@ async function bootstrapDevicesForAttachedEnterprise(input: {
  * Clears all local references to the enterprise so the environment
  * can be rebound to a new enterprise cleanly.
  */
-async function cleanupEnterpriseReferences(environmentId: string): Promise<void> {
-  await transaction(async (client) => {
-    await client.query(
-      `UPDATE environments
-       SET enterprise_name = NULL, enterprise_display_name = NULL,
-           signup_url_name = NULL, updated_at = now()
-       WHERE id = $1`,
-      [environmentId]
-    );
+async function cleanupEnterpriseReferences(client: PoolClient, environmentId: string): Promise<void> {
+  await client.query(
+    `UPDATE environments
+     SET enterprise_name = NULL, enterprise_display_name = NULL,
+         signup_url_name = NULL, updated_at = now()
+     WHERE id = $1`,
+    [environmentId]
+  );
 
-    await client.query(
-      `UPDATE policies SET amapi_name = NULL, status = 'draft', updated_at = now()
-       WHERE environment_id = $1`,
-      [environmentId]
-    );
+  await client.query(
+    `UPDATE policies SET amapi_name = NULL, status = 'draft', updated_at = now()
+     WHERE environment_id = $1`,
+    [environmentId]
+  );
 
-    // Derivatives belong to the old enterprise. Assignment rows are local intent
-    // and must survive so rebinding can recreate the same topology.
-    await client.query(
-      'DELETE FROM policy_derivatives WHERE environment_id = $1',
-      [environmentId]
-    );
+  // Derivatives belong to the old enterprise. Assignment rows are local intent
+  // and must survive so rebinding can recreate the same topology.
+  await client.query(
+    'DELETE FROM policy_derivatives WHERE environment_id = $1',
+    [environmentId]
+  );
 
-    await client.query(
-      `UPDATE enrollment_tokens
-       SET amapi_name = NULL, amapi_value = NULL, qr_data = NULL,
-           amapi_expiration_timestamp = NULL, updated_at = now()
-       WHERE environment_id = $1`,
-      [environmentId]
-    );
+  await client.query(
+    `UPDATE enrollment_tokens
+     SET amapi_name = NULL, amapi_value = NULL, qr_data = NULL,
+         amapi_expiration_timestamp = NULL, updated_at = now()
+     WHERE environment_id = $1`,
+    [environmentId]
+  );
 
-    // Keep policy_id as the legacy direct-assignment fallback. Only the remote
-    // synchronization marker is invalid after detaching the enterprise.
-    await client.query(
-      `UPDATE devices SET last_policy_sync_name = NULL, updated_at = now()
-       WHERE environment_id = $1`,
-      [environmentId]
-    );
-  });
+  // Keep policy_id as the legacy direct-assignment fallback. Only the remote
+  // synchronization marker is invalid after detaching the enterprise.
+  await client.query(
+    `UPDATE devices SET last_policy_sync_name = NULL, updated_at = now()
+     WHERE environment_id = $1`,
+    [environmentId]
+  );
 }

@@ -789,7 +789,13 @@ const h = (handler: any) => async (c: any) => {
 };
 
 const app = new Hono();
-app.use('/*', async (c, next) => traceHttp(c.req.raw, async () => { await next(); return c.res; }));
+app.use('/*', async (c, next) => {
+  const traced = await traceHttp(c.req.raw, async () => { await next(); return c.res; });
+  // Downstream handlers already finalised c.res. Hono ignores a middleware
+  // return value at this point, so apply the diagnostic header to the context.
+  const requestId = traced.headers.get('X-Flash-Request-ID');
+  if (requestId) c.header('X-Flash-Request-ID', requestId);
+});
 app.all('/api/activity', h(operationalTrace));
 app.all('/api/superadmin/operational-trace', h(operationalTrace));
 

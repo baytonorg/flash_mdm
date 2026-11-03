@@ -18,6 +18,7 @@ export default function Register() {
   const redirectTo = sanitizeInAppRedirect(searchParams.get('redirect'));
   const isInviteOnboarding = redirectTo.startsWith('/invite/');
   const inviteToken = isInviteOnboarding ? redirectTo.split('/invite/')[1]?.split('/')[0] ?? '' : '';
+  const isPlatformInvite = isInviteOnboarding && inviteType === 'platform_access';
   const isWorkspaceInviteOnboarding = isInviteOnboarding && inviteType === 'workspace_access';
 
   useEffect(() => {
@@ -111,7 +112,7 @@ export default function Register() {
         <p className="text-sm text-gray-600">
           {isWorkspaceInviteOnboarding
             ? 'Create an account to join the workspace. You\'ll be signed in automatically.'
-            : 'Create an operator account and workspace, then use the magic link email to return and accept your platform invitation.'}
+            : 'Create an operator account and workspace, then use the emailed link to sign in.'}
         </p>
       )}
       {error && <p className="text-sm text-danger bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
@@ -133,18 +134,20 @@ export default function Register() {
           <input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })}
             className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent" />
         </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-          <input
-            type="password"
-            required
-            minLength={MIN_PASSWORD_LENGTH}
-            maxLength={MAX_PASSWORD_LENGTH}
-            value={form.password}
-            onChange={(e) => setForm({ ...form, password: e.target.value })}
-            className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent" />
-          <p className="mt-1 text-xs text-gray-500">Minimum {MIN_PASSWORD_LENGTH} characters</p>
-        </div>
+        {!isPlatformInvite && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+            <input
+              type="password"
+              required
+              minLength={MIN_PASSWORD_LENGTH}
+              maxLength={MAX_PASSWORD_LENGTH}
+              value={form.password}
+              onChange={(e) => setForm({ ...form, password: e.target.value })}
+              className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent" />
+            <p className="mt-1 text-xs text-gray-500">Minimum {MIN_PASSWORD_LENGTH} characters</p>
+          </div>
+        )}
         {!isWorkspaceInviteOnboarding && (
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Workspace name</label>
@@ -155,7 +158,7 @@ export default function Register() {
         )}
         <button
           type="submit"
-          disabled={isSubmitting || form.password.length < MIN_PASSWORD_LENGTH}
+          disabled={isSubmitting || (!isPlatformInvite && form.password.length < MIN_PASSWORD_LENGTH)}
           className="w-full bg-primary text-white py-2 rounded-lg font-medium hover:bg-primary-light transition-colors disabled:opacity-50"
         >
           {isSubmitting ? 'Creating account...' : 'Create account'}

@@ -1213,7 +1213,7 @@ function EnvironmentTab() {
                           type="button"
                           onClick={async () => {
                             try {
-                              await deleteEnterprise.mutateAsync(activeEnvironment!.id);
+                              await deleteEnterprise.mutateAsync({ environment_id: activeEnvironment!.id, expected_enterprise_name: deleteConfirmText });
                               setShowDeleteEnterprise(false);
                               setDeleteConfirmText('');
                               if (activeWorkspace) await fetchEnvironments(activeWorkspace.id);

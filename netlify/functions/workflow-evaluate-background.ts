@@ -1,3 +1,4 @@
+import { tracedFetch } from './_lib/operational-trace.js';
 import type { Context } from '@netlify/functions';
 import { queryOne, execute } from './_lib/db.js';
 import {
@@ -405,7 +406,7 @@ async function executeAction(
         headers['X-Webhook-Secret'] = action_config.secret as string;
       }
 
-      const webhookResponse = await fetch(validatedWebhookUrl.url, {
+      const webhookResponse = await tracedFetch('webhook', 'workflow_send', validatedWebhookUrl.url.toString(), {
         method: 'POST',
         headers,
         body: JSON.stringify(webhookBody),
@@ -430,6 +431,7 @@ async function executeAction(
         actor_type: 'system',
         visibility_scope: 'privileged',
         action: auditAction,
+        custom_workflow_action: true,
         resource_type: 'workflow',
         resource_id: workflow.id,
         details: {

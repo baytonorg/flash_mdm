@@ -98,88 +98,57 @@ describe('sync-reconcile-scheduled', () => {
     );
   });
 
-  it('retires stale tokens and only hard-deletes expired tokens after grace period', async () => {
-    mockQuery
-      .mockResolvedValueOnce([
-        {
-          id: 'env_1',
-          workspace_id: 'ws_1',
-          enterprise_name: 'enterprises/e1',
-          gcp_project_id: 'proj_1',
-        },
-      ] as never)
-      .mockResolvedValueOnce([] as never) // local devices
-      .mockResolvedValueOnce([
-        {
-          id: 'tok_1',
-          amapi_name: 'enterprises/e1/enrollmentTokens/t1',
-          expires_at: null,
-        },
-      ] as never)
-      .mockResolvedValueOnce([] as never); // no hard-deletes yet (within grace)
-
-    mockAmapiCall
-      .mockResolvedValueOnce({ devices: [], nextPageToken: undefined } as never)
-      .mockResolvedValueOnce({ enrollmentTokens: [], nextPageToken: undefined } as never);
-
+  it('bounds local observations and repeated remote pagination without retiring credentials', async () => {
+    const report = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const rows = Array.from({ length: 101 }, (_, index) => ({ id: `token_${index}`, amapi_name: null, expires_at: null }));
+    mockQuery.mockResolvedValueOnce([{ id: 'env_1', workspace_id: 'ws_1', enterprise_name: 'enterprises/e1', gcp_project_id: 'proj_1' }] as never)
+      .mockResolvedValueOnce([] as never).mockResolvedValueOnce(rows as never);
+    mockAmapiCall.mockResolvedValueOnce({ devices: [] } as never)
+      .mockResolvedValue({ enrollmentTokens: [], nextPageToken: 'repeated' } as never);
     await handler(new Request('http://localhost/.netlify/functions/sync-reconcile-scheduled'), {} as never);
-
-    const hardDeleteCall = mockQuery.mock.calls.find((call) =>
-      String(call[0]).includes('DELETE FROM enrollment_tokens') &&
-      String(call[0]).includes("interval '1 hour'")
-    );
-    expect(hardDeleteCall).toBeDefined();
-    expect(hardDeleteCall?.[1]).toEqual(['env_1', 24]);
-
-    const retireCall = mockExecute.mock.calls.find((call) =>
-      String(call[0]).includes('UPDATE enrollment_tokens') &&
-      String(call[0]).includes('amapi_value = NULL') &&
-      String(call[0]).includes('expires_at = COALESCE(LEAST(expires_at, now()), now())')
-    );
-    expect(retireCall).toBeDefined();
-    expect(retireCall?.[1]).toEqual([['tok_1']]);
-
-    expect(
-      mockExecute.mock.calls.some((call) => String(call[0]).trim() === 'DELETE FROM enrollment_tokens WHERE id = ANY($1::uuid[])')
-    ).toBe(false);
+    expect(mockAmapiCall).toHaveBeenCalledTimes(3);
+    expect(mockExecute).not.toHaveBeenCalled();
+    expect(report).toHaveBeenCalledWith(expect.stringContaining('operator follow-up'), {
+      inspected: 100, expired: 0, stale: 0, orphaned: 100, uncertain: 0, truncated: true,
+    });
+    report.mockRestore();
   });
 
-  it('falls back to individual read-only token checks when AMAPI listing fails', async () => {
-    const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    mockQuery
-      .mockResolvedValueOnce([{
-        id: 'env_1',
-        workspace_id: 'ws_1',
-        enterprise_name: 'enterprises/e1',
-        gcp_project_id: 'proj_1',
-      }] as never)
-      .mockResolvedValueOnce([] as never)
-      .mockResolvedValueOnce([
-        { id: 'tok_present', amapi_name: 'enterprises/e1/enrollmentTokens/present', expires_at: null },
-        { id: 'tok_missing', amapi_name: 'enterprises/e1/enrollmentTokens/missing', expires_at: null },
-      ] as never)
-      .mockResolvedValueOnce([] as never);
-
-    mockAmapiCall
-      .mockResolvedValueOnce({ devices: [], nextPageToken: undefined } as never)
-      .mockRejectedValueOnce(new Error('AMAPI error (500): Internal error encountered.') as never)
-      .mockResolvedValueOnce({ name: 'enterprises/e1/enrollmentTokens/present' } as never)
-      .mockRejectedValueOnce(new Error('AMAPI error (404): Not found') as never);
-
+  it.each(['complete', 'fallback', 'uncertain'] as const)('preserves all credential fields with %s remote observations', async mode => {
+    const rows = [
+      { id: 'expired', amapi_name: 'enterprises/e1/enrollmentTokens/expired', expires_at: '2000-01-01', amapi_value: 'fixture-secret', qr_data: 'fixture-qr', policy_id: 'policy1' },
+      { id: 'active', amapi_name: 'enterprises/e1/enrollmentTokens/active', expires_at: null, amapi_value: 'fixture-active', qr_data: 'fixture-qr2' },
+      { id: 'orphan', amapi_name: null, expires_at: null, amapi_value: 'fixture-orphan' },
+      { id: 'foreign', amapi_name: 'enterprises/other/enrollmentTokens/foreign', expires_at: null },
+    ];
+    const before = structuredClone(rows);
+    const report = vi.spyOn(console, 'log').mockImplementation(() => {});
+    mockQuery.mockResolvedValueOnce([{ id: 'env_1', workspace_id: 'ws_1', enterprise_name: 'enterprises/e1', gcp_project_id: 'proj_1' }] as never)
+      .mockResolvedValueOnce([] as never).mockResolvedValueOnce(rows as never);
+    mockAmapiCall.mockResolvedValueOnce({ devices: [] } as never);
+    if (mode === 'complete') mockAmapiCall.mockResolvedValueOnce({ enrollmentTokens: [{ name: rows[1].amapi_name }] } as never);
+    else {
+      mockAmapiCall.mockRejectedValueOnce(new Error('listing failure'))
+        .mockRejectedValueOnce(new Error('AMAPI error (404): missing'));
+      if (mode === 'fallback') mockAmapiCall.mockResolvedValueOnce({ name: rows[1].amapi_name } as never);
+      else mockAmapiCall.mockRejectedValueOnce(new Error('AMAPI error (503): unavailable'));
+    }
     await handler(new Request('http://localhost/.netlify/functions/sync-reconcile-scheduled'), {} as never);
-
-    expect(mockAmapiCall).toHaveBeenNthCalledWith(
-      3,
-      'enterprises/e1/enrollmentTokens/present',
-      'ws_1',
-      expect.any(Object)
-    );
-    const retireCall = mockExecute.mock.calls.find((call) =>
-      String(call[0]).includes('UPDATE enrollment_tokens') &&
-      String(call[0]).includes('amapi_value = NULL')
-    );
-    expect(retireCall?.[1]).toEqual([['tok_missing']]);
-    consoleWarnSpy.mockRestore();
+    expect(rows).toEqual(before);
+    const sql = [...mockQuery.mock.calls, ...mockExecute.mock.calls, ...mockClientQuery.mock.calls].map(call => String(call[0]));
+    expect(sql.filter(text => /enrollment_tokens/i.test(text))).toHaveLength(1);
+    expect(sql.find(text => /enrollment_tokens/i.test(text))).toMatch(/^SELECT id, amapi_name, expires_at/);
+    expect(mockQuery).toHaveBeenCalledWith(expect.stringContaining('WHERE environment_id = $1 ORDER BY id LIMIT $2'), ['env_1', 101]);
+    for (const [path, workspace, options] of mockAmapiCall.mock.calls.slice(1)) {
+      expect(path).toMatch(/^enterprises\/e1\/enrollmentTokens/);
+      expect(workspace).toBe('ws_1');
+      expect(options).toMatchObject({ method: 'GET', enterpriseName: 'enterprises/e1', projectId: 'proj_1' });
+    }
+    expect(report).toHaveBeenCalledWith(expect.stringContaining('operator follow-up'), {
+      inspected: 4, expired: 1, stale: 1, orphaned: 1, uncertain: mode === 'uncertain' ? 2 : 1, truncated: false,
+    });
+    expect(JSON.stringify(report.mock.calls)).not.toContain('fixture-secret');
+    report.mockRestore();
   });
 
   it('skips device soft-delete pass when AMAPI device pagination fails mid-stream', async () => {

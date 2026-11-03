@@ -211,7 +211,7 @@ export default function InviteAccept() {
                 <>
                   {/* Platform invites require workspace creation — redirect to full register page */}
                   <p className="text-sm text-gray-600">
-                    Create an operator account with <strong>{invite.email}</strong>, create your workspace during signup, then return here to accept this platform invitation.
+                    Create an operator account with <strong>{invite.email}</strong>, accept this invitation during signup, then use the emailed link to sign in to your new workspace.
                   </p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <a

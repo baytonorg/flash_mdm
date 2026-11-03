@@ -20,14 +20,48 @@ for (const segment of [
   "licensing-reconcile-scheduled",
 ])
   STATIC_SEGMENTS.add(segment);
+// Mask bearer positions by route before considering any static vocabulary.
+// A user-chosen signup slug can itself be "dashboard" or a UUID.
+function bearerRoute(parts: string[]): string | undefined {
+  // React Router decodes static path segments and matches them case-insensitively.
+  // Decode discriminators only. Never copy a decoded dynamic segment into logs.
+  const [first, second, third, fourth] = parts.slice(0, 4).map((part) => {
+    try {
+      return decodeURIComponent(part).toLowerCase();
+    } catch {
+      return "";
+    }
+  });
+  if (first === "join" && parts.length > 1) {
+    if ((second === "w" || second === "e") && parts.length > 2)
+      return "/join/" + second + "/:value";
+    return "/join/:value";
+  }
+  if (first === "invite" && parts.length > 1) return "/invite/:value";
+  if (first === "api" && second === "invites" && parts.length > 2)
+    return "/api/invites/:value" + (fourth === "accept" ? "/accept" : "");
+  if (
+    first === "api" &&
+    second === "signup-links" &&
+    third === "resolve" &&
+    parts.length > 3
+  )
+    return "/api/signup-links/resolve/:value";
+  if (
+    first === ".netlify" &&
+    second === "functions" &&
+    ["workspace-invite", "signup-link-resolve"].includes(third)
+  )
+    return "/.netlify/functions/" + third + (parts.length > 3 ? "/:value" : "");
+}
 export function normaliseTracePath(value: string): string {
   const pathname = value.split(/[?#]/, 1)[0].slice(0, 2048);
+  const parts = pathname.split("/").filter(Boolean).slice(0, 12);
+  const masked = bearerRoute(parts);
+  if (masked) return masked;
   return (
     "/" +
-    pathname
-      .split("/")
-      .filter(Boolean)
-      .slice(0, 12)
+    parts
       .map((segment) =>
         STATIC_SEGMENTS.has(segment)
           ? segment
@@ -109,4 +143,18 @@ export function responseOutcome(
     ).length;
   }
   return output;
+}
+
+const HTTP_METHODS = new Set([
+  "GET",
+  "HEAD",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "OPTIONS",
+]);
+export function traceHttpMethod(method: string): string {
+  const upper = method.length <= 8 ? method.toUpperCase() : "";
+  return HTTP_METHODS.has(upper) ? upper : "OTHER";
 }

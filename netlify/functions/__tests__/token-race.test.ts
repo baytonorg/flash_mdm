@@ -123,21 +123,19 @@ describe('auth-magic-link-verify — TOCTOU race prevention', () => {
     expect(res.headers.get('Location')).toBe('http://localhost:8888/login?auth_error=expired_or_used_magic_link');
     expect(mockTransaction).toHaveBeenCalledOnce();
     expect(mockClient.query).toHaveBeenCalledWith(
-      expect.stringContaining('WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()'),
+      expect.stringContaining('WHERE magic_links.token_hash = $1 AND magic_links.used_at IS NULL AND magic_links.expires_at > now()'),
       ['hash:expired-token']
     );
   });
 
   it('proceeds to create a session when atomic UPDATE returns a valid row', async () => {
-    // Transaction returns the consumed magic link row
+    // Consumption returns the immutable user ID matched inside the transaction.
     mockClient.query.mockResolvedValueOnce({
-      rows: [{ id: 'link_1', email: 'user@example.com' }],
+      rows: [{ user_id: 'user_1' }],
       rowCount: 1,
     });
 
-    // queryOne calls after transaction: user lookup, totp check, workspace membership
     mockQueryOne
-      .mockResolvedValueOnce({ id: 'user_1' } as never)             // SELECT id FROM users
       .mockResolvedValueOnce({ totp_enabled: false } as never)       // SELECT totp_enabled
       .mockResolvedValueOnce({ workspace_id: 'ws_1' } as never);    // workspace membership
 
@@ -153,6 +151,9 @@ describe('auth-magic-link-verify — TOCTOU race prevention', () => {
     // Verify session was created
     expect(mockGenerateToken).toHaveBeenCalledOnce();
     expect(mockSetSessionCookie).toHaveBeenCalledWith('session-token');
+
+    expect(mockClient.query).toHaveBeenCalledWith(expect.stringContaining('RETURNING u.id AS user_id'), ['hash:test-token']);
+    expect(mockQueryOne).toHaveBeenCalledTimes(2);
 
     // Verify session insertion into DB
     expect(mockExecute).toHaveBeenCalledWith(

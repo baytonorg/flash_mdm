@@ -38,7 +38,7 @@ vi.mock('../_lib/auth.js', () => ({
 }));
 
 import { consumeToken } from '../_lib/rate-limiter.js';
-import { queryOne } from '../_lib/db.js';
+import { execute, queryOne } from '../_lib/db.js';
 import { getPlatformSettings } from '../_lib/platform-settings.js';
 import handler from '../auth-register.ts';
 import { MIN_PASSWORD_LENGTH } from '../_lib/password-policy.js';
@@ -66,6 +66,7 @@ describe('auth-register password policy', () => {
     mockConsumeToken.mockReset();
     mockQueryOne.mockReset();
     mockGetPlatformSettings.mockReset();
+    vi.mocked(execute).mockResolvedValue({rowCount:1});
   });
 
   it('rejects passwords shorter than the minimum length', async () => {

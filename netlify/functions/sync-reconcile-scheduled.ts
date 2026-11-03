@@ -12,7 +12,8 @@ export const config = {
   schedule: '*/15 * * * *',
 };
 
-const ENROLLMENT_TOKEN_RETENTION_GRACE_HOURS = 24;
+const ENROLLMENT_TOKEN_REPORT_LIMIT = 100;
+const ENROLLMENT_TOKEN_LIST_PAGE_LIMIT = 20;
 
 interface AmapiDevice {
   name: string;
@@ -461,109 +462,67 @@ async function reconcileEnvironment(env: Environment): Promise<void> {
 }
 
 async function reconcileEnrollmentTokens(env: Environment): Promise<void> {
-  const localTokenRows = await query<{ id: string; amapi_name: string | null; expires_at: string | null }>(
-    `SELECT id, amapi_name
-            , expires_at
-     FROM enrollment_tokens
-     WHERE environment_id = $1`,
-    [env.id]
+  // Scheduled observations never retire credentials or alter their backing metadata.
+  // Fetch one extra row to disclose truncation without loading secret-bearing columns.
+  const rows = await query<{ id: string; amapi_name: string | null; expires_at: string | null }>(
+    `SELECT id, amapi_name, expires_at FROM enrollment_tokens
+     WHERE environment_id = $1 ORDER BY id LIMIT $2`,
+    [env.id, ENROLLMENT_TOKEN_REPORT_LIMIT + 1]
   );
-  if (localTokenRows.length === 0) return;
-
-  // Hard-delete tokens only after a grace period so delayed enrollment processing can
-  // still resolve token metadata (group/policy/sign-in lookup) from local rows.
-  const expiredRows = await query<{ id: string }>(
-    `DELETE FROM enrollment_tokens
-     WHERE environment_id = $1
-       AND expires_at IS NOT NULL
-       AND expires_at <= now() - ($2::int * interval '1 hour')
-     RETURNING id`,
-    [env.id, ENROLLMENT_TOKEN_RETENTION_GRACE_HOURS]
-  );
-
-  const expiredIds = new Set(expiredRows.map((row) => row.id));
-  const remainingLocal = localTokenRows.filter((row) => !expiredIds.has(row.id));
-  if (remainingLocal.length === 0) {
-    if (expiredRows.length > 0) {
-      console.log(`Environment ${env.id}: removed ${expiredRows.length} expired enrollment tokens`);
-    }
-    return;
-  }
-
-  const amapiNames = new Set<string>();
-  const amapiOptions = {
-    projectId: env.gcp_project_id,
-    enterpriseName: env.enterprise_name,
-    resourceType: 'general',
+  if (!rows.length) return;
+  const local = rows.slice(0, ENROLLMENT_TOKEN_REPORT_LIMIT);
+  const names = new Set(local.map(row => row.amapi_name).filter(Boolean));
+  const belongsToEnterprise = (name: string) => name.startsWith(`${env.enterprise_name}/enrollmentTokens/`)
+    && /^[A-Za-z0-9_-]+$/.test(name.slice(`${env.enterprise_name}/enrollmentTokens/`.length));
+  const present = new Set<string>();
+  const missing = new Set<string>();
+  const options = {
+    method: 'GET', projectId: env.gcp_project_id,
+    enterpriseName: env.enterprise_name, resourceType: 'general',
   };
+  let complete = false;
   try {
     let pageToken: string | undefined;
-    do {
-      const path = pageToken
-        ? `${env.enterprise_name}/enrollmentTokens?pageSize=100&pageToken=${encodeURIComponent(pageToken)}`
-        : `${env.enterprise_name}/enrollmentTokens?pageSize=100`;
-
-      const response = await amapiCall<AmapiEnrollmentTokenListResponse>(
-        path,
-        env.workspace_id,
-        amapiOptions
-      );
-
+    const seenPages = new Set<string>();
+    for (let page = 0; page < ENROLLMENT_TOKEN_LIST_PAGE_LIMIT; page++) {
+      const path = `${env.enterprise_name}/enrollmentTokens?pageSize=100&fields=enrollmentTokens(name),nextPageToken`
+        + (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '');
+      const response = await amapiCall<AmapiEnrollmentTokenListResponse>(path, env.workspace_id, options);
       for (const token of response.enrollmentTokens ?? []) {
-        if (token.name) amapiNames.add(token.name);
+        if (names.has(token.name)) present.add(token.name);
       }
       pageToken = response.nextPageToken;
-    } while (pageToken);
-  } catch (listError) {
-    // AMAPI can return a valid first page followed by a persistently broken page
-    // token. Reconciliation only needs to establish whether each local token still
-    // exists, so fall back to read-only resource GETs. Any result other than a
-    // definite 404 remains uncertain and aborts retirement for this environment.
-    console.warn(
-      `Environment ${env.id}: enrollment token listing failed; checking ${remainingLocal.length} local tokens individually`
-    );
-    for (const row of remainingLocal) {
-      if (!row.amapi_name) continue;
+      if (!pageToken) { complete = true; break; }
+      if (seenPages.has(pageToken)) break;
+      seenPages.add(pageToken);
+    }
+  } catch {
+    // Failed or incomplete listings are observations, never permission to retire.
+  }
+  if (!complete) {
+    for (const name of names) {
+      if (!name || present.has(name) || !belongsToEnterprise(name)) continue;
       try {
-        await amapiCall(row.amapi_name, env.workspace_id, amapiOptions);
-        amapiNames.add(row.amapi_name);
-      } catch (getError) {
-        if (getAmapiErrorHttpStatus(getError) !== 404) throw listError;
+        await amapiCall(`${name}?fields=name`, env.workspace_id, options);
+        present.add(name);
+      } catch (error) {
+        if (getAmapiErrorHttpStatus(error) === 404) missing.add(name);
       }
     }
   }
-
-  const activeLocal = remainingLocal.filter((row) => {
-    if (!row.expires_at) return true;
-    return new Date(row.expires_at).getTime() > Date.now();
-  });
-
-  const staleIds = activeLocal
-    .filter((row) => row.amapi_name && !amapiNames.has(row.amapi_name))
-    .map((row) => row.id);
-
-  // Legacy "invalidated" rows from older enrollment-sync behavior can persist forever.
-  const orphanedIds = activeLocal
-    .filter((row) => !row.amapi_name)
-    .map((row) => row.id);
-
-  const idsToRetire = [...new Set([...staleIds, ...orphanedIds])];
-  if (idsToRetire.length > 0) {
-    await execute(
-      `UPDATE enrollment_tokens
-       SET amapi_value = NULL,
-           qr_data = NULL,
-           amapi_expiration_timestamp = NULL,
-           expires_at = COALESCE(LEAST(expires_at, now()), now()),
-           updated_at = now()
-       WHERE id = ANY($1::uuid[])`,
-      [idsToRetire]
-    );
+  const counts = { inspected: local.length, expired: 0, stale: 0, orphaned: 0, uncertain: 0,
+    truncated: rows.length > ENROLLMENT_TOKEN_REPORT_LIMIT };
+  const now = Date.now();
+  for (const row of local) {
+    // Categories overlap: local expiry and remote existence describe different facts.
+    const expiry = row.expires_at ? new Date(row.expires_at).getTime() : null;
+    if (expiry !== null && expiry <= now) counts.expired++;
+    if (!row.amapi_name) { counts.orphaned++; continue; }
+    if (!belongsToEnterprise(row.amapi_name)
+      || (expiry !== null && !Number.isFinite(expiry))) { counts.uncertain++; continue; }
+    if (present.has(row.amapi_name)) continue;
+    if (complete || missing.has(row.amapi_name)) counts.stale++;
+    else counts.uncertain++;
   }
-
-  if (expiredRows.length > 0 || idsToRetire.length > 0) {
-    console.log(
-      `Environment ${env.id}: removed ${expiredRows.length} expired and retired ${idsToRetire.length} stale enrollment tokens`
-    );
-  }
+  console.log(`Environment ${env.id}: enrollment token observations require operator follow-up`, counts);
 }

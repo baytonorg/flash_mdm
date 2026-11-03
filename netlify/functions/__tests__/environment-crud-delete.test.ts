@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockLockClientQuery = vi.fn();
 
+vi.mock('../_lib/scope-authority.js', () => ({ requireEnvironmentLifecyclePermission: vi.fn() }));
 vi.mock('../_lib/db.js', () => ({
   query: vi.fn(),
   queryOne: vi.fn(),
@@ -100,7 +101,7 @@ describe('environment-crud delete hardening', () => {
       action: 'environment.deleted',
       workspace_id: '22222222-2222-4222-8222-222222222222',
       resource_id: '33333333-3333-4333-8333-333333333333',
-    }));
+    }), expect.anything());
   });
 
   it('returns 409 when delete is blocked by dependent records', async () => {

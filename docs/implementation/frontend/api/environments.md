@@ -30,4 +30,4 @@
 - Enterprise binding is a 2-step flow: Step 1 returns a `signup_url` the user opens in a new tab, Step 2 completes the binding with the resulting `enterprise_token`.
 - `useEnterpriseUpgradeStatus` uses a 60-second `staleTime` to avoid excessive checks.
 - `useReconcileEnvironmentDeviceImport` returns counts of `devices_found`, `jobs_enqueued`, and `pages_scanned` for feedback.
-- `useDeleteEnterprise` posts to the bind endpoint with `action: 'delete_enterprise'`.
+- `useDeleteEnterprise` posts to the bind endpoint with `action: 'delete_enterprise'` and the typed `expected_enterprise_name`.

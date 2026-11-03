@@ -5,6 +5,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import pg from 'pg';
 
 const database = vi.hoisted(() => ({ pool: null as pg.Pool | null }));
+vi.mock('../_lib/scope-authority.js', () => ({ requireEnvironmentLifecyclePermission: vi.fn() }));
 vi.mock('../_lib/db.js', () => ({
   query: async (sql: string, values: unknown[]) => (await database.pool!.query(sql, values)).rows,
   queryOne: async (sql: string, values: unknown[]) => (await database.pool!.query(sql, values)).rows[0] ?? null,
@@ -31,7 +32,7 @@ vi.mock('../_lib/rbac.js', () => ({
   requireEnvironmentResourcePermission: vi.fn(), requireEnvironmentPermission: vi.fn(),
   requireWorkspaceResourcePermission: vi.fn(), getWorkspaceAccessScopeForAuth: vi.fn(),
 }));
-vi.mock('../_lib/amapi.js', () => ({ amapiCall: vi.fn(), getAmapiErrorHttpStatus: vi.fn(() => 502) }));
+vi.mock('../_lib/amapi.js', () => ({ amapiCall: vi.fn(), prepareAmapiCall: (...args: Parameters<typeof amapiCall>) => async () => amapiCall(...args), getAmapiErrorHttpStatus: vi.fn(() => 502) }));
 vi.mock('../_lib/audit.js', () => ({ logAudit: vi.fn() }));
 vi.mock('../_lib/policy-derivatives.js', () => ({ syncPolicyDerivativesForPolicy: vi.fn() }));
 vi.mock('../signin-config.js', () => ({ syncSigninDetailsToAmapi: vi.fn() }));
@@ -53,7 +54,7 @@ if (connectionString) {
 afterAll(async () => { await database.pool?.end(); });
 
 const post = (id: string, action: string) => bind(new Request('http://localhost/api/environments/bind', {
-  method: 'POST', body: JSON.stringify({ environment_id: id, action }),
+  method: 'POST', body: JSON.stringify({ environment_id: id, expected_enterprise_name: 'enterprises/fixture', action }),
 }), {} as never);
 const remove = (id: string, confirm = false) => crud(new Request(`http://localhost/api/environments/${id}?confirm_access_cleanup=${confirm}`, { method: 'DELETE' }), {} as never);
 
@@ -185,7 +186,21 @@ describe.skipIf(!connectionString)('deletion against disposable PostgreSQL with 
     expect((await post(f.env, 'delete_enterprise')).status).toBe(200);
     expect((await f.q('SELECT enterprise_name FROM environments WHERE id=$1', [f.env])).rows[0].enterprise_name).toBeNull();
     vi.mocked(amapiCall).mockClear();
-    expect((await post(f.env, 'delete_enterprise')).status).toBe(200);
+    // This fixture stubs the audit writer. A locally absent binding alone is
+    // insufficient to prove the named Google enterprise was deleted.
+    expect((await post(f.env, 'delete_enterprise')).status).toBe(409);
+    expect(amapiCall).not.toHaveBeenCalled();
+  });
+
+  it('requires an environment audit record for the named Google enterprise on a replay', async () => {
+    const f=await fixture();
+    await f.q('UPDATE environments SET enterprise_name=NULL WHERE id=$1',[f.env]);
+    const evidence=(type:string,id:string)=>f.q(`INSERT INTO audit_log(environment_id,action,resource_type,resource_id,details)
+      VALUES ($1,'environment.enterprise_deleted',$2,$3,'{"previous_enterprise":"enterprises/fixture"}')`,[f.env,type,id]);
+    await evidence('workflow',f.policy);
+    expect((await post(f.env,'delete_enterprise')).status).toBe(409);
+    await evidence('environment',f.env);
+    expect((await post(f.env,'delete_enterprise')).status).toBe(200);
     expect(amapiCall).not.toHaveBeenCalled();
   });
 

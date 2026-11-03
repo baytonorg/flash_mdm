@@ -25,13 +25,13 @@ export default async (request: Request, context: Context) => {
 
   // Atomically find, validate, and consume the magic link in one step to prevent TOCTOU races
   const link = await transaction(async (client) => {
-    const result = await client.query<{ id: string; email: string }>(
-      `UPDATE magic_links SET used_at = now()
-       WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()
-       RETURNING id, email`,
-      [tokenHash]
-    );
-    return result.rows[0] as { id: string; email: string } | undefined;
+    const result = await client.query<{ user_id: string }>(
+      `UPDATE magic_links SET used_at = now() FROM users u
+       WHERE magic_links.token_hash = $1 AND magic_links.used_at IS NULL AND magic_links.expires_at > now()
+         AND u.email = magic_links.email AND u.created_at <= magic_links.created_at
+       RETURNING u.id AS user_id`, [tokenHash]);
+    return result.rows[0];
+
   });
 
   if (!link) {
@@ -43,20 +43,9 @@ export default async (request: Request, context: Context) => {
     });
   }
 
-  // Find user
-  const user = await queryOne<{ id: string }>(
-    'SELECT id FROM users WHERE email = $1',
-    [link.email]
-  );
-
-  if (!user) {
-    return new Response(null, {
-      status: 302,
-      headers: {
-        Location: buildLoginLocation(baseUrl, 'invalid_magic_link', redirectPath),
-      },
-    });
-  }
+  // Use the identity matched while consuming the link, even if this email
+  // is re-registered before the session write.
+  const user = { id: link.user_id };
 
   // Check if user has TOTP enabled — require MFA verification
   const userFull = await queryOne<{ totp_enabled: boolean }>(

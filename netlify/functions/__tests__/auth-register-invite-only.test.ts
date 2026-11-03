@@ -80,7 +80,7 @@ beforeEach(() => {
     retryAfterMs: undefined,
   } as never);
   mockExecute.mockResolvedValue({ rowCount: 1 });
-  mockClientQuery.mockResolvedValue({ rows: [] });
+  mockClientQuery.mockImplementation(async (sql:string) => ({ rows: sql.includes('COUNT(*)') ? [{count:'5'}] : [] }));
 });
 
 describe('auth-register invite-only mode', () => {
@@ -147,7 +147,7 @@ describe('auth-register invite-only mode', () => {
     expect(mockGetPlatformSettings).toHaveBeenCalledOnce();
     expect(mockHashPassword).toHaveBeenCalledWith('very-strong-password');
     expect(mockExecute).toHaveBeenCalledWith(
-      'INSERT INTO magic_links (token_hash, email, expires_at) VALUES ($1, $2, $3)',
+      expect.stringContaining('INSERT INTO magic_links'),
       expect.arrayContaining(['hash:magic-token', 'new@example.com'])
     );
     expect(mockSendEmail).toHaveBeenCalledOnce();
@@ -178,7 +178,7 @@ describe('auth-register invite-only mode', () => {
       .mockResolvedValueOnce({ count: '5' } as never) // user count
       .mockResolvedValueOnce({ id: 'invite_1', permissions: { invite_type: 'workspace_access' } } as never) // pending invite
       .mockResolvedValueOnce(null as never) // existing user lookup
-      .mockResolvedValueOnce({ id: 'invite_1', workspace_id: 'fixture', status: 'pending' } as never);
+      .mockResolvedValueOnce(null as never);
     mockGetPlatformSettings.mockResolvedValueOnce({
       invite_only_registration: true,
       licensing_enabled: true,
@@ -196,13 +196,10 @@ describe('auth-register invite-only mode', () => {
 
     expect(res.status).toBe(201);
     await expect(res.json()).resolves.toEqual({
-      message: 'Account created. Check your email to sign in.',
+      message: 'Account created and invite accepted.', session_set:true, redirect:'/'
     });
-    expect(mockSendEmail).toHaveBeenCalledOnce();
-    expect(mockExecute).toHaveBeenCalledWith(
-      'INSERT INTO magic_links (token_hash, email, expires_at) VALUES ($1, $2, $3)',
-      expect.arrayContaining(['hash:magic-token', 'new@example.com'])
-    );
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    expect(mockClientQuery.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO sessions'))).toBe(true);
     expect(mockClientQuery.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO workspaces'))).toBe(false);
     expect(applyInviteOffer).toHaveBeenCalledWith(expect.anything(), 'hash:token_123', expect.any(String), 'new@example.com');
   });
@@ -232,7 +229,15 @@ describe('auth-register invite-only mode', () => {
     });
   });
 
+  it('forces a losing first-user bootstrap request to re-enter ordinary registration checks', async () => {
+    mockQueryOne.mockResolvedValueOnce({count:'0'} as never);
+    const response=await handler(makeRequest(),{} as never);
+    expect(response.status).toBe(409);
+    expect(mockClientQuery.mock.calls.some(([sql])=>String(sql).includes('INSERT INTO users'))).toBe(false);
+  });
+
   it('still allows bootstrap registration for the first user even when invite-only is enabled', async () => {
+    mockClientQuery.mockImplementation(async (sql:string) => ({ rows: sql.includes('COUNT(*)') ? [{count:'0'}] : [] }));
     mockQueryOne
       .mockResolvedValueOnce({ count: '0' } as never) // user count
       .mockResolvedValueOnce(null as never); // existing user lookup
@@ -245,7 +250,7 @@ describe('auth-register invite-only mode', () => {
     });
     expect(mockGetPlatformSettings).not.toHaveBeenCalled();
     expect(mockExecute).toHaveBeenCalledWith(
-      'INSERT INTO magic_links (token_hash, email, expires_at) VALUES ($1, $2, $3)',
+      expect.stringContaining('INSERT INTO magic_links'),
       expect.arrayContaining(['hash:magic-token', 'new@example.com'])
     );
     expect(mockSendEmail).toHaveBeenCalledOnce();

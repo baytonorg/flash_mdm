@@ -1,3 +1,4 @@
+import { requireEnvironmentLifecyclePermission } from './_lib/scope-authority.js';
 import { deleteEnvironmentData } from './_lib/environment-deletion.js';
 import { lockMembershipWorkspaces } from './_lib/membership-lifecycle.js';
 import type { Context } from '@netlify/functions';
@@ -466,7 +467,20 @@ export default async (request: Request, _context: Context) => {
       // race a create or assignment update.
       await withSignupLinkReferenceLock(() => transaction(async (client) => {
         await lockMembershipWorkspaces(client, [envToDelete.workspace_id]);
+        // Matrix edits lock the environment row independently of its workspace.
+        await client.query('SELECT id FROM environments WHERE id = $1 FOR UPDATE', [action]);
+        await requireEnvironmentLifecyclePermission(client, auth, action, 'delete');
         accessCleanup = await deleteEnvironmentData(client, action, confirmAccessCleanup);
+        await logAudit({
+          workspace_id: envToDelete.workspace_id,
+          user_id: auth.user.id,
+          action: 'environment.deleted',
+          resource_type: 'environment',
+          resource_id: action,
+          ...(auth.authType === 'api_key' && auth.apiKey?.environment_id === action ? { api_key_id: null } : {}),
+          details: { access_cleanup_confirmed: confirmAccessCleanup, ...accessCleanup },
+          ip_address: getClientIp(request),
+        }, client);
       }));
     } catch (err) {
       if (err instanceof Response) return err;
@@ -485,16 +499,7 @@ export default async (request: Request, _context: Context) => {
       throw err;
     }
 
-    await logAudit({
-      workspace_id: envToDelete.workspace_id,
-      user_id: auth.user.id,
-      action: 'environment.deleted',
-      resource_type: 'environment',
-      resource_id: action,
-      ...(auth.authType === 'api_key' && auth.apiKey?.environment_id === action ? { api_key_id: null } : {}),
-      details: { access_cleanup_confirmed: confirmAccessCleanup, ...accessCleanup },
-      ip_address: getClientIp(request),
-    });
+
 
     return jsonResponse({ message: 'Environment deleted' });
   }

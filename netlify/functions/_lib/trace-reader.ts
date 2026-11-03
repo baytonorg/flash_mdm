@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { readdir, lstat, open } from "node:fs/promises";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
+import type { FileHandle } from "node:fs/promises";
 import { traceWindow } from "./trace-writer.js";
 
 export type TraceRecord = {
@@ -16,6 +16,43 @@ export type TraceRecord = {
   scope?: Record<string, string>;
   data: Record<string, unknown>;
 };
+function object(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function timestamp(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) &&
+    Number.isFinite(Date.parse(value))
+  );
+}
+function parseRecord(line: string): TraceRecord {
+  const r: unknown = JSON.parse(line);
+  if (
+    !object(r) ||
+    r.schema !== 1 ||
+    !timestamp(r.time) ||
+    typeof r.event !== "string" ||
+    !object(r.data) ||
+    !Object.values(r.data).every(
+      (v) =>
+        v === null ||
+        ["string", "boolean", "number"].includes(typeof v) ||
+        (Array.isArray(v) && v.every((item) => typeof item === "string")),
+    ) ||
+    ![r.route, r.feature, r.request_id, r.span_id].every(
+      (v) => v === undefined || typeof v === "string",
+    ) ||
+    (r.actor !== undefined &&
+      (!object(r.actor) ||
+        typeof r.actor.type !== "string" ||
+        ![r.actor.id, r.actor.email, r.actor.operator_id].every(
+          (v) => v === undefined || typeof v === "string",
+        )))
+  )
+    throw new Error("Invalid trace record");
+  return r as TraceRecord;
+}
 const TRACE_FILE =
   /^(\d{4}-\d{2}-\d{2})\.(web|worker|operator|test)\.\d+(?:-[a-f0-9]{8})?\.\d{5}\.ndjson$/;
 const HEALTH_FILE =
@@ -56,11 +93,51 @@ export async function traceStatus(directory: string) {
     try {
       const handle = await open(
         join(directory, file.name),
-        constants.O_RDONLY | constants.O_NOFOLLOW,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
       );
       try {
-        if (file.bytes > 16384) throw new Error("Invalid health record");
-        health.push(JSON.parse(await handle.readFile("utf8")));
+        const stat = await handle.stat();
+        if (!stat.isFile() || stat.size > 16384)
+          throw new Error("Invalid health record");
+        const writer = JSON.parse(await handle.readFile("utf8"));
+        if (
+          !object(writer) ||
+          writer.schema !== 1 ||
+          writer.window !== file.window ||
+          !["web", "worker", "test", "operator", "retention"].includes(
+            String(writer.component),
+          ) ||
+          !timestamp(writer.observed_at) ||
+          typeof writer.closed !== "boolean" ||
+          (writer.component !== "retention" &&
+            (!timestamp(writer.started_at) ||
+              !timestamp(writer.window_started_at))) ||
+          ![
+            writer.dropped,
+            writer.write_errors,
+            writer.budget_evictions,
+            writer.heartbeat_gaps,
+          ].every(
+            (n) =>
+              n === undefined ||
+              (typeof n === "number" && Number.isSafeInteger(n) && n >= 0),
+          )
+        )
+          throw new Error("Invalid writer health");
+        health.push(
+          writer as {
+            window: string;
+            component: string;
+            observed_at: string;
+            closed: boolean;
+            started_at?: string;
+            window_started_at?: string;
+            dropped?: number;
+            write_errors?: number;
+            budget_evictions?: number;
+            heartbeat_gaps?: number;
+          },
+        );
       } finally {
         await handle.close();
       }
@@ -117,7 +194,7 @@ export async function readTraceTail(
     const start = Math.max(0, file.bytes - length);
     const handle = await open(
       join(directory, file.name),
-      constants.O_RDONLY | constants.O_NOFOLLOW,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
     ).catch(() => null);
     if (!handle) continue;
     let buffer: Buffer;
@@ -135,12 +212,11 @@ export async function readTraceTail(
       if (!line) continue;
       let record: TraceRecord;
       try {
-        record = JSON.parse(line);
+        record = parseRecord(line);
       } catch {
         invalid++;
         continue;
       }
-      if (record.schema !== 1 || !record.time || !record.data) continue;
       rows.push(record);
     }
   }
@@ -167,7 +243,10 @@ export async function readTraceTail(
             (value) =>
               value?.toLowerCase().includes(options.actor!.toLowerCase()),
           )) &&
-        (!options.requestId || record.request_id === options.requestId) &&
+        (!options.requestId ||
+          record.request_id === options.requestId ||
+          (record.event.startsWith("ui.") &&
+            record.data.server_request_id === options.requestId)) &&
         (options.outcome !== "problems" || isTraceProblem(record)),
     );
   matching.sort((a, b) => b.time.localeCompare(a.time));
@@ -183,7 +262,7 @@ export async function readTraceTail(
 export function isTraceProblem(record: TraceRecord): boolean {
   if (record.data.outcome === "challenge") return false;
   return (
-    /failure|exception|crash|rejection|invalid|collection_gap|console\.(warn|error)/.test(
+    /failure|exception|crash|rejection|invalid|collection_gap|ui\.(javascript_error|react_error)|console\.(warn|error)/.test(
       record.event,
     ) ||
     [
@@ -195,30 +274,89 @@ export function isTraceProblem(record: TraceRecord): boolean {
       "dead",
       "delivery_uncertain",
     ].includes(String(record.data.outcome)) ||
+    ["delivery_uncertain", "failed", "error", "partial", "degraded"].includes(
+      String(record.data.result_status),
+    ) ||
     Number(record.data.status) >= 400 ||
     ["failed", "errors", "results_failed", "errors_count"].some(
       (key) => Number(record.data[key]) > 0,
     )
   );
 }
-export async function* streamTraceWindow(directory: string, window: string) {
-  const files = (await traceFiles(directory, window))
-    .filter((f) => !f.health)
+export async function* streamTraceWindow(
+  directory: string,
+  window: string,
+  snapshot?: Awaited<ReturnType<typeof traceFiles>>,
+) {
+  const files = (snapshot ?? (await traceFiles(directory, window)))
+    .filter(
+      (f) =>
+        !f.health &&
+        TRACE_FILE.exec(f.name)?.[1] === window &&
+        Number.isSafeInteger(f.bytes) &&
+        f.bytes >= 0,
+    )
     .sort((a, b) => a.name.localeCompare(b.name));
+  if (!files.length) throw new Error("Trace window unavailable");
   for (const file of files) {
     const handle = await open(
       join(directory, file.name),
-      constants.O_RDONLY | constants.O_NOFOLLOW,
-    ).catch(() => null);
-    if (!handle) continue;
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    let endsWithNewline = true;
     try {
-      for await (const chunk of handle.createReadStream({ autoClose: false }))
+      if (!(await handle.stat()).isFile())
+        throw new Error("Trace segment unavailable");
+      if (!file.bytes) continue;
+      let read = 0;
+      for await (const chunk of handle.createReadStream({
+        autoClose: false,
+        end: file.bytes - 1,
+      })) {
+        read += chunk.length;
+        endsWithNewline = chunk[chunk.length - 1] === 10;
         yield chunk as Buffer;
+      }
+      if (read !== file.bytes) throw new Error("Trace changed during download");
     } finally {
       await handle.close();
     }
-    yield Buffer.from("\n");
+    if (!endsWithNewline) yield Buffer.from("\n");
   }
+}
+// Bound memory even if a damaged segment has no line breaks. readline would
+// allocate the entire malformed line before the caller can check its length.
+async function* traceLines(file: FileHandle, bytes: number) {
+  let fragments: Buffer[] = [],
+    length = 0,
+    read = 0;
+  for await (const chunk of file.createReadStream({
+    autoClose: false,
+    end: bytes - 1,
+  })) {
+    const buffer = chunk as Buffer;
+    read += buffer.length;
+    let start = 0;
+    while (start < buffer.length) {
+      const lf = buffer.indexOf(10, start);
+      const end = lf === -1 ? buffer.length : lf;
+      length += end - start;
+      if (length <= 8192 && end > start)
+        fragments.push(buffer.subarray(start, end));
+      if (lf === -1) break;
+      yield length > 8192
+        ? null
+        : Buffer.concat(fragments, length).toString("utf8");
+      fragments = [];
+      length = 0;
+      start = lf + 1;
+    }
+  }
+  if (read !== bytes) throw new Error("Trace changed during scan");
+  if (length)
+    yield length > 8192
+      ? null
+      : Buffer.concat(fragments, length).toString("utf8");
 }
 export async function buildTraceReport(
   directory: string,
@@ -226,7 +364,16 @@ export async function buildTraceReport(
   to: Date,
 ) {
   const status = await traceStatus(directory);
-  const files = (await traceFiles(directory)).filter((f) => !f.health);
+  const firstWindow = traceWindow(from),
+    lastWindow = traceWindow(new Date(to.getTime() - 1));
+  const files = (await traceFiles(directory)).filter(
+    (f) =>
+      !f.health &&
+      f.bytes > 0 &&
+      f.window >= firstWindow &&
+      f.window <= lastWindow,
+  );
+  const unavailable = new Set<string>();
   const actors = new Map<
     string,
     {
@@ -241,13 +388,14 @@ export async function buildTraceReport(
       actions: Record<string, number>;
     }
   >();
-  const eventCounts: Record<string, number> = {},
+  const eventCounts: Record<string, number> = Object.create(null),
     routes: Record<string, number> = {},
     statuses: Record<string, number> = {};
   const problems: TraceRecord[] = [];
   const requests = new Map<string, TraceRecord["actor"]>();
   const committedTransactions = new Set<string>();
-  let clientDrops = 0;
+  let clientDrops = 0,
+    clientUnconfirmed = 0;
   let invalid = 0,
     total = 0,
     first: string | null = null,
@@ -260,22 +408,25 @@ export async function buildTraceReport(
     for (const file of files) {
       const handle = await open(
         join(directory, file.name),
-        constants.O_RDONLY | constants.O_NOFOLLOW,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
       ).catch(() => null);
-      if (!handle) continue;
+      if (!handle) {
+        unavailable.add(file.name);
+        continue;
+      }
       try {
-        const lines = createInterface({
-          input: handle.createReadStream({ autoClose: false }),
-          crlfDelay: Infinity,
-        });
-        for await (const line of lines) {
-          if (!line) continue;
-          if (line.length > 8192) {
+        if (!(await handle.stat()).isFile()) {
+          unavailable.add(file.name);
+          continue;
+        }
+        for await (const line of traceLines(handle, file.bytes)) {
+          if (line === null) {
             invalid++;
             continue;
           }
+          if (!line) continue;
           try {
-            const record = JSON.parse(line) as TraceRecord;
+            const record = parseRecord(line);
             const time = Date.parse(record.time);
             if (
               record.schema === 1 &&
@@ -288,6 +439,8 @@ export async function buildTraceReport(
             invalid++;
           }
         }
+      } catch {
+        unavailable.add(file.name);
       } finally {
         await handle.close();
       }
@@ -314,8 +467,10 @@ export async function buildTraceReport(
     first = !first || record.time < String(first) ? record.time : first;
     last = !last || record.time > String(last) ? record.time : last;
     eventCounts[record.event] = (eventCounts[record.event] ?? 0) + 1;
-    if (record.event === "ui.collection_gap")
+    if (record.event === "ui.collection_gap") {
       clientDrops += Number(record.data.dropped) || 0;
+      clientUnconfirmed += Number(record.data.unconfirmed) || 0;
+    }
     if (record.event === "http.end") {
       httpCount++;
       duration += Number(record.data.duration_ms) || 0;
@@ -341,8 +496,8 @@ export async function buildTraceReport(
         http_requests: 0,
         meaningful_events: 0,
         problems: 0,
-        features: {},
-        actions: {},
+        features: Object.create(null),
+        actions: Object.create(null),
       };
       actors.set(key, summary);
     }
@@ -376,21 +531,32 @@ export async function buildTraceReport(
     }
     if (problem && problems.length < 2000) problems.push({ ...record, actor });
   }
-  const writers = (
-    status.writers as Array<{
-      window: string;
-      dropped?: number;
-      write_errors?: number;
-      budget_evictions?: number;
-      started_at?: string;
-      observed_at?: string;
-      closed?: boolean;
-    }>
-  ).filter(
-    (w) =>
-      w.window >= traceWindow(from) &&
-      w.window <= traceWindow(new Date(to.getTime() - 1)),
+  const writers = status.writers.filter(
+    (w) => w.window >= firstWindow && w.window <= lastWindow,
   );
+  const end = Math.min(to.getTime(), Date.now());
+  const components = ["web", "worker"].map((component) => {
+    const intervals = writers
+      .filter((w) => w.component === component && w.window_started_at)
+      .map((w) => ({
+        start: Date.parse(w.window_started_at!),
+        end: Date.parse(w.observed_at),
+        gaps: w.heartbeat_gaps,
+        closed: w.closed,
+      }))
+      .filter((i) => i.end >= from.getTime() && i.start <= end)
+      .sort((a, b) => a.start - b.start);
+    let coveredTo = from.getTime();
+    // Rotation and the heartbeat timer are asynchronous. Two heartbeat periods
+    // allow ordinary handoffs while revealing stopped components and outages.
+    let incomplete = intervals.length === 0 || end <= coveredTo;
+    for (const interval of intervals) {
+      if (interval.start > coveredTo + 120000 || interval.gaps !== 0)
+        incomplete = true;
+      coveredTo = Math.max(coveredTo, interval.end);
+    }
+    return { component, incomplete: incomplete || coveredTo + 120000 < end };
+  });
   const firstCollection =
     writers
       .map((w) => w.started_at)
@@ -402,10 +568,15 @@ export async function buildTraceReport(
     to: to.toISOString(),
     coverage: {
       collection_started_at: firstCollection,
+      components,
+      component_coverage_incomplete: components.some((c) => c.incomplete),
+      unavailable_files: unavailable.size,
+      invalid_health_records: status.invalid_health_records,
       collection_started_after_from:
         !firstCollection || Date.parse(firstCollection) > from.getTime(),
       first_event: first,
       client_reported_drops: clientDrops,
+      client_unconfirmed_events: clientUnconfirmed,
       last_event: last,
       invalid_lines: invalid,
       unclosed_stale_writers: writers.filter(
@@ -416,6 +587,7 @@ export async function buildTraceReport(
             Math.min(Date.now(), to.getTime()) - 120_000,
       ).length,
       actor_correlation_limited: actorCorrelationLimited,
+      transaction_correlation_limited: committedTransactions.size >= 250_000,
       actor_limit_reached: actors.size >= 20_000,
       problem_examples_limited: problems.length >= 2000,
       dropped_events: writers.reduce((n, w) => n + (w.dropped ?? 0), 0),

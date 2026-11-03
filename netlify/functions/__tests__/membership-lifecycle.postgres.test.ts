@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { beforeAll, beforeEach, afterAll, describe, it, expect } from 'vitest';
+import { beforeAll, beforeEach, afterAll, describe, it, expect, vi } from 'vitest';
 import pg from 'pg';
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -27,6 +27,18 @@ import { traceHttp, closeOperationalTrace } from '../_lib/operational-trace.js';
 import { mkdtemp, rm, readdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+import registerHandler from '../auth-register.js';
+import { requireEnvironmentLifecyclePermission } from '../_lib/scope-authority.js';
+import startMagic from '../auth-magic-link-start.js';
+import { sendEmail } from '../_lib/resend.js';
+import verifyMagic from '../auth-magic-link-verify.js';
+import loginHandler from '../auth-login.js';
+import bindingHandler from '../environment-bind.js';
+import { prepareAmapiCall } from '../_lib/amapi.js';
+
+vi.mock('../_lib/resend.js', async original => ({ ...await original<typeof import('../_lib/resend.js')>(), sendEmail: vi.fn() }));
+vi.mock('../_lib/amapi.js', async original => ({ ...await original<typeof import('../_lib/amapi.js')>(), prepareAmapiCall: vi.fn() }));
 
 const url = process.env.MEMBERSHIP_TEST_DATABASE_URL;
 const suite = url ? describe : describe.skip;
@@ -284,14 +296,22 @@ suite('membership lifecycle with PostgreSQL and actual handlers', () => {
       const admin=await traceHandler(request(ownerToken),{} as never);expect(admin.status).toBe(200);
       expect((await traceHandler(request(targetToken),{} as never)).status).toBe(403);
       expect((await traceHandler(new Request('http://localhost/api/superadmin/operational-trace',{headers:{authorization:'Bearer '+key.token}}),{} as never)).status).toBe(403);
-      const event=new Request('http://localhost/api/activity',{method:'POST',headers:{cookie:'flash_session='+targetToken,'content-type':'application/json','x-requested-with':'XMLHttpRequest'},body:JSON.stringify({events:[{kind:'navigation',route:'/policies',actor:{type:'human',id:owner},password:'fixture-never-log-this',client_time:'2026-11-03 (fixture-never-log-this)'}]})});
+      const bind = async (token?: string) => {
+        const res = await traceHandler(new Request('http://localhost/api/activity', {
+          method: 'POST', headers: { 'x-requested-with': 'XMLHttpRequest', ...(token ? { cookie: 'flash_session='+token } : {}) },
+          body: JSON.stringify({ events: [] }),
+        }), {} as never);
+        expect(res.status).toBe(204);
+        return res.headers.get('X-Flash-Activity-Binding')!;
+      };
+      const event=new Request('http://localhost/api/activity',{method:'POST',headers:{'X-Flash-Activity-Binding':await bind(targetToken),cookie:'flash_session='+targetToken,'content-type':'application/json','x-requested-with':'XMLHttpRequest'},body:JSON.stringify({events:[{kind:'navigation',route:'/policies',actor:{type:'human',id:owner},password:'fixture-never-log-this',client_time:'2026-11-03 (fixture-never-log-this)'}]})});
       expect((await traceHttp(event,()=>traceHandler(event,{} as never))).status).toBe(204);
       await closeOperationalTrace();
       const text=(await Promise.all((await readdir(directory)).filter(n=>n.endsWith('.ndjson')).map(n=>readFile(join(directory,n),'utf8')))).join('');
       expect(text).not.toContain('fixture-never-log-this');
       const navigation=text.trim().split('\n').map(l=>JSON.parse(l)).find(e=>e.event==='ui.navigation');
       expect(navigation.actor.id).toBe(target);expect(navigation.feature).toBe('policies');
-      const anonymous=new Request('http://localhost/api/activity',{method:'POST',headers:{'content-type':'application/json','x-requested-with':'XMLHttpRequest'},body:JSON.stringify({events:[{kind:'invalid',route:'/login',actor:{type:'human',id:owner}}]})});
+      const anonymous=new Request('http://localhost/api/activity',{method:'POST',headers:{'X-Flash-Activity-Binding':await bind(),'content-type':'application/json','x-requested-with':'XMLHttpRequest'},body:JSON.stringify({events:[{kind:'invalid',route:'/login',actor:{type:'human',id:owner}}]})});
       expect((await traceHttp(anonymous,()=>traceHandler(anonymous,{} as never))).status).toBe(204);
       const malformed=new Request('http://localhost/api/activity',{method:'POST',headers:{'content-type':'application/json','x-requested-with':'XMLHttpRequest'},body:'null'});
       expect((await traceHandler(malformed,{} as never)).status).toBe(400);
@@ -476,6 +496,233 @@ suite('membership lifecycle with PostgreSQL and actual handlers', () => {
     expect((await pool.query('SELECT 1 FROM environment_memberships WHERE user_id=$1',[other])).rowCount).toBe(0);
   });
 
+
+  async function fixtureSession(userId: string) {
+    await pool.query("INSERT INTO sessions(user_id,workspace_id,environment_id,token_hash,expires_at) VALUES($1,$2,$3,$4,now()+interval '1 day')",
+      [userId,workspace,env,hashToken('review-session')]);
+    return {cookie:'flash_session=review-session','x-requested-with':'XMLHttpRequest','content-type':'application/json'};
+  }
+
+  it('denies implicit workspace and child owner promotion, including removal of a lower override',async()=>{
+    await pool.query("UPDATE workspace_memberships SET role=CASE WHEN user_id=$1 THEN 'admin' ELSE 'owner' END WHERE user_id IN ($1,$2)",[other,target]);
+    const headers=await fixtureSession(other);
+    const edit=(extra:Record<string,unknown>)=>workspaceHandler(new Request('http://localhost/api/workspaces/users/access',{
+      method:'PUT',headers,body:JSON.stringify({workspace_id:workspace,user_id:target,access_scope:'workspace',...extra}),
+    }),{} as never);
+    expect((await edit({workspace_role:'owner'})).status).toBe(403);
+    expect((await edit({})).status).toBe(403);
+    // Keeping an existing environment owner and group admin is a permitted no-op.
+    expect((await edit({access_scope:'scoped',environment_ids:[env],group_ids:[group]})).status).toBe(200);
+    // Removing the group admin constraint reveals the inherited environment owner.
+    expect((await edit({access_scope:'scoped',environment_ids:[env]})).status).toBe(403);
+    expect((await pool.query('SELECT role,access_scope FROM workspace_memberships WHERE user_id=$1',[target])).rows[0]).toEqual({role:'owner',access_scope:'scoped'});
+  });
+
+  it('rechecks deletion permission after waiting for a membership demotion',async()=>{
+    const headers=await fixtureSession(target);
+    const lock=await pool.connect();
+    try {
+      await lock.query('BEGIN');
+      await lock.query('SELECT id FROM workspaces WHERE id=$1 FOR UPDATE',[workspace]);
+      const response=environmentHandler(new Request('http://localhost/api/environments/'+env,{method:'DELETE',headers}),{} as never);
+      let waiting=false;
+      for(let i=0;i<100 && !waiting;i++) {
+        waiting=!!(await pool.query("SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE 'SELECT id FROM workspaces WHERE id = $1 FOR UPDATE%'")).rowCount;
+        if(!waiting)await new Promise(resolve=>setTimeout(resolve,20));
+      }
+      await lock.query("UPDATE environment_memberships SET role='viewer' WHERE user_id=$1",[target]);
+      await lock.query('COMMIT');
+      expect(waiting).toBe(true);
+      expect((await response).status).toBe(403);
+      expect((await pool.query('SELECT 1 FROM environments WHERE id=$1',[env])).rowCount).toBe(1);
+    } finally {await lock.query('ROLLBACK');lock.release();}
+  });
+
+  it('rolls an environment deletion back when the terminal audit fails',async()=>{
+    const headers=await fixtureSession(owner);
+    await pool.query("ALTER TABLE audit_log ADD CONSTRAINT fixture_terminal_audit CHECK(action <> 'environment.deleted') NOT VALID");
+    try {
+      const response=await environmentHandler(new Request('http://localhost/api/environments/'+env,{method:'DELETE',headers}),{} as never);
+      expect(response.status).toBe(500);
+      expect((await pool.query('SELECT 1 FROM environments WHERE id=$1',[env])).rowCount).toBe(1);
+    } finally {await pool.query('ALTER TABLE audit_log DROP CONSTRAINT fixture_terminal_audit');}
+  });
+
+  it('reconciles a legacy direct policy when no scope assignment applies',async()=>{
+    const f=await topologyFixture();
+    await pool.query('UPDATE devices SET policy_id=$1 WHERE id=$2',[f.policy,f.device]);
+    expect((await currentDevicePolicy(f.device))?.policy_id).toBe(f.fallback);
+    await pool.query("DELETE FROM policy_assignments WHERE scope_type='environment'");
+    expect((await currentDevicePolicy(f.device))?.policy_id).toBe(f.policy);
+  });
+
+  it('blocks unknown cascade columns on known offboarding tables',async()=>{
+    await pool.query('ALTER TABLE policy_versions ADD COLUMN fixture_dependency uuid REFERENCES users(id) ON DELETE CASCADE');
+    try {expect((await userDeletionPreflight(pool,target)).blockers.join(' ')).toContain('public.policy_versions');}
+    finally {await pool.query('ALTER TABLE policy_versions DROP COLUMN fixture_dependency');}
+  });
+
+  async function registerFixture(email:string,extra:Record<string,unknown>) {
+    vi.stubEnv('RESEND_API_KEY','synthetic-mail-adapter');
+    try {
+      return await registerHandler(new Request('http://localhost/api/auth/register',{method:'POST',
+        headers:{'content-type':'application/json','x-forwarded-for':'127.0.0.1'},
+        body:JSON.stringify({email,first_name:'Fixture',last_name:'User',...extra}),
+      }),{} as never);
+    } finally {vi.unstubAllEnvs();}
+  }
+
+  it('keeps signup-link accounts email-first even when the API caller supplies a password',async()=>{
+    const email='claimed@fixture.invalid',password='syntheticpassphrasehere';
+    await pool.query('TRUNCATE rate_limit_buckets');
+    await pool.query("INSERT INTO signup_links(scope_type,scope_id,token_hash,allowed_domains) VALUES('workspace',$1,$2,ARRAY['fixture.invalid'])",[workspace,hashToken('fixture-registration')]);
+    expect((await registerFixture('wrong@denied.invalid',{signup_link_token:'fixture-registration',password})).status).toBe(403);
+    expect((await registerFixture(email,{signup_link_token:'fixture-registration',password})).status).toBe(201);
+    const login=await loginHandler(new Request('http://localhost/api/auth/login',{method:'POST',headers:{'content-type':'application/json','x-requested-with':'XMLHttpRequest'},body:JSON.stringify({email,password})}),{} as never);
+    expect(login.status).toBe(401);
+    expect((await pool.query('SELECT 1 FROM magic_links WHERE used_at IS NULL AND email=$1',[email])).rowCount).toBe(1);
+  });
+
+  it('consumes only the exact live platform offer before creating its new workspace',async()=>{
+    await pool.query('TRUNCATE rate_limit_buckets');
+    const email='platform@fixture.invalid';
+    const register=(token:string)=>registerFixture(email,{redirect_path:'/invite/'+token,password:'syntheticpassphrasehere',workspace_name:'Fixture workspace'});
+    await pool.query("INSERT INTO user_invites(workspace_id,email,token_hash,role,invited_by,expires_at,permissions) VALUES(NULL,$1,$2,'member',$3,now()+interval '1 day',$4)",[email,hashToken('genuine-offer'),owner,{invite_type:'platform_access'}]);
+    expect((await register('wrong-offer')).status).toBe(403);
+    await pool.query('UPDATE users SET is_superadmin=false WHERE id=$1',[owner]);
+    expect((await register('genuine-offer')).status).toBe(409);
+    expect((await pool.query('SELECT 1 FROM users WHERE email=$1',[email])).rowCount).toBe(0);
+    await pool.query('UPDATE users SET is_superadmin=true WHERE id=$1',[owner]);
+    await pool.query('TRUNCATE rate_limit_buckets'); // Isolate the positive control from deliberate failed attempts.
+    expect((await register('genuine-offer')).status).toBe(201);
+    expect((await pool.query('SELECT status FROM user_invites WHERE email=$1',[email])).rows[0].status).toBe('accepted');
+    const passwordLogin=()=>loginHandler(new Request('http://localhost/api/auth/login',{method:'POST',
+      headers:{'content-type':'application/json','x-requested-with':'XMLHttpRequest'},body:JSON.stringify({email,password:'syntheticpassphrasehere'}),
+    }),{} as never);
+    expect((await passwordLogin()).status).toBe(401);
+    await pool.query("INSERT INTO magic_links(token_hash,email,expires_at) VALUES($1,$2,now()+interval '1 minute')",[hashToken('synthetic-mail-link'),email]);
+    expect((await verifyMagic(new Request('http://localhost/api/auth/magic-link-verify?token=synthetic-mail-link'),{} as never)).headers.has('set-cookie')).toBe(true);
+    expect((await passwordLogin()).status).toBe(401);
+
+  });
+
+  it.each(['token','slug'])('rejects a rotated signup %s even if public settings stayed identical',async(kind)=>{
+    await pool.query('TRUNCATE rate_limit_buckets');
+    await pool.query("INSERT INTO signup_links(scope_type,scope_id,token_hash,slug) VALUES('workspace',$1,$2,'old-fixture')",[workspace,hashToken('fixture-before')]);
+    const c=await pool.connect();
+    try {
+      await c.query('SELECT pg_advisory_lock(1179404627,1936289387)');
+      const started=new Date();
+      const result=registerFixture('rotation@fixture.invalid',{signup_link_token:kind==='token'?'fixture-before':'old-fixture'});
+      let waiting=false;
+      for(let i=0;i<100 && !waiting;i++) {
+        waiting=!!(await pool.query("SELECT 1 FROM pg_stat_activity WHERE query LIKE 'SELECT pg_try_advisory_lock(%' AND query_start >= $1 AND state='idle'",[started])).rowCount;
+        if(!waiting)await new Promise(resolve=>setTimeout(resolve,10));
+      }
+      await c.query("UPDATE signup_links SET token_hash=$1,slug='new-fixture' WHERE scope_id=$2",[hashToken('fixture-after'),workspace]);
+      await c.query('SELECT pg_advisory_unlock(1179404627,1936289387)');
+      expect(waiting).toBe(true);
+      expect((await result).status).toBe(409);
+      expect((await pool.query("SELECT 1 FROM users WHERE email='rotation@fixture.invalid'")).rowCount).toBe(0);
+    } finally {await c.query('SELECT pg_advisory_unlock_all()');c.release();}
+  });
+
+  it('checks the confirmed enterprise and serialises replacement binding across a delayed remote delete',async()=>{
+    const headers=await fixtureSession(owner);
+    await pool.query("UPDATE environments SET enterprise_name='enterprises/old' WHERE id=$1",[env]);
+    await pool.query("UPDATE workspaces SET gcp_project_id='fixture-project' WHERE id=$1",[workspace]);
+    const send=(expected:string)=>bindingHandler(new Request('http://localhost/api/environments/bind',{method:'POST',headers,
+      body:JSON.stringify({environment_id:env,action:'delete_enterprise',expected_enterprise_name:expected})}),{} as never);
+    vi.mocked(prepareAmapiCall).mockReset();
+    expect((await send('enterprises/stale')).status).toBe(409);
+    expect(prepareAmapiCall).not.toHaveBeenCalled();
+    let dispatchStarted!:()=>void,finish!:()=>void;
+    const started=new Promise<void>(r=>dispatchStarted=r),gate=new Promise<void>(r=>finish=r);
+    vi.mocked(prepareAmapiCall).mockResolvedValueOnce(async()=>{dispatchStarted();await gate;return {};});
+    const response=send('enterprises/old');await started;
+    const replace=pool.query("UPDATE environments SET enterprise_name='enterprises/new' WHERE id=$1",[env]);
+    try {
+      let waiting=false;
+      for(let i=0;i<100 && !waiting;i++) {
+        waiting=!!(await pool.query("SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE 'UPDATE environments SET enterprise_name=%'")).rowCount;
+        if(!waiting)await new Promise(resolve=>setTimeout(resolve,10));
+      }
+      expect(waiting).toBe(true);
+    } finally {finish();await replace;}
+    expect((await response).status).toBe(200);
+    expect((await pool.query('SELECT enterprise_name FROM environments WHERE id=$1',[env])).rows[0].enterprise_name).toBe('enterprises/new');
+  });
+
+
+  it('refuses a purge-wide credential confirmation and rolls back on terminal audit failure',async()=>{
+    const headers=await fixtureSession(owner);
+    const key=await fixtureKey({scope:'environment'});
+    const send=()=>superadminHandler(new Request('http://localhost/api/superadmin/actions',{method:'POST',headers,
+      body:JSON.stringify({action:'purge_data',target_id:workspace,params:{support_reason:'fixture',customer_notice_acknowledged:true,confirm_environment_access_cleanup:true}}),
+    }),{} as never);
+    expect((await send()).status).toBe(409);
+    expect((await pool.query('SELECT 1 FROM api_keys WHERE id=$1',[key.id])).rowCount).toBe(1);
+    await pool.query('DELETE FROM api_keys WHERE id=$1',[key.id]); // Disposable fixture only.
+    await pool.query("ALTER TABLE audit_log ADD CONSTRAINT fixture_purge_audit CHECK(action <> 'superadmin.workspace.purged') NOT VALID");
+    try {
+      expect((await send()).status).toBe(500);
+      expect((await pool.query('SELECT 1 FROM environments WHERE id=$1',[env])).rowCount).toBe(1);
+    } finally {await pool.query('ALTER TABLE audit_log DROP CONSTRAINT fixture_purge_audit');}
+  });
+
+  it('serialises sign-in link issuance with account offboarding and email reuse',async()=>{
+    const blocker=await pool.connect();
+    await blocker.query('SELECT pg_advisory_lock(872113)');
+    await pool.query("CREATE FUNCTION fixture_pause_identity_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock(872113); RETURN OLD; END $$; CREATE TRIGGER fixture_pause_delete BEFORE DELETE ON users FOR EACH ROW EXECUTE FUNCTION fixture_pause_identity_delete()");
+    vi.stubEnv('RESEND_API_KEY','synthetic-mail-adapter'); vi.mocked(sendEmail).mockClear();
+    try{
+      const deletion=deleteUserAccount({userId:target,actorUserId:owner,ip:'',confirmationEmail:'target@fixture.invalid',endSessionsAndCredentials:true});
+      async function waitForBlocked(pattern:string){
+        for(let i=0;i<100;i++){
+          if((await pool.query("SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query ILIKE $1",[pattern])).rowCount)return;
+          await new Promise(r=>setTimeout(r,15));
+        }
+        throw new Error('Expected a fixture query blocked on a lock');
+      }
+      await waitForBlocked('DELETE FROM users WHERE id%');
+      const issuance=startMagic(new Request('http://localhost/api/auth/magic-link-start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:'target@fixture.invalid'})}),{} as never);
+      // Original writer blocks at audit after already storing and sending the
+      // link. The guarded writer waits on the user lock before inserting it.
+      await waitForBlocked('%INSERT INTO%');
+      await blocker.query('SELECT pg_advisory_unlock(872113)');
+      await deletion;
+      expect((await issuance).status).toBe(200);
+      await pool.query("INSERT INTO users(email) VALUES('target@fixture.invalid')");
+      expect(sendEmail).not.toHaveBeenCalled();
+      expect((await pool.query("SELECT 1 FROM magic_links WHERE email='target@fixture.invalid'")).rowCount).toBe(0);
+      // An older orphaned email-only link also cannot authenticate this successor.
+      await pool.query("INSERT INTO magic_links(token_hash,email,created_at,expires_at) VALUES($1,'target@fixture.invalid',now()-interval '1 hour',now()+interval '1 minute')",[hashToken('synthetic-orphan')]);
+      const verified=await verifyMagic(new Request('http://localhost/api/auth/magic-link-verify?token=synthetic-orphan'),{} as never);
+      expect(verified.headers.has('set-cookie')).toBe(false);
+    }finally{
+      await blocker.query('SELECT pg_advisory_unlock_all()');blocker.release();
+      await pool.query('DROP TRIGGER fixture_pause_delete ON users; DROP FUNCTION fixture_pause_identity_delete()');
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('rejects a key whose validity ends while a destructive transaction waits for its lock',async()=>{
+    const key=await fixtureKey({scope:'environment',role:'owner'});
+    const auth=await requireAuth(new Request('http://localhost/api/environments/'+env,{headers:{authorization:'Bearer '+key.token}}));
+    await transaction(async client=>{
+      // Fix the PostgreSQL transaction timestamp, then expire the synthetic key
+      // strictly between transaction start and the subsequent authority check.
+      const start=(await client.query('SELECT now() AS started')).rows[0].started;
+      await pool.query("UPDATE api_keys SET expires_at=$2::timestamptz+interval '50 milliseconds' WHERE id=$1",[key.id,start]);
+      await client.query('SELECT pg_sleep(0.08)');
+      const snapshots=(await client.query('SELECT expires_at > now() AS originally_valid, expires_at > clock_timestamp() AS still_valid FROM api_keys WHERE id=$1',[key.id])).rows[0];
+      expect(snapshots).toEqual({originally_valid:true,still_valid:false});
+      await failure(requireEnvironmentLifecyclePermission(client,auth,env,'delete'),403);
+    });
+    await pool.query("INSERT INTO user_invites(workspace_id,email,role,token_hash,invited_by,permissions,expires_at) VALUES($1,'target@fixture.invalid','member','fixture-mixed-issuer',$2,$3,now()+interval '1 day')",
+      [workspace,owner,{issuer_api_key_id:key.id}]);
+    await failure(transaction(c=>applyInviteOffer(c,'fixture-mixed-issuer',target,'target@fixture.invalid')),409);
+  });
   it('runs candidate migrations without activating a server and fails closed on migration errors', async () => {
     const run=()=>spawnSync(process.execPath,['--import','tsx','scripts/run-migrations.ts'],{encoding:'utf8',env:{...process.env,DATABASE_URL:url+'?sslmode=disable',NODE_ENV:'development',MIGRATION_SECRET:'fixture-migration-only',DOTENV_CONFIG_QUIET:'true'}});
     const clean=run();

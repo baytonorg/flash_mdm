@@ -2,7 +2,7 @@ import { applyInviteOffer } from './_lib/invite-membership.js';
 import { withSignupLinkReferenceLock } from './_lib/signup-link-reference-lock.js';
 import { lockMembershipWorkspaces } from './_lib/membership-lifecycle.js';
 import type { Context } from '@netlify/functions';
-import { queryOne, execute, transaction } from './_lib/db.js';
+import { queryOne, transaction } from './_lib/db.js';
 import { generateToken, hashToken } from './_lib/crypto.js';
 import { sendEmail, magicLinkEmail } from './_lib/resend.js';
 import { jsonResponse, errorResponse, parseJsonBody, getClientIp } from './_lib/helpers.js';
@@ -12,10 +12,8 @@ import { consumeToken } from './_lib/rate-limiter.js';
 import { getPlatformSettings } from './_lib/platform-settings.js';
 import { setSessionCookie, SESSION_MAX_AGE_MILLISECONDS } from './_lib/auth.js';
 import { MIN_PASSWORD_LENGTH, MAX_PASSWORD_LENGTH } from './_lib/password-policy.js';
-import {
-  getInviteForAccept,
-  getInviteTypeFromPermissions as getInviteTypeFromPermissionsShared,
-} from './workspace-invite.js';
+import { getInviteTypeFromPermissions as getInviteTypeFromPermissionsShared } from './workspace-invite.js';
+import { storeSigninLink } from './_lib/signin-link.js';
 
 interface RegisterBody {
   email: string;
@@ -51,6 +49,7 @@ export default async (request: Request, _context: Context) => {
   const workspaceName = workspace_name?.trim();
   const redirectPath = sanitizeRedirectPath(body.redirect_path);
   const isInviteRedirect = !!redirectPath && redirectPath.startsWith('/invite/');
+  if (isInviteRedirect && signupLinkToken) return errorResponse('Use one invitation or signup link per registration');
 
   if (!process.env.RESEND_API_KEY) {
     return errorResponse('Email delivery is not configured. Set the RESEND_API_KEY environment variable before allowing registrations.', 503);
@@ -60,18 +59,15 @@ export default async (request: Request, _context: Context) => {
     return errorResponse('Email, first name, and last name are required');
   }
 
-  if (!signupLinkToken && !password) {
-    return errorResponse('Password is required');
+  function validateRegistrationPassword() {
+    if (!password) return errorResponse('Password is required');
+    if (password.length < MIN_PASSWORD_LENGTH) return errorResponse(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
+    if (password.length > MAX_PASSWORD_LENGTH) return errorResponse(`Password must not exceed ${MAX_PASSWORD_LENGTH} characters`);
+    return null;
   }
-
-  if (!signupLinkToken) {
-    if ((password ?? '').length < MIN_PASSWORD_LENGTH) {
-      return errorResponse(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
-    }
-
-    if ((password ?? '').length > MAX_PASSWORD_LENGTH) {
-      return errorResponse(`Password must not exceed ${MAX_PASSWORD_LENGTH} characters`);
-    }
+  if (!signupLinkToken && !isInviteRedirect) {
+    const invalid = validateRegistrationPassword();
+    if (invalid) return invalid;
   }
 
   // Rate limit by IP: 3 registrations per hour
@@ -85,19 +81,23 @@ export default async (request: Request, _context: Context) => {
   const userCount = await queryOne<{ count: string }>('SELECT COUNT(*) as count FROM users', []);
   const isFirstUser = parseInt(userCount?.count ?? '0', 10) === 0;
   let pendingInvite: { id: string; permissions?: unknown } | null = null;
-  if (!isFirstUser && isInviteRedirect) {
-    pendingInvite = await queryOne<{ id: string; permissions?: unknown }>(
-      `SELECT id, permissions FROM user_invites
-       WHERE email = $1 AND status = 'pending' AND expires_at > now()
-       LIMIT 1`,
-      [email]
-    );
+  const inviteTokenHash = isInviteRedirect ? hashToken(redirectPath!.slice('/invite/'.length).split('/')[0]) : null;
+  if (!isFirstUser && inviteTokenHash) {
+    pendingInvite = await queryOne(`SELECT id, permissions FROM user_invites
+      WHERE token_hash = $1 AND lower(email) = $2 AND status = 'pending' AND expires_at > now()`, [inviteTokenHash, email]);
+    if (!pendingInvite) return errorResponse('Invitation is invalid or no longer available', 403);
   }
   const pendingInviteType = getInviteTypeFromPermissionsShared(pendingInvite?.permissions);
   const isWorkspaceInviteOnboardingRegistration = !!pendingInvite && pendingInviteType === 'workspace_access';
+  const isPlatformInvite = !!pendingInvite && pendingInviteType === 'platform_access';
+  if (isInviteRedirect && !isPlatformInvite) {
+    const invalid = validateRegistrationPassword();
+    if (invalid) return invalid;
+  }
 
   // Resolve signup link if provided
   let resolvedSignupLink: ResolvedSignupLink | null = null;
+  let resolvedBySlug = false;
   if (signupLinkToken) {
     const tokenHash = hashToken(signupLinkToken);
     resolvedSignupLink = await queryOne<ResolvedSignupLink>(
@@ -110,6 +110,7 @@ export default async (request: Request, _context: Context) => {
     );
     // Also try by slug
     if (!resolvedSignupLink) {
+      resolvedBySlug = true;
       resolvedSignupLink = await queryOne<ResolvedSignupLink>(
         `SELECT id, scope_type, scope_id, default_role, default_access_scope,
                 auto_assign_environment_ids, auto_assign_group_ids, allow_environment_creation,
@@ -151,12 +152,12 @@ export default async (request: Request, _context: Context) => {
   }
 
   // Check if user already exists - return generic response to prevent enumeration
-  const existing = await queryOne('SELECT id FROM users WHERE email = $1', [email]);
+  const existing = await queryOne<{id: string}>('SELECT id FROM users WHERE email = $1', [email]);
   if (existing) {
     // Burn comparable password-hash work before returning to reduce timing-based enumeration.
     void hashPassword(password ?? '__signup_link_passwordless_register__');
     if (signupLinkToken) {
-      await issueMagicLink(email, redirectPath);
+      await issueMagicLink(existing.id, email, redirectPath);
     }
     return jsonResponse({ message: 'Account created. Check your email to sign in.' }, 201);
   }
@@ -172,17 +173,7 @@ export default async (request: Request, _context: Context) => {
     }
   }
 
-  const passwordHash = password ? hashPassword(password) : null;
-
-  // For workspace invite registrations, resolve the full invite data before the transaction
-  let fullInvite: Awaited<ReturnType<typeof getInviteForAccept>> | null = null;
-  if (isWorkspaceInviteOnboardingRegistration) {
-    const inviteToken = redirectPath!.split('/invite/')[1]?.split('/')[0] ?? '';
-    if (inviteToken) {
-      const inviteTokenHash = hashToken(inviteToken);
-      fullInvite = await getInviteForAccept(inviteTokenHash);
-    }
-  }
+  const passwordHash = password && !signupLinkToken && !isPlatformInvite ? hashPassword(password) : null;
 
   // Create everything in a transaction
   const createAccount = () => transaction(async (client) => {
@@ -191,8 +182,9 @@ export default async (request: Request, _context: Context) => {
     await client.query('SELECT pg_advisory_xact_lock(42)');
     const recheck = await client.query<{ count: string }>('SELECT COUNT(*) as count FROM users');
     const confirmedFirstUser = parseInt(recheck.rows[0]?.count ?? '0', 10) === 0;
+    if (isFirstUser !== confirmedFirstUser) throw errorResponse('Registration state changed. Please retry.', 409);
     if (resolvedSignupLink) {
-      const current = (await client.query('SELECT * FROM signup_links WHERE id = $1 AND enabled = true FOR SHARE', [resolvedSignupLink.id])).rows[0];
+      const current = (await client.query(`SELECT * FROM signup_links WHERE id = $1 AND enabled = true AND ${resolvedBySlug ? 'slug' : 'token_hash'} = $2 FOR SHARE`, [resolvedSignupLink.id, resolvedBySlug ? signupLinkToken!.toLowerCase() : hashToken(signupLinkToken!)])).rows[0];
       if (!current || Object.entries(resolvedSignupLink).some(([key, value]) => JSON.stringify(current[key]) !== JSON.stringify(value))) throw errorResponse('Signup link changed. Reload the link and try again.', 409);
       const scope = current.scope_type === 'workspace' ? current.scope_id : (await client.query('SELECT workspace_id FROM environments WHERE id = $1', [current.scope_id])).rows[0]?.workspace_id;
       if (!scope) throw errorResponse('Signup scope no longer exists', 409);
@@ -207,11 +199,11 @@ export default async (request: Request, _context: Context) => {
       [userId, email, passwordHash, first_name, last_name, confirmedFirstUser]
     );
 
+    if (pendingInvite && inviteTokenHash) {
+      const applied = await applyInviteOffer(client, inviteTokenHash, userId, email);
+      if (applied.alreadyAccepted) throw errorResponse('Invitation has already been used', 409);
+    }
     if (isWorkspaceInviteOnboardingRegistration) {
-      if (!fullInvite) throw errorResponse('Invitation is no longer available', 409);
-      const inviteToken = redirectPath!.split('/invite/')[1]?.split('/')[0] ?? '';
-      await applyInviteOffer(client, hashToken(inviteToken), userId, email);
-
       // Audit
       await client.query(
         `INSERT INTO audit_log (user_id, action, resource_type, resource_id, details, ip_address)
@@ -225,12 +217,20 @@ export default async (request: Request, _context: Context) => {
             is_superadmin: confirmedFirstUser,
             invited_onboarding: true,
             invite_type: pendingInviteType,
-            invite_auto_accepted: !!fullInvite,
+            invite_auto_accepted: true,
           }),
           getClientIp(request),
         ]
       );
-      return;
+      const sessionToken = generateToken();
+      const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MILLISECONDS);
+      await client.query(`INSERT INTO sessions (token_hash, user_id, workspace_id, ip_address, user_agent, expires_at)
+        SELECT $1, $2, wm.workspace_id, $3, $4, $5 FROM workspace_memberships wm
+        JOIN user_invites i ON i.workspace_id = wm.workspace_id WHERE wm.user_id = $2 AND i.id = $6`,
+        [hashToken(sessionToken), userId, ip, request.headers.get('user-agent'), expiresAt, pendingInvite!.id]);
+      await client.query('UPDATE users SET last_login_at = now(), last_login_ip = $1, last_login_method = $2 WHERE id = $3',
+        [ip, 'invite_registration', userId]);
+      return {userId, sessionToken};
     }
 
     // Signup link registration branch
@@ -359,7 +359,7 @@ export default async (request: Request, _context: Context) => {
           getClientIp(request),
         ]
       );
-      return;
+      return {userId};
     }
 
     // Create workspace
@@ -414,47 +414,22 @@ export default async (request: Request, _context: Context) => {
       [workspaceId, environmentId, userId, 'auth.register', 'user', userId,
        JSON.stringify({ is_superadmin: confirmedFirstUser, workspace_name: workspaceName }), getClientIp(request)]
     );
+    return { userId };
   });
 
-  await (resolvedSignupLink ? withSignupLinkReferenceLock(createAccount) : createAccount());
-
-  // For workspace invite onboarding: create session directly and skip magic link
-  if (isWorkspaceInviteOnboardingRegistration) {
-    // Look up the newly created user
-    const newUser = await queryOne<{ id: string }>('SELECT id FROM users WHERE email = $1', [email]);
-    if (newUser) {
-      const sessionToken = generateToken();
-      const sessionTokenHash = hashToken(sessionToken);
-      const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MILLISECONDS);
-
-      // Look up workspace membership for session
-      const membership = await queryOne<{ workspace_id: string }>(
-        'SELECT workspace_id FROM workspace_memberships WHERE user_id = $1 LIMIT 1',
-        [newUser.id]
-      );
-
-      await execute(
-        `INSERT INTO sessions (token_hash, user_id, workspace_id, ip_address, user_agent, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [sessionTokenHash, newUser.id, membership?.workspace_id ?? null, ip, request.headers.get('user-agent'), expiresAt]
-      );
-
-      // Update last login
-      await execute(
-        'UPDATE users SET last_login_at = now(), last_login_ip = $1, last_login_method = $2 WHERE id = $3',
-        [ip, 'invite_registration', newUser.id]
-      );
-
-      return jsonResponse(
-        { message: 'Account created and invite accepted.', session_set: true, redirect: '/' },
-        201,
-        { 'Set-Cookie': setSessionCookie(sessionToken) }
-      );
-    }
+  let account;
+  try {
+    account = await (resolvedSignupLink ? withSignupLinkReferenceLock(createAccount) : createAccount());
+    if (account.sessionToken) return jsonResponse(
+      { message: 'Account created and invite accepted.', session_set: true, redirect: '/' }, 201,
+      { 'Set-Cookie': setSessionCookie(account.sessionToken) });
+  } catch (err) {
+    if (err instanceof Response) return err;
+    throw err;
   }
 
-  // Send magic link for login (self-signup and platform invites)
-  await issueMagicLink(email, redirectPath);
+  // A platform invitation is already consumed with its new workspace.
+  await issueMagicLink(account.userId, email, isPlatformInvite ? '/' : redirectPath);
 
   return jsonResponse({ message: 'Account created. Check your email to sign in.' }, 201);
 };
@@ -465,13 +440,10 @@ function sanitizeRedirectPath(value: string | undefined): string | null {
   return value;
 }
 
-async function issueMagicLink(email: string, redirectPath: string | null): Promise<void> {
+async function issueMagicLink(userId: string, email: string, redirectPath: string | null): Promise<void> {
   const token = generateToken();
   const tokenHash = hashToken(token);
-  await execute(
-    'INSERT INTO magic_links (token_hash, email, expires_at) VALUES ($1, $2, $3)',
-    [tokenHash, email, new Date(Date.now() + 15 * 60 * 1000)]
-  );
+  if (!await storeSigninLink(userId, email, tokenHash, new Date(Date.now() + 15 * 60 * 1000))) return;
 
   const baseUrl = process.env.URL ?? process.env.DEPLOY_PRIME_URL ?? 'http://localhost:8888';
   const magicUrl = `${baseUrl}/api/auth/magic-link-verify?token=${token}${

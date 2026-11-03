@@ -22,7 +22,7 @@ export async function applyInviteOffer(client: PoolClient, tokenHash: string, us
   if (!user.rows.length) throw errorResponse('The signed-in account no longer exists', 409);
   const metadata = typeof invite.permissions === 'string' ? JSON.parse(invite.permissions) : invite.permissions;
   if (!invite.workspace_id) {
-    const issuer = await client.query('SELECT is_superadmin FROM users WHERE id = $1', [invite.invited_by]);
+    const issuer = await client.query('SELECT is_superadmin FROM users WHERE id = $1 FOR SHARE', [invite.invited_by]);
     if (metadata?.invite_type !== 'platform_access' || !issuer.rows[0]?.is_superadmin) throw errorResponse('The invite issuer no longer has authority to grant this access', 409);
   } else {
     const workspaceId = invite.workspace_id;
@@ -33,7 +33,8 @@ export async function applyInviteOffer(client: PoolClient, tokenHash: string, us
     if (envs.rows.length !== envIds.length || groups.rows.length !== groupIds.length) throw errorResponse('An invited scope no longer exists in this workspace', 409);
     const issuer = await client.query(`SELECT u.is_superadmin, wm.role, wm.access_scope FROM users u
       LEFT JOIN workspace_memberships wm ON wm.user_id = u.id AND wm.workspace_id = $2 WHERE u.id = $1`, [invite.invited_by, workspaceId]);
-    const key = metadata?.issuer_api_key_id ? (await client.query(`SELECT * FROM api_keys WHERE id = $1 AND workspace_id = $2 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())`, [metadata.issuer_api_key_id, workspaceId])).rows[0] : null;
+    const key = metadata?.issuer_api_key_id ? (await client.query(`SELECT * FROM api_keys WHERE id = $1 AND workspace_id = $2 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > clock_timestamp()) FOR SHARE`, [metadata.issuer_api_key_id, workspaceId])).rows[0] : null;
+    if (metadata?.issuer_api_key_id && !key) throw errorResponse('The invite issuer key is no longer authorised', 409);
     const workspace = await client.query('SELECT settings FROM workspaces WHERE id = $1', [workspaceId]);
     const matrix = mergePermissionMatrixWithDefaults(workspace.rows[0]?.settings?.rbac?.permission_matrix);
     const scoped = envIds.length > 0 || groupIds.length > 0;

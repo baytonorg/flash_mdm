@@ -34,6 +34,7 @@ export const config = {
   type: 'background',
 };
 
+const TRACE_JOB_TYPES = new Set('process_event process_enrollment process_status_report process_command process_usage_logs process_enterprise_upgrade bulk_command workflow_evaluate command_reconcile device_command device_policy_reconcile device_delete webhook'.split(' '));
 const MAX_ATTEMPTS = 5;
 const BATCH_SIZE = 50;
 const BULK_UPSERT_CHUNK_SIZE = 250;
@@ -59,6 +60,7 @@ interface Job {
   payload: unknown;
   attempts: number;
   max_attempts?: number;
+  status?: string;
 }
 
 interface DeviceLineageRow {
@@ -1660,7 +1662,7 @@ export default async (request: Request, _context: Context) => {
       // Claim due jobs and atomically recover expired worker leases. A stale
       // lease consumes an attempt because the prior worker may have performed
       // part of the job before it stopped.
-      const jobs = await transaction(async (client) => {
+      const claimed = await transaction(async (client) => {
         const result = await client.query(
           `WITH candidates AS (
              SELECT id, status, COALESCE(attempts, 0) AS attempts,
@@ -1719,21 +1721,27 @@ export default async (request: Request, _context: Context) => {
                AND pe.message_id = claimed.payload ->> 'event_message_id'
              RETURNING pe.id
            )
-           SELECT id, job_type, environment_id, payload, attempts, max_attempts
-           FROM claimed
-           WHERE status = 'locked'`,
+           SELECT id, job_type, environment_id, payload, attempts, max_attempts, status
+           FROM claimed`,
           [BATCH_SIZE, MAX_ATTEMPTS, `sync-${process.pid}`]
         );
         return result.rows as Job[];
       });
 
+      const jobs = claimed.filter(job => job.status !== 'dead');
+      for (const job of claimed) {
+        if (job.status === 'dead') traceEvent('job.transition', {
+          job_id: job.id, status: 'dead', outcome: 'dead', attempts: job.attempts, reason: 'expired_lease',
+        });
+      }
       if (jobs.length === 0) break;
 
       console.log(`Processing batch ${batchNum + 1}: ${jobs.length} jobs`);
 
     for (const job of jobs) {
       const traceStarted = performance.now();
-      traceEvent('job.start', { job_id: job.id, job_type: job.job_type, environment_id: job.environment_id, attempt: job.attempts + 1 });
+      const traceJobType = TRACE_JOB_TYPES.has(job.job_type) ? job.job_type : 'other';
+      traceEvent('job.start', { job_id: job.id, job_type: traceJobType, environment_id: job.environment_id, attempt: job.attempts + 1 });
       try {
         const payload = parseJobPayload(job.payload);
 
@@ -1864,6 +1872,7 @@ export default async (request: Request, _context: Context) => {
                  WHERE id = $1`,
                 [job.id]
               );
+              traceEvent('job.transition', { job_id: job.id, status: 'pending', retry_after_seconds: 5 });
               continue;
             }
             break;
@@ -2026,6 +2035,7 @@ export default async (request: Request, _context: Context) => {
                WHERE id = $1`,
               [job.id, `Unhandled job type: ${job.job_type}`]
             );
+            traceEvent('job.transition', { job_id: job.id, status: 'dead', outcome: 'dead', reason: 'unknown_job_type' });
             continue; // Skip the "mark completed" below
           }
         }
@@ -2037,9 +2047,9 @@ export default async (request: Request, _context: Context) => {
            WHERE id = $1`,
           [job.id]
         );
-        traceEvent('job.completed', { job_id: job.id, job_type: job.job_type, environment_id: job.environment_id, outcome: 'success' });
+        traceEvent('job.completed', { job_id: job.id, job_type: traceJobType, environment_id: job.environment_id, outcome: 'success' });
       } catch (err) {
-        traceEvent('job.failure', { job_id: job.id, job_type: job.job_type, environment_id: job.environment_id, attempt: job.attempts + 1, ...traceError(err) });
+        traceEvent('job.failure', { job_id: job.id, job_type: traceJobType, environment_id: job.environment_id, attempt: job.attempts + 1, ...traceError(err) });
         if (isDatabaseInfrastructureError(err)) {
           // The claim remains leased. Do not guess whether a preceding write or
           // external action committed, and do not spend a job attempt on an outage.
@@ -2099,7 +2109,7 @@ export default async (request: Request, _context: Context) => {
           }
         }
       } finally {
-        traceEvent('job.end', { job_id: job.id, job_type: job.job_type, duration_ms: Math.round(performance.now() - traceStarted) });
+        traceEvent('job.end', { job_id: job.id, job_type: traceJobType, duration_ms: Math.round(performance.now() - traceStarted) });
       }
     }
 

@@ -274,7 +274,7 @@ describe('superadmin-actions security boundaries', () => {
     } as never);
     mockQueryOne.mockResolvedValueOnce({ id: 'ws_1' } as never);
 
-    const txQuery = vi.fn().mockResolvedValue({ rows: [{ id: 'env_1' }], rowCount: 1 });
+    const txQuery = vi.fn().mockResolvedValue({ rows: [{ id: 'env_1', is_superadmin: true }], rowCount: 1 });
     mockTransaction.mockImplementationOnce(async fn => fn({ query: txQuery } as never));
     const res = await handler(makeRequest({ action: 'purge_data', target_id: 'ws_1',
       params: { support_reason: 'Customer requested workspace reset', customer_notice_acknowledged: true } }), {} as never);

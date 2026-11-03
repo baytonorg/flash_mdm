@@ -36,8 +36,8 @@
 2. Validates required fields (`email`, `password`, `first_name`, `last_name`) and password length.
 3. **Rate limiting**: per-IP, 3 registrations per hour.
 4. **First-user bootstrap**: checks user count. First user becomes `is_superadmin`. If `BOOTSTRAP_SECRET` env var is set, the request must include a matching `x-bootstrap-secret` header (timing-safe comparison).
-5. **Invite resolution**: if the redirect path starts with `/invite/`, looks up a pending invite for the email.
-6. **Signup link resolution**: if `signup_link_token` is provided, resolves it by token hash or slug. Validates email domain against allowed domains if configured.
+5. **Invite resolution**: if the redirect path starts with `/invite/`, requires the exact pending token and matching email. Registration locks and consumes the offer and rechecks the issuer before provisioning access. A platform invite creates a new workspace. Its recipient signs in using the emailed link and can set a password through email-based password reset. A pre-verification password is never stored for a platform invite.
+6. **Signup link resolution**: if `signup_link_token` is provided, resolves it by token hash or slug. Validates email domain against allowed domains if configured. The transaction revalidates the submitted token hash or slug. Signup-link accounts start passwordless even if a caller supplies a password.
 7. **Invite-only gate**: when `invite_only_registration` is enabled in platform settings, blocks registration unless there is a pending invite or a valid signup link. First-user bootstrap bypasses this gate.
 8. **Existing user check**: returns a generic 201 response (with dummy hash work) to prevent enumeration.
 9. **Transaction** (with advisory lock `pg_advisory_xact_lock(42)` to prevent first-user race conditions):

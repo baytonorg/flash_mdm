@@ -66,6 +66,15 @@ describe('validateSession', () => {
     expect(mockExecute.mock.calls[0]?.[1]?.[1]).toBe('sess_hash_1');
   });
 
+  it('identifies a near-expiry session without renewing it for passive diagnostics', async () => {
+    mockQueryOne.mockResolvedValueOnce(makeSessionRow({
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+    }));
+    const request = new Request('http://localhost/api/activity', { headers: { cookie: 'flash_session=fixture' } });
+    expect((await validateSession(request, { renew: false }))?.user.id).toBe('user_1');
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
   it('does not renew session expiry when outside renewal window', async () => {
     const fixedNow = new Date('2026-02-22T12:00:00.000Z').getTime();
     vi.spyOn(Date, 'now').mockReturnValue(fixedNow);

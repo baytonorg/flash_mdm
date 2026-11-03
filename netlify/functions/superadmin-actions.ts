@@ -84,7 +84,7 @@ export default async function handler(request: Request, _context: Context) {
         return handleRunMigrations(request, auth.user.id, ip);
 
       case 'purge_data':
-        return handlePurgeData(body.target_id, auth.user.id, ip, body.params);
+        return await handlePurgeData(body.target_id, auth.user.id, ip, body.params);
 
       default:
         return errorResponse(`Unknown action: ${body.action}`);
@@ -612,26 +612,26 @@ async function handlePurgeData(
 
   await withSignupLinkReferenceLock(() => transaction(async (client) => {
     await lockMembershipWorkspaces(client, [workspaceId]);
+    const actor = await client.query('SELECT is_superadmin FROM users WHERE id = $1 FOR SHARE', [userId]);
+    if (!actor.rows[0]?.is_superadmin) throw errorResponse('Current superadmin authority is required to purge a workspace', 403);
     const environments = await client.query('SELECT id FROM environments WHERE workspace_id = $1 ORDER BY id', [workspaceId]);
     for (const environment of environments.rows) {
-      await deleteEnvironmentData(client, environment.id, params?.confirm_environment_access_cleanup === true);
+      await deleteEnvironmentData(client, environment.id, false);
     }
     await client.query(`DELETE FROM licenses WHERE workspace_id = $1`, [workspaceId]);
+    await logAudit({
+      workspace_id: workspaceId,
+      user_id: userId,
+      action: 'superadmin.workspace.purged',
+      resource_type: 'workspace',
+      resource_id: workspaceId,
+      details: {
+        support_reason: supportReason,
+        customer_notice_acknowledged: true,
+      },
+      ip_address: ip,
+    }, client);
   }));
-  // Keep the workspace and members but all operational data is purged
-
-  await logAudit({
-    workspace_id: workspaceId,
-    user_id: userId,
-    action: 'superadmin.workspace.purged',
-    resource_type: 'workspace',
-    resource_id: workspaceId,
-    details: {
-      support_reason: supportReason,
-      customer_notice_acknowledged: true,
-    },
-    ip_address: ip,
-  });
 
   return jsonResponse({ message: 'Workspace data purged' });
 }

@@ -1,5 +1,5 @@
 import type { Context } from '@netlify/functions';
-import { execute } from './_lib/db.js';
+import { execute, queryOne } from './_lib/db.js';
 
 export const config = {
   schedule: '0 3 * * *',
@@ -19,24 +19,14 @@ export default async (_request: Request, _context: Context) => {
   const commandOperationRetentionDays = parsePositiveInt(process.env.COMMAND_OPERATION_RETENTION_DAYS, 180);
 
   try {
-    // Delete expired sessions
-    results.expired_sessions = await deleteInBatches(
-      'sessions',
-      `expires_at < now()`
-    );
-
-    // Delete expired magic links
-    results.expired_magic_links = await deleteInBatches(
-      'magic_links',
-      `expires_at < now()`
-    );
-
-    // Delete expired invites
-    const invites = await execute(
-      `UPDATE user_invites SET status = 'expired'
-       WHERE status = 'pending' AND expires_at < now()`
-    );
-    results.expired_invites = invites.rowCount;
+    // Maintenance reports credential candidates for operator review without mutation.
+    for (const [key, table, predicate] of [
+      ['expired_sessions', 'sessions', 'expires_at < now()'],
+      ['expired_magic_links', 'magic_links', 'expires_at < now()'],
+      ['expired_invites', 'user_invites', "status = 'pending' AND expires_at < now()"],
+    ]) {
+      await observeCredentials(results, key, table, predicate);
+    }
 
     // Archive old pubsub events (older than 30 days)
     const archivedEvents = await execute(
@@ -59,19 +49,11 @@ export default async (_request: Request, _context: Context) => {
       `last_refill_at < now() - interval '24 hours'`
     );
 
-    // Clear stale or legacy pending TOTP setup blobs.
-    const staleTotpSetup = await execute(
-      `UPDATE users
-       SET totp_pending_enc = NULL,
-           totp_pending_created_at = NULL,
-           updated_at = now()
-       WHERE totp_pending_enc IS NOT NULL
-         AND (
-           totp_pending_created_at IS NULL
-           OR totp_pending_created_at < now() - interval '1 day'
-         )`
-    );
-    results.stale_totp_pending_secrets = staleTotpSetup.rowCount;
+    await observeCredentials(results, 'stale_totp_pending_secrets', 'users',
+      `totp_pending_enc IS NOT NULL AND (
+        totp_pending_created_at IS NULL
+        OR totp_pending_created_at < now() - interval '1 day'
+      )`);
 
     // Retain audit logs for a bounded period (default 30 days)
     results.deleted_audit_log_rows = await deleteInBatches(
@@ -165,6 +147,21 @@ export default async (_request: Request, _context: Context) => {
     });
   }
 };
+
+async function observeCredentials(
+  results: Record<string, number>, key: string, table: string, predicate: string
+): Promise<void> {
+  // Table and predicate come exclusively from the fixed maintenance definitions above.
+  const row = await queryOne<{ count: number }>(
+    `SELECT count(*)::int AS count FROM (
+       SELECT 1 FROM ${table} WHERE ${predicate} LIMIT $1
+     ) candidates`, [DELETE_BATCH_SIZE + 1]
+  );
+  const count = row?.count ?? 0;
+  results[key] = 0; // Legacy mutation count stays zero for response compatibility.
+  results[`observed_${key}`] = Math.min(count, DELETE_BATCH_SIZE);
+  results[`observed_${key}_truncated`] = Number(count > DELETE_BATCH_SIZE);
+}
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? '', 10);

@@ -1,4 +1,5 @@
 import type { Context } from "@netlify/functions";
+import { createHmac, randomBytes } from "node:crypto";
 import { Readable } from "node:stream";
 import { validateSession, requireSuperadmin } from "./_lib/auth.js";
 import {
@@ -19,35 +20,65 @@ import {
   normaliseTracePath,
 } from "../../shared/trace-contract.js";
 
-const buckets = new Map<string, { at: number; count: number }>();
+// Only derived, process-local quota keys live in memory. Anonymous browsers have
+// individual allowances and share a separate ceiling against rotating client IDs.
+const processKey = randomBytes(32);
+function opaque(label: string, value: string) {
+  return createHmac("sha256", processKey)
+    .update(label)
+    .update("\0")
+    .update(value)
+    .digest("base64url");
+}
+// Restarting the collector resets these fixed one-minute budgets. Separate
+// pre-authentication limits bound database work even for invented cookies.
+function minuteQuota(totalLimit: number) {
+  let until = 0,
+    total = 0;
+  const counts = new Map<string, number>();
+  return (key: string, limit: number) => {
+    const now = Date.now();
+    if (now >= until) {
+      until = now + 60_000;
+      total = 0;
+      counts.clear();
+    }
+    const used = counts.get(key) ?? 0;
+    if (total >= totalLimit || used >= limit) return false;
+    counts.set(key, used + 1);
+    total++;
+    return true;
+  };
+}
+const beforeSessionLookup = minuteQuota(3000);
+const anonymousUploads = minuteQuota(600);
+const authenticatedUploads = minuteQuota(3000);
 export default async function handler(request: Request, _context: Context) {
   try {
     const url = new URL(request.url);
-    if (url.pathname === "/api/activity" && request.method === "POST") {
+    // POST /api/activity
+    if (url.pathname === "/api/activity") {
+      if (request.method !== "POST")
+        return errorResponse("Method not allowed", 405);
       assertSameOriginRequest(request);
-      if (request.headers.get("authorization"))
+      if (
+        request.headers.has("authorization") ||
+        request.headers.has("x-api-key")
+      )
         return errorResponse("API keys cannot submit browser activity", 403);
       if (request.headers.get("x-requested-with") !== "XMLHttpRequest")
         return errorResponse("Browser activity header required", 403);
-      const auth = await validateSession(request);
       if (!process.env.FLASH_TRACE_DIR)
         return new Response(null, { status: 204 });
-      const id = auth?.user.id ?? "anonymous",
-        now = Date.now();
-      if (buckets.size >= 10_000)
-        for (const [key, bucket] of buckets)
-          if (now - bucket.at > 60_000) buckets.delete(key);
-      const bucket = buckets.get(id);
-      if (!bucket && buckets.size >= 10_000)
-        return errorResponse("Activity collection rate limit", 429);
-      const current =
-        !bucket || now - bucket.at > 60_000 ? { at: now, count: 0 } : bucket;
-      current.count++;
-      buckets.set(id, current);
-      if (current.count > (auth ? 30 : 60))
-        return errorResponse("Activity collection rate limit", 429);
       if (Number(request.headers.get("content-length")) > 16384)
         return errorResponse("Activity batch too large", 413);
+      const client = request.headers.get("X-Flash-Activity-Client");
+      const clientKey = opaque(
+        "browser",
+        client && UUID_PATTERN.test(client) ? client : "unidentified",
+      );
+      if (!beforeSessionLookup(clientKey, 60))
+        return errorResponse("Activity collection rate limit", 429);
       const reader = request.body?.getReader();
       let bytes = 0;
       const chunks: Uint8Array[] = [];
@@ -70,23 +101,70 @@ export default async function handler(request: Request, _context: Context) {
       }
       if (!body || !Array.isArray(body.events) || body.events.length > 50)
         return errorResponse("Invalid activity batch");
-      if (
+      const auth = await validateSession(request, { renew: false });
+      const allowed = auth
+        ? authenticatedUploads(opaque("user", auth.user.id), 30)
+        : anonymousUploads(clientKey, 20);
+      if (!allowed) return errorResponse("Activity collection rate limit", 429);
+      // This comparison is an attribution check, never an authentication method.
+      // Only validateSession establishes the actor. Do not persist either value.
+      const binding = opaque(
+        "activity-session",
+        auth?.sessionId ?? "anonymous",
+      );
+      const supplied = request.headers.get("X-Flash-Activity-Binding");
+      const dropped =
         Number.isInteger(body.dropped) &&
         body.dropped > 0 &&
         body.dropped < 1_000_000
-      )
+          ? body.dropped
+          : 0;
+      const unconfirmed =
+        Number.isInteger(body.unconfirmed) &&
+        body.unconfirmed > 0 &&
+        body.unconfirmed < 1_000_000
+          ? body.unconfirmed
+          : 0;
+      if (supplied !== binding) {
+        const bootstrap =
+          !supplied &&
+          body.events.length === 0 &&
+          !body.dropped &&
+          !body.unconfirmed;
+        if (!bootstrap) {
+          // Record only the loss, never event details from a different session.
+          traceEvent("ui.collection_gap", {
+            dropped: body.events.length + dropped,
+            unconfirmed,
+            reason: "session_changed",
+            client_reported: true,
+          });
+        }
+        return new Response(null, {
+          status: bootstrap ? 204 : 409,
+          headers: {
+            "X-Flash-Activity-Binding": binding,
+            "Cache-Control": "no-store",
+          },
+        });
+      }
+      if (dropped || unconfirmed)
         traceEvent("ui.collection_gap", {
-          dropped: body.dropped,
+          dropped,
+          unconfirmed,
           client_reported: true,
         });
+      let rejected = 0;
       for (const event of body.events) {
         if (
           !event ||
           !CLIENT_EVENTS.has(event.kind) ||
           typeof event.route !== "string" ||
           event.route.length > 2048
-        )
+        ) {
+          rejected++;
           continue;
+        }
         const details: Record<string, unknown> = {
           client_reported: true,
           page: normaliseTracePath(event.route),
@@ -100,16 +178,20 @@ export default async function handler(request: Request, _context: Context) {
           ["Error", "TypeError", "ReferenceError"].includes(event.error_class)
         )
           details.error_class = event.error_class;
-        if (Array.isArray(event.frames))
-          details.frames = event.frames
-            .filter(
-              (frame: unknown) =>
-                typeof frame === "string" &&
-                /^\/assets\/[A-Za-z0-9_.-]{1,128}\.js:\d{1,8}:\d{1,8}$/.test(
-                  frame,
-                ),
-            )
-            .slice(0, 8);
+        if (
+          event.kind === "javascript_error" &&
+          Number.isInteger(event.source_line) &&
+          event.source_line > 0 &&
+          event.source_line <= 100_000_000 &&
+          Number.isInteger(event.source_column) &&
+          event.source_column >= 0 &&
+          event.source_column <= 100_000_000
+        ) {
+          details.source_line = event.source_line;
+          details.source_column = event.source_column;
+        }
+        if (event.kind === "api_result" && event.cancelled === true)
+          details.cancelled = true;
         for (const key of ["interaction_id", "server_request_id"])
           if (typeof event[key] === "string" && UUID_PATTERN.test(event[key]))
             details[key] = event[key];
@@ -147,7 +229,6 @@ export default async function handler(request: Request, _context: Context) {
             event[key] <= 1_000_000
           )
             details[key] = event[key];
-        if (typeof event.checked === "boolean") details.checked = event.checked;
         if (
           typeof event.client_time === "string" &&
           /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(
@@ -158,8 +239,17 @@ export default async function handler(request: Request, _context: Context) {
           details.client_time = event.client_time.slice(0, 32);
         traceEvent("ui." + event.kind, details);
       }
+      if (rejected)
+        traceEvent("ui.collection_gap", {
+          dropped: rejected,
+          reason: "invalid_events",
+          client_reported: true,
+        });
       return new Response(null, { status: 204 });
     }
+    // GET /api/superadmin/operational-trace
+    if (url.pathname !== "/api/superadmin/operational-trace")
+      return errorResponse("Not found", 404);
     await requireSuperadmin(request);
     if (request.method !== "GET")
       return errorResponse("Method not allowed", 405);
@@ -175,14 +265,14 @@ export default async function handler(request: Request, _context: Context) {
     if (window && !/^\d{4}-\d{2}-\d{2}$/.test(window))
       return errorResponse("Invalid log window");
     if (url.searchParams.get("download") === "ndjson") {
-      if (
-        !window ||
-        !(await traceFiles(directory, window)).some((f) => !f.health)
-      )
-        return errorResponse("Log window not found", 404);
+      if (!window) return errorResponse("Log window not found", 404);
+      const files = (await traceFiles(directory, window)).filter(
+        (file) => !file.health,
+      );
+      if (!files.length) return errorResponse("Log window not found", 404);
       return new Response(
         Readable.toWeb(
-          Readable.from(streamTraceWindow(directory, window)),
+          Readable.from(streamTraceWindow(directory, window, files)),
         ) as ReadableStream,
         {
           headers: {

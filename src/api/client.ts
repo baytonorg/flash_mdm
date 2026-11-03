@@ -1,4 +1,4 @@
-import { recordApiResult, recordApiFailure, activityInteraction, withActivityIdentityBoundary } from '@/lib/operationalActivity';
+import { recordApiResult, recordApiFailure, activityRequestContext, withActivityIdentityBoundary } from '@/lib/operationalActivity';
 export class ApiError extends Error {
   status: number;
   data: unknown;
@@ -25,7 +25,7 @@ class ApiClient {
       path === '/api/auth/magic-link-complete' ||
       path === '/api/auth/password-reset-complete';
     const started = performance.now();
-    const interactionId = activityInteraction();
+    const activity = activityRequestContext();
     const response = await fetch(url, {
       ...options,
       credentials: 'include',
@@ -35,14 +35,23 @@ class ApiClient {
         ...options.headers,
       },
     }).catch(error => {
-      recordApiFailure(error, performance.now() - started, interactionId, path);
+      recordApiFailure(error, performance.now() - started, activity, path);
       throw error;
     });
 
-    recordApiResult(response, performance.now() - started, interactionId, path);
+    const readBody = async <R>(read: () => Promise<R>) => {
+      try {
+        const result = await read();
+        recordApiResult(response, performance.now() - started, activity, path);
+        return result;
+      } catch (error) {
+        recordApiFailure(error, performance.now() - started, activity, path, response);
+        throw error;
+      }
+    };
     if (!response.ok) {
       // Read body as text first to avoid "body stream already read" errors
-      const text = await response.text();
+      const text = await readBody(() => response.text());
       let data: unknown;
       try {
         data = JSON.parse(text);
@@ -80,8 +89,11 @@ class ApiClient {
       throw new ApiError(message, response.status, data);
     }
 
-    if (response.status === 204) return {} as T;
-    return response.json() as Promise<T>;
+    if (response.status === 204) {
+      recordApiResult(response, performance.now() - started, activity, path);
+      return {} as T;
+    }
+    return readBody(() => response.json() as Promise<T>);
   }
 
   get<T>(path: string, options: Pick<RequestInit, 'signal'> = {}): Promise<T> {
@@ -93,7 +105,7 @@ class ApiClient {
       method: 'POST',
       body: body ? JSON.stringify(body) : undefined,
     });
-    const identityChange = /^\/api\/auth\/(login|logout|register|magic-link-complete|password-reset-complete)$/.test(path)
+    const identityChange = /^\/api\/auth\/(login|logout|register|magic-link-complete|password-change|password-reset-complete)$/.test(path)
       || (path === '/api/superadmin/actions' && !!body && typeof body === 'object' && 'action' in body && ['impersonate', 'stop_impersonation'].includes(String(body.action)));
     return identityChange ? withActivityIdentityBoundary(send) : send();
   }

@@ -15,7 +15,7 @@ export async function currentDevicePolicy(deviceId: string) {
     LEFT JOIN LATERAL (SELECT pa.policy_id FROM policy_assignments pa WHERE pa.scope_type='device' AND pa.scope_id=d.id LIMIT 1) direct ON true
     LEFT JOIN LATERAL (SELECT pa.policy_id FROM group_closures gc JOIN policy_assignments pa ON pa.scope_type='group' AND pa.scope_id=gc.ancestor_id WHERE gc.descendant_id=d.group_id ORDER BY gc.depth LIMIT 1) inherited ON true
     LEFT JOIN LATERAL (SELECT pa.policy_id FROM policy_assignments pa WHERE pa.scope_type='environment' AND pa.scope_id=d.environment_id LIMIT 1) environment ON true
-    LEFT JOIN policies p ON p.id=COALESCE(direct.policy_id,inherited.policy_id,environment.policy_id) AND p.environment_id=d.environment_id
+    LEFT JOIN policies p ON p.id=COALESCE(direct.policy_id,inherited.policy_id,environment.policy_id,d.policy_id) AND p.environment_id=d.environment_id
     WHERE d.id=$1 AND d.deleted_at IS NULL`, [deviceId]);
 }
 

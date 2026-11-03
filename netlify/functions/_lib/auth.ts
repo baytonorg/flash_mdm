@@ -83,7 +83,7 @@ export function getSessionTokenFromCookie(request: Request): string | null {
 /** @deprecated Use getSessionTokenFromCookie instead */
 export const getSessionIdFromCookie = getSessionTokenFromCookie;
 
-export async function validateSession(request: Request): Promise<SessionAuthContext | null> {
+export async function validateSession(request: Request, { renew = true }: { renew?: boolean } = {}): Promise<SessionAuthContext | null> {
   const sessionToken = getSessionTokenFromCookie(request);
   if (!sessionToken) return null;
 
@@ -185,7 +185,7 @@ export async function validateSession(request: Request): Promise<SessionAuthCont
 
   // Sliding expiration: renew active sessions as they approach expiry.
   const expiresAtMs = new Date(row.expires_at).getTime();
-  if (Number.isFinite(expiresAtMs) && expiresAtMs - Date.now() <= SESSION_RENEW_WINDOW_MS) {
+  if (renew && Number.isFinite(expiresAtMs) && expiresAtMs - Date.now() <= SESSION_RENEW_WINDOW_MS) {
     const renewedExpiresAt = new Date(Date.now() + SESSION_MAX_AGE_MS);
     try {
       await execute('UPDATE sessions SET expires_at = $1 WHERE id = $2', [renewedExpiresAt, row.session_id]);

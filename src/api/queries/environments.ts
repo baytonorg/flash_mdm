@@ -129,10 +129,10 @@ export function useDeleteEnvironment() {
 export function useDeleteEnterprise() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (environment_id: string) =>
+    mutationFn: ({ environment_id, expected_enterprise_name }: { environment_id: string; expected_enterprise_name: string }) =>
       apiClient.post<{ deleted: boolean; previous_enterprise: string | null }>(
         '/api/environments/bind',
-        { environment_id, action: 'delete_enterprise' }
+        { environment_id, expected_enterprise_name, action: 'delete_enterprise' }
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: environmentKeys.all });
