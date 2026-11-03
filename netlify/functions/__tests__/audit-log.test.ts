@@ -36,6 +36,13 @@ function makeRequest(search = '?environment_id=env_1') {
 }
 
 describe('audit-log privileged visibility filtering', () => {
+  it('redacts historical sensitive details and omits IP addresses for exports', async () => {
+    mockRequireEnvPerm.mockResolvedValue('admin' as never);
+    mockQuery.mockResolvedValueOnce([{ id: 'entry', action: 'example', ip_address: '192.0.2.1', details: { token: 'synthetic', nested: { password: 'synthetic', result: 'ok' } } }] as never);
+    const response = await handler(makeRequest('?environment_id=env_1&export=true'), {} as never);
+    expect(response.status).toBe(200);
+    expect((await response.json()).entries).toEqual([{ id: 'entry', action: 'example', details: { token: '[REDACTED]', nested: { password: '[REDACTED]', result: 'ok' } } }]);
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     mockRequireAuth.mockResolvedValue({

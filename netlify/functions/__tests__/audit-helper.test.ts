@@ -11,6 +11,16 @@ import { runWithAuditAuthContext } from '../_lib/request-auth-context.js';
 const mockExecute = vi.mocked(execute);
 
 describe('logAudit', () => {
+  it('preserves key-principal attribution when its backing key was deleted', async () => {
+    await runWithAuditAuthContext({
+      authType: 'api_key', user: { id: 'creator', email: 'fixture@example.invalid' },
+      apiKey: { id: 'deleted-key', name: 'Fixture', scope_type: 'environment', scope_id: 'env', workspace_id: 'ws', environment_id: 'env', role: 'owner', created_by_user_id: 'creator' },
+    }, () => logAudit({ action: 'environment.deleted', api_key_id: null }));
+    const params = mockExecute.mock.calls[0]![1];
+    expect(params[3]).toBeNull();
+    expect(params[5]).toBe('api_key');
+    expect(JSON.parse(String(params[10])).auth_context.principal_id).toBe('deleted-key');
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     mockExecute.mockResolvedValue({ rowCount: 1 } as never);

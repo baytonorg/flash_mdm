@@ -50,7 +50,7 @@ afterAll(async () => { await database.pool?.end(); });
 const post = (id: string, action: string) => bind(new Request('http://localhost/api/environments/bind', {
   method: 'POST', body: JSON.stringify({ environment_id: id, action }),
 }), {} as never);
-const remove = (id: string) => crud(new Request(`http://localhost/api/environments/${id}`, { method: 'DELETE' }), {} as never);
+const remove = (id: string, confirm = false) => crud(new Request(`http://localhost/api/environments/${id}?confirm_access_cleanup=${confirm}`, { method: 'DELETE' }), {} as never);
 
 async function fixture() {
   const q = (sql: string, values: unknown[] = []) => database.pool!.query(sql, values);
@@ -103,21 +103,32 @@ describe.skipIf(!connectionString)('deletion against disposable PostgreSQL with 
     expect((await f.q('SELECT enterprise_name FROM environments WHERE id=$1', [f.env])).rows[0].enterprise_name).toBe('enterprises/fixture');
   });
 
-  it.each(['key', 'environment_link', 'environment_assignment', 'group_link', 'group_assignment'])('blocks %s dependencies without mutating their records', async (dependency) => {
+  it.each(['key', 'environment_link', 'environment_assignment', 'group_link', 'group_assignment'])('requires confirmation then cleans up %s dependencies', async (dependency) => {
     const f = await fixture();
     const user = (await f.q("INSERT INTO users (email) VALUES ($1) RETURNING id", [`${f.env}@example.invalid`])).rows[0].id;
+    const otherEnv = (await f.q("INSERT INTO environments (workspace_id, name) VALUES ($1, 'Other') RETURNING id", [f.ws])).rows[0].id;
+    const otherGroup = (await f.q("INSERT INTO groups (environment_id, name) VALUES ($1, 'Other group') RETURNING id", [otherEnv])).rows[0].id;
     if (dependency === 'key') {
       await f.q("INSERT INTO api_keys (name, scope_type, workspace_id, environment_id, token_hash, token_enc, token_prefix, created_by_user_id) VALUES ('Synthetic', 'environment', $1, $2, $4, 'synthetic-no-access', 'fixture', $3)", [f.ws, f.env, user, f.env]);
     } else {
       const group = (await f.q("INSERT INTO groups (environment_id, name) VALUES ($1, 'Fixture') RETURNING id", [f.env])).rows[0].id;
       const scopeType = dependency === 'environment_link' ? 'environment' : dependency === 'group_link' ? 'group' : 'workspace';
       const scopeId = scopeType === 'environment' ? f.env : scopeType === 'group' ? group : f.ws;
-      await f.q('INSERT INTO signup_links (scope_type, scope_id, token_hash, auto_assign_environment_ids, auto_assign_group_ids) VALUES ($1, $2, $3, $4, $5)', [scopeType, scopeId, f.env, JSON.stringify(dependency === 'environment_assignment' ? [f.env] : []), JSON.stringify(dependency === 'group_assignment' ? [group] : [])]);
+      await f.q('INSERT INTO signup_links (scope_type, scope_id, token_hash, auto_assign_environment_ids, auto_assign_group_ids) VALUES ($1, $2, $3, $4, $5)', [scopeType, scopeId, f.env, JSON.stringify(dependency === 'environment_assignment' ? [f.env, otherEnv] : []), JSON.stringify(dependency === 'group_assignment' ? [group, otherGroup] : [])]);
     }
     expect((await remove(f.env)).status).toBe(409);
     expect((await f.q('SELECT * FROM api_keys WHERE environment_id=$1', [f.env])).rowCount).toBe(dependency === 'key' ? 1 : 0);
     expect((await f.q('SELECT * FROM signup_links WHERE token_hash=$1', [f.env])).rowCount).toBe(dependency === 'key' ? 0 : 1);
     expect((await f.q('SELECT * FROM environments WHERE id=$1', [f.env])).rowCount).toBe(1);
+    expect((await remove(f.env, true)).status).toBe(200);
+    expect((await f.q('SELECT * FROM api_keys WHERE environment_id=$1', [f.env])).rowCount).toBe(0);
+    const remainingLinks = (await f.q('SELECT * FROM signup_links WHERE token_hash=$1', [f.env])).rows;
+    if (dependency.endsWith('_assignment')) {
+      expect(remainingLinks).toHaveLength(1);
+      expect(remainingLinks[0].auto_assign_environment_ids).toEqual(dependency === 'environment_assignment' ? [otherEnv] : []);
+      expect(remainingLinks[0].auto_assign_group_ids).toEqual(dependency === 'group_assignment' ? [otherGroup] : []);
+    } else expect(remainingLinks).toHaveLength(0);
+    expect((await f.q('SELECT * FROM environments WHERE id=$1', [otherEnv])).rowCount).toBe(1);
     expect(amapiCall).not.toHaveBeenCalled();
   });
 
@@ -186,12 +197,17 @@ describe.skipIf(!connectionString)('deletion against disposable PostgreSQL with 
 
   it('rolls back all local cleanup on a later environment-delete failure', async () => {
     const f = await fixture();
+    const user = (await f.q('INSERT INTO users (email) VALUES ($1) RETURNING id', [`${f.env}@example.invalid`])).rows[0].id;
+    await f.q("INSERT INTO api_keys (name, scope_type, workspace_id, environment_id, token_hash, token_enc, token_prefix, created_by_user_id) VALUES ('Synthetic', 'environment', $1, $2, $4, 'synthetic-no-access', 'fixture', $3)", [f.ws, f.env, user, f.env]);
+    await f.q("INSERT INTO signup_links (scope_type, scope_id, token_hash) VALUES ('environment', $1, $2)", [f.env, f.env]);
     await f.q(`CREATE FUNCTION fixture_reject_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic delete failure'; END $$`);
     await f.q('CREATE TRIGGER fixture_reject_delete BEFORE DELETE ON environments FOR EACH ROW EXECUTE FUNCTION fixture_reject_delete()');
     try {
-      expect((await remove(f.env)).status).toBe(500);
+      expect((await remove(f.env, true)).status).toBe(500);
       expect((await f.q('SELECT environment_id FROM audit_log WHERE workspace_id=$1', [f.ws])).rows[0].environment_id).toBe(f.env);
       expect((await f.q('SELECT * FROM devices WHERE id=$1', [f.device])).rowCount).toBe(1);
+      expect((await f.q('SELECT * FROM api_keys WHERE environment_id=$1', [f.env])).rowCount).toBe(1);
+      expect((await f.q('SELECT * FROM signup_links WHERE scope_id=$1', [f.env])).rowCount).toBe(1);
     } finally {
       await f.q('DROP TRIGGER fixture_reject_delete ON environments');
       await f.q('DROP FUNCTION fixture_reject_delete()');

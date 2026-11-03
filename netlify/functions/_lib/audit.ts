@@ -5,7 +5,7 @@ interface AuditEntry {
   workspace_id?: string;
   environment_id?: string;
   user_id?: string;
-  api_key_id?: string;
+  api_key_id?: string | null;
   device_id?: string;
   actor_type?: 'user' | 'system' | 'api_key';
   visibility_scope?: 'standard' | 'privileged';
@@ -75,7 +75,7 @@ function applyRequestAuthAttribution(entry: AuditEntry): AuditEntry {
     ...entry,
     actor_type: 'api_key',
     user_id: undefined,
-    api_key_id: entry.api_key_id ?? currentAuth.apiKey.id,
+    api_key_id: entry.api_key_id !== undefined ? entry.api_key_id : currentAuth.apiKey.id,
     details: {
       ...(entry.details ?? {}),
       auth_context: {
