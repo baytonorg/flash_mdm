@@ -88,6 +88,7 @@ export default async function handler(request: Request, _context: Context) {
           client_reported: true,
           page: normaliseTracePath(event.route),
         };
+        if (typeof event.api_route === 'string' && event.api_route.length <= 2048) details.api_route = normaliseTracePath(event.api_route);
         if (['Error', 'TypeError', 'ReferenceError'].includes(event.error_class)) details.error_class = event.error_class;
         if (Array.isArray(event.frames)) details.frames = event.frames.filter((frame: unknown) => typeof frame === 'string' && /^\/assets\/[A-Za-z0-9_.-]{1,128}\.js:\d{1,8}:\d{1,8}$/.test(frame)).slice(0, 8);
         for (const key of ["interaction_id", "server_request_id"])

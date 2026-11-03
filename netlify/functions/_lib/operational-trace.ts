@@ -264,6 +264,12 @@ export async function traceHttp(
   };
   if (component() === "worker")
     ctx.gate = { records: [], open: false, queries: 0 };
+  const resourceScopes: Record<string, string> = { workspaces: 'workspace_id', environments: 'environment_id', groups: 'group_id', devices: 'device_id', policies: 'policy_id', apps: 'app_id', networks: 'network_id', workflows: 'workflow_id', geofences: 'geofence_id' };
+  const segments = url.pathname.split('/').filter(Boolean);
+  if (segments[0] === 'api') for (let index = 1; index < segments.length - 1; index++) {
+    const scope = resourceScopes[segments[index]];
+    if (scope && UUID_PATTERN.test(segments[index + 1])) ctx.scope[scope] = segments[index + 1];
+  }
   for (const key of [
     "workspace_id",
     "environment_id",

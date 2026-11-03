@@ -40,12 +40,19 @@ function errorDetails(error: unknown) {
   } catch { return { error_class: 'Error', frames: [] }; }
 }
 export function reportReactError(error?: unknown) { recordActivity('react_error', errorDetails(error)); }
-export function recordApiResult(response: Response, duration: number, interactionId?: string) {
+export function recordApiResult(response: Response, duration: number, interactionId?: string, path?: string) {
   recordActivity("api_result", {
     server_request_id: response.headers.get("X-Flash-Request-ID"),
     status: response.status,
     duration_ms: Math.round(duration),
     interaction_id: interactionId,
+    api_route: path ? normaliseTracePath(path) : undefined,
+  });
+}
+export function recordApiFailure(error: unknown, duration: number, interactionId?: string, path?: string) {
+  recordActivity(error instanceof Error && error.name === 'AbortError' ? 'api_result' : 'api_failure', {
+    ...errorDetails(error), status: 0, duration_ms: Math.round(duration),
+    interaction_id: interactionId, api_route: path ? normaliseTracePath(path) : undefined,
   });
 }
 async function flushActivity() {

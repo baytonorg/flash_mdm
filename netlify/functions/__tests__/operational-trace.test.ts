@@ -106,6 +106,7 @@ describe('correlated request evidence', () => {
   it('does not place exception messages or raw paths in structured errors', () => {
     const error = new Error('fixture password=supersecret'); expect(JSON.stringify(traceError(error))).not.toContain('supersecret');
     expect(normaliseTracePath('/join/w/secret-slug?password=supersecret')).toBe('/join/w/:value');
+    expect(normaliseTracePath('/api/devices/:id')).toBe('/api/devices/:id');
     expect(responseOutcome({ token: 'secret', success: true, results: [{ ok: false }] })).toEqual({ success: true, results_count: 1, results_failed: 1 });
   });
   it('shows pre-authentication spans under the established request actor when filtering',async()=>{

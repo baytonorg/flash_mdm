@@ -1,4 +1,4 @@
-import { recordApiResult, activityInteraction, withActivityIdentityBoundary } from '@/lib/operationalActivity';
+import { recordApiResult, recordApiFailure, activityInteraction, withActivityIdentityBoundary } from '@/lib/operationalActivity';
 export class ApiError extends Error {
   status: number;
   data: unknown;
@@ -34,9 +34,12 @@ class ApiClient {
         'X-Requested-With': 'XMLHttpRequest',
         ...options.headers,
       },
+    }).catch(error => {
+      recordApiFailure(error, performance.now() - started, interactionId, path);
+      throw error;
     });
 
-    recordApiResult(response, performance.now() - started, interactionId);
+    recordApiResult(response, performance.now() - started, interactionId, path);
     if (!response.ok) {
       // Read body as text first to avoid "body stream already read" errors
       const text = await response.text();

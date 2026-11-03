@@ -8,6 +8,8 @@ export const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 for (const segment of [
   ".netlify",
+  ":id",
+  ":value",
   "functions",
   "sync-process-background",
   "deployment-jobs-background",
@@ -50,6 +52,7 @@ export const CLIENT_EVENTS = new Set([
   "unhandled_rejection",
   "react_error",
   "api_result",
+  "api_failure",
 ]);
 export const OUTCOME_FIELDS = [
   "success",
@@ -100,7 +103,7 @@ export function responseOutcome(
       (r) =>
         r &&
         typeof r === "object" &&
-        (r.ok === false || r.success === false || r.status === "failed"),
+        (r.ok === false || r.success === false || ['failed', 'error', 'delivery_uncertain'].includes(r.status)),
     ).length;
   }
   return output;
