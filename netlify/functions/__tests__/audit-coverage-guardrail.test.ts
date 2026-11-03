@@ -5,6 +5,7 @@ import path from 'node:path';
 const FUNCTIONS_DIR = path.resolve(process.cwd(), 'netlify/functions');
 
 const EXEMPT_MUTATING_HANDLERS = new Map<string, string>([
+  ['operational-trace.ts', 'Browser diagnostic ingestion writes a bounded operational trace, not product state; auditing the logger into audit_log would add recursive noise. Superadmin reads/downloads require platform authority.'],
   ['auth-logout.ts', 'Session cookie/session row invalidation; optional auth.logout audit not yet implemented.'],
   ['auth-session.ts', 'Session metadata flag clear endpoint; low-risk metadata mutation, optional audit.'],
   ['deployment-jobs-background.ts', 'Internal background worker trigger delegates to processDeploymentJob; operational status mutations are tracked on deployment_jobs rows.'],

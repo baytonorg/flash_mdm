@@ -2,6 +2,7 @@ import { query, queryOne, execute } from './db.js';
 import { hashToken } from './crypto.js';
 import { assertSameOriginRequest, attachAuditAuthContextToRequest, markApiKeyAuthenticatedRequest } from './helpers.js';
 import { setCurrentAuditAuthContext } from './request-auth-context.js';
+import { setTraceActor } from './operational-trace.js';
 import type { Context } from '@netlify/functions';
 
 export interface SessionUser {
@@ -179,6 +180,8 @@ export async function validateSession(request: Request): Promise<SessionAuthCont
   }
 
   if (!row) return null;
+
+  setTraceActor({ type: row.impersonated_by ? 'support' : 'human', id: row.id, email: row.email, ...(row.impersonated_by ? { operator_id: row.impersonated_by } : {}) }, { workspace_id: row.workspace_id, environment_id: row.environment_id, group_id: row.active_group_id });
 
   // Sliding expiration: renew active sessions as they approach expiry.
   const expiresAtMs = new Date(row.expires_at).getTime();
@@ -380,6 +383,7 @@ export async function requireAuth(request: Request): Promise<AuthContext> {
   } as const;
 
   setCurrentAuditAuthContext(auditCtx);
+  if (auth.authType === 'api_key') setTraceActor({ type: 'api_key', id: auth.apiKey.id, role: auth.apiKey.role }, { workspace_id: auth.apiKey.workspace_id, environment_id: auth.apiKey.environment_id });
   attachAuditAuthContextToRequest(request, auditCtx);
 
   return auth;

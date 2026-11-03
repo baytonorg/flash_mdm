@@ -1,6 +1,8 @@
 import type { PoolClient } from 'pg';
 import { execute } from './db.js';
 import { getCurrentAuditAuthContext } from './request-auth-context.js';
+import { traceEvent, traceError, traceContext, setTraceActor } from './operational-trace.js';
+import { responseOutcome } from '../../../shared/trace-contract.js';
 
 interface AuditEntry {
   workspace_id?: string;
@@ -118,7 +120,11 @@ export async function logAudit(entry: AuditEntry, client?: PoolClient): Promise<
         attributedEntry.ip_address ?? null,
       ]
     );
+    const ctx = traceContext();
+    if (attributedEntry.action === 'auth.login' && attributedEntry.user_id && ctx?.actor.type === 'anonymous') setTraceActor({ type: 'human', id: attributedEntry.user_id });
+    traceEvent('audit.write', { action: attributedEntry.action, resource_type: attributedEntry.resource_type, resource_id: attributedEntry.resource_id, user_id: attributedEntry.user_id, workspace_id: attributedEntry.workspace_id, environment_id: attributedEntry.environment_id, durability: client ? 'transaction_pending' : 'committed', ...responseOutcome(attributedEntry.details) }, attributedEntry.actor_type === 'system' ? { type: 'system' } : ctx?.actor.type === 'anonymous' && attributedEntry.user_id ? { type: 'anonymous', id: attributedEntry.user_id } : undefined);
   } catch (err) {
+    traceEvent('audit.failure', { action: attributedEntry.action, ...traceError(err) });
     // Lifecycle audit is part of the transaction: failure must roll it back.
     if (client) throw err;
     if (isMissingAuditLogColumnError(err)) {

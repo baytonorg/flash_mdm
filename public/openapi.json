@@ -45,6 +45,59 @@
     }
   },
   "paths": {
+    "/api/activity": {
+      "get": {
+        "operationId": "get_api_activity",
+        "tags": [
+          "activity"
+        ],
+        "summary": "GET /api/activity",
+        "description": "Implemented by Netlify function `operational-trace`.\nRequirement: Auth: superadmin session required (API keys rejected)",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [],
+        "x-flash-auth": {
+          "authModel": "superadmin-session",
+          "apiKeyRejected": true,
+          "workspaceRoles": [],
+          "environmentRoles": [],
+          "workspacePerms": [],
+          "envResourcePerms": [],
+          "groupPerms": []
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
     "/api/api-keys/create": {
       "post": {
         "operationId": "post_api_api_keys_create",
@@ -10131,6 +10184,59 @@
               }
             }
           }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/superadmin/operational-trace": {
+      "get": {
+        "operationId": "get_api_superadmin_operational_trace",
+        "tags": [
+          "superadmin"
+        ],
+        "summary": "GET /api/superadmin/operational-trace",
+        "description": "Implemented by Netlify function `operational-trace`.\nRequirement: Auth: superadmin session required (API keys rejected)",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [],
+        "x-flash-auth": {
+          "authModel": "superadmin-session",
+          "apiKeyRejected": true,
+          "workspaceRoles": [],
+          "environmentRoles": [],
+          "workspacePerms": [],
+          "envResourcePerms": [],
+          "groupPerms": []
         },
         "responses": {
           "200": {

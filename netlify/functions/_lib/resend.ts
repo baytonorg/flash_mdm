@@ -1,4 +1,5 @@
 import { BRAND } from './brand.js';
+import { tracedFetch } from './operational-trace.js';
 import { escapeHtml } from './html.js';
 
 const RESEND_API_URL = 'https://api.resend.com/emails';
@@ -21,7 +22,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<void> {
 
   const from = options.from ?? process.env.RESEND_FROM_EMAIL ?? BRAND.emailFrom;
 
-  const response = await fetch(RESEND_API_URL, {
+  const response = await tracedFetch('mail', 'send', RESEND_API_URL, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,

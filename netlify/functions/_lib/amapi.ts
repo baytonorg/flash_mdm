@@ -1,6 +1,7 @@
 import { checkAmapiRateLimit } from './rate-limiter.js';
 import { decrypt } from './crypto.js';
 import { queryOne } from './db.js';
+import { traceEvent, traceError } from './operational-trace.js';
 
 interface AmapiCallOptions {
   method?: string;
@@ -133,9 +134,12 @@ export async function amapiCall<T = unknown>(
 
   let response: Response | null = null;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const traceStarted = performance.now();
     try {
       response = await fetch(url, fetchOptions);
+      traceEvent('provider.amapi', { method: normalizedMethod, resource_type: /^[A-Za-z]{1,48}$/.test(resourceType) ? resourceType : 'general', workspace_id: workspaceId, attempt: attempt + 1, status: response.status, outcome: response.ok ? 'success' : 'failure', duration_ms: Math.round(performance.now() - traceStarted), retry_safe: retrySafe });
     } catch (err) {
+      traceEvent('provider.amapi', { method: normalizedMethod, workspace_id: workspaceId, attempt: attempt + 1, outcome: 'transport_failure', duration_ms: Math.round(performance.now() - traceStarted), retry_safe: retrySafe, ...traceError(err) });
       if (retrySafe && attempt + 1 < maxAttempts) {
         await sleepBeforeSafeRetry(attempt);
         continue;

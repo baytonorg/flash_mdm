@@ -1,4 +1,5 @@
 import { validateResolvedWebhookUrlForOutbound } from './webhook-ssrf.js';
+import { tracedFetch } from './operational-trace.js';
 
 interface ExecuteValidatedOutboundWebhookInput {
   url: unknown;
@@ -21,7 +22,7 @@ export async function executeValidatedOutboundWebhook(
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    return await fetch(validation.url, {
+    return await tracedFetch('webhook', 'send', validation.url, {
       method: input.method ?? 'POST',
       headers: {
         'Content-Type': 'application/json',

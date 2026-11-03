@@ -1,3 +1,4 @@
+import { recordApiResult, activityInteraction } from '@/lib/operationalActivity';
 export class ApiError extends Error {
   status: number;
   data: unknown;
@@ -23,6 +24,8 @@ class ApiClient {
       path === '/api/auth/login' ||
       path === '/api/auth/magic-link-complete' ||
       path === '/api/auth/password-reset-complete';
+    const started = performance.now();
+    const interactionId = activityInteraction();
     const response = await fetch(url, {
       ...options,
       credentials: 'include',
@@ -33,6 +36,7 @@ class ApiClient {
       },
     });
 
+    recordApiResult(response, performance.now() - started, interactionId);
     if (!response.ok) {
       // Read body as text first to avoid "body stream already read" errors
       const text = await response.text();

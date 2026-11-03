@@ -6,6 +6,7 @@ Flash MDM exposes operational signals through:
 - platform runtime logs (Netlify function logs or VPS system journals)
 - In-app server logs (Superadmin UI)
 - Audit logs (security and change tracking)
+- [Operational trace](operational-trace.md), a bounded daily trace of successful and failed activity and execution, available in the superadmin Logs card and the operator report
 
 ## 1) Where logs live
 

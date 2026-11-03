@@ -1,4 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
+import { setTraceActor } from './operational-trace.js';
 
 function unauthorized(message: string): Response {
   return new Response(JSON.stringify({ error: message }), {
@@ -35,6 +36,7 @@ export function requireInternalCaller(request: Request): void {
     const isDevRuntime = process.env.NODE_ENV === 'test' || process.env.NETLIFY_DEV === 'true';
 
     if (isLocalRequest || isDevRuntime) {
+      setTraceActor({ type: request.url.includes('-scheduled') ? 'scheduled' : 'system' });
       console.warn('INTERNAL_FUNCTION_SECRET is not configured; allowing internal function call in local/dev runtime');
       return;
     }
@@ -45,7 +47,10 @@ export function requireInternalCaller(request: Request): void {
   if (internalSecret) {
     const provided = Buffer.from(internalSecret, 'utf8');
     const expected = Buffer.from(configuredSecret, 'utf8');
-    if (provided.length === expected.length && timingSafeEqual(provided, expected)) return;
+    if (provided.length === expected.length && timingSafeEqual(provided, expected)) {
+      setTraceActor({ type: request.url.includes('-scheduled') ? 'scheduled' : 'system' });
+      return;
+    }
   }
 
   throw unauthorized('Unauthorized: not an internal caller');

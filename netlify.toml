@@ -563,6 +563,15 @@
   to = "/.netlify/functions/flashagent-workspace-settings"
   status = 200
 
+[[redirects]]
+  from = "/api/superadmin/operational-trace"
+  to = "/.netlify/functions/operational-trace"
+  status = 200
+[[redirects]]
+  from = "/api/activity"
+  to = "/.netlify/functions/operational-trace"
+  status = 200
+
 # SPA fallback
 [[redirects]]
   from = "/*"

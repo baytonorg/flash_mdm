@@ -11,12 +11,14 @@ export default async function handler(request: Request, _context: Context) {
     const settings = await getPlatformSettings();
     return jsonResponse({
       invite_only_registration: settings.invite_only_registration,
+      operational_trace_enabled: !!process.env.FLASH_TRACE_DIR,
     });
   } catch (err) {
     console.error('Auth config error:', err);
     return jsonResponse({
       invite_only_registration: false,
       fallback: true,
+      operational_trace_enabled: !!process.env.FLASH_TRACE_DIR,
     });
   }
 }

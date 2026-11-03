@@ -22,6 +22,11 @@ import { updateGroupLifecycle, deleteGroupLifecycle, requireGroupCreationScope }
 import { changeDeviceGroup } from '../_lib/device-group-lifecycle.js';
 import { currentDevicePolicy } from '../_lib/device-policy-reconcile.js';
 import { writeInviteOffer } from '../_lib/invite-offer-write.js';
+import traceHandler from '../operational-trace.js';
+import { traceHttp, closeOperationalTrace } from '../_lib/operational-trace.js';
+import { mkdtemp, rm, readdir, readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const url = process.env.MEMBERSHIP_TEST_DATABASE_URL;
 const suite = url ? describe : describe.skip;
@@ -267,6 +272,29 @@ suite('membership lifecycle with PostgreSQL and actual handlers', () => {
       VALUES ('Fixture',$1,$2,$3,$4,$5,'fixture ciphertext','fixture',$6,$7,$8) RETURNING id`, [input.scope??'workspace',workspace,input.scope==='environment'?env:null,input.role??'admin',hashToken(token),target,input.expired?new Date(Date.now()-60000):null,input.revoked?new Date():null]);
     return { token, id: result.rows[0].id };
   }
+
+  it('protects diagnostic logs from normal users and keys and attributes browser evidence from the real session',async()=>{
+    const directory=await mkdtemp(join(tmpdir(),'flash-trace-auth-fixture-'));
+    const ownerToken='fixture-owner-trace',targetToken='fixture-target-trace';
+    for(const [id,token] of [[owner,ownerToken],[target,targetToken]])await pool.query("INSERT INTO sessions(user_id,token_hash,expires_at) VALUES($1,$2,now()+interval '1 day')",[id,hashToken(token)]);
+    const key=await fixtureKey({role:'owner'});
+    process.env.FLASH_TRACE_DIR=directory;
+    try{
+      const request=(token:string,path='/api/superadmin/operational-trace')=>new Request('http://localhost'+path,{headers:{cookie:'flash_session='+token}});
+      const admin=await traceHandler(request(ownerToken),{} as never);expect(admin.status).toBe(200);
+      expect((await traceHandler(request(targetToken),{} as never)).status).toBe(403);
+      expect((await traceHandler(new Request('http://localhost/api/superadmin/operational-trace',{headers:{authorization:'Bearer '+key.token}}),{} as never)).status).toBe(403);
+      const event=new Request('http://localhost/api/activity',{method:'POST',headers:{cookie:'flash_session='+targetToken,'content-type':'application/json','x-requested-with':'XMLHttpRequest'},body:JSON.stringify({events:[{kind:'navigation',route:'/policies',actor:{type:'human',id:owner},password:'fixture-never-log-this'}]})});
+      expect((await traceHttp(event,()=>traceHandler(event,{} as never))).status).toBe(204);
+      await closeOperationalTrace();
+      const text=(await Promise.all((await readdir(directory)).filter(n=>n.endsWith('.ndjson')).map(n=>readFile(join(directory,n),'utf8')))).join('');
+      expect(text).not.toContain('fixture-never-log-this');
+      const navigation=text.trim().split('\n').map(l=>JSON.parse(l)).find(e=>e.event==='ui.navigation');
+      expect(navigation.actor.id).toBe(target);expect(navigation.feature).toBe('policies');
+      const anonymous=new Request('http://localhost/api/activity',{method:'POST',headers:{'content-type':'application/json','x-requested-with':'XMLHttpRequest'},body:JSON.stringify({events:[{kind:'invalid',route:'/login',actor:{type:'human',id:owner}}]})});
+      expect((await traceHttp(anonymous,()=>traceHandler(anonymous,{} as never))).status).toBe(204);
+    }finally{await closeOperationalTrace();delete process.env.FLASH_TRACE_DIR;await rm(directory,{recursive:true,force:true});}
+  });
 
   it('denies revoked and expired synthetic keys and accepts no-expiry keys', async () => {
     for (const state of [{revoked:true},{expired:true},{}]) {

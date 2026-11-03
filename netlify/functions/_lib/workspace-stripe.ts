@@ -1,6 +1,7 @@
 import Stripe from 'stripe';
 import { queryOne } from './db.js';
 import { decrypt } from './crypto.js';
+import { attachStripeTrace } from './stripe.js';
 
 export interface WorkspaceStripeCredentials {
   mode: 'disabled' | 'stripe';
@@ -50,5 +51,5 @@ export async function getWorkspaceStripeCredentials(workspaceId: string): Promis
 }
 
 export function createWorkspaceStripeClient(secretKey: string): Stripe {
-  return new Stripe(secretKey, { apiVersion: '2024-12-18.acacia' });
+  return attachStripeTrace(new Stripe(secretKey, { apiVersion: '2024-12-18.acacia' }));
 }

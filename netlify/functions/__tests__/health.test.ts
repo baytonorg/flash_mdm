@@ -26,6 +26,7 @@ describe('health', () => {
       database: 'ok',
       version: '0123456789abcdef',
       runtime: 'vps',
+      operational_trace: expect.objectContaining({ enabled: false }),
     });
   });
 
