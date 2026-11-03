@@ -103,6 +103,16 @@ describe('correlated request evidence', () => {
     await closeOperationalTrace();
     expect((await records()).filter(r => r.event === 'http.end').map(r => r.data.outcome)).toEqual(['partial_failure', 'challenge']);
   });
+  it('cancels timed-out diagnostic inspection while preserving the product response stream', async () => {
+    process.env.FLASH_TRACE_DIR = directory;
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({ start(controller) { stream = controller; controller.enqueue(new TextEncoder().encode('{"success":')); } });
+    const response = await traceHttp(new Request('http://localhost/api/health'), async () => new Response(body, { headers: { 'Content-Type': 'application/json' } }));
+    stream.enqueue(new TextEncoder().encode('true}')); stream.close();
+    expect(await response.json()).toEqual({ success: true });
+    await closeOperationalTrace();
+    expect((await records()).find(record => record.event === 'http.end').data.detail).toBe('time_limit');
+  });
   it('does not place exception messages or raw paths in structured errors', () => {
     const error = new Error('fixture password=supersecret'); expect(JSON.stringify(traceError(error))).not.toContain('supersecret');
     expect(normaliseTracePath('/join/w/secret-slug?password=supersecret')).toBe('/join/w/:value');

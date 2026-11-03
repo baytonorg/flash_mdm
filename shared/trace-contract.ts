@@ -103,7 +103,9 @@ export function responseOutcome(
       (r) =>
         r &&
         typeof r === "object" &&
-        (r.ok === false || r.success === false || ['failed', 'error', 'delivery_uncertain'].includes(r.status)),
+        (r.ok === false ||
+          r.success === false ||
+          ["failed", "error", "delivery_uncertain"].includes(r.status)),
     ).length;
   }
   return output;

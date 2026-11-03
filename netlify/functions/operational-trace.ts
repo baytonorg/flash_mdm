@@ -25,18 +25,21 @@ export default async function handler(request: Request, _context: Context) {
     const url = new URL(request.url);
     if (url.pathname === "/api/activity" && request.method === "POST") {
       assertSameOriginRequest(request);
-      if (request.headers.get('authorization')) return errorResponse('API keys cannot submit browser activity', 403);
-      if (request.headers.get('x-requested-with') !== 'XMLHttpRequest') return errorResponse('Browser activity header required', 403);
+      if (request.headers.get("authorization"))
+        return errorResponse("API keys cannot submit browser activity", 403);
+      if (request.headers.get("x-requested-with") !== "XMLHttpRequest")
+        return errorResponse("Browser activity header required", 403);
       const auth = await validateSession(request);
       if (!process.env.FLASH_TRACE_DIR)
         return new Response(null, { status: 204 });
-      const id = auth?.user.id ?? 'anonymous',
+      const id = auth?.user.id ?? "anonymous",
         now = Date.now();
       if (buckets.size >= 10_000)
         for (const [key, bucket] of buckets)
           if (now - bucket.at > 60_000) buckets.delete(key);
       const bucket = buckets.get(id);
-      if (!bucket && buckets.size >= 10_000) return errorResponse('Activity collection rate limit', 429);
+      if (!bucket && buckets.size >= 10_000)
+        return errorResponse("Activity collection rate limit", 429);
       const current =
         !bucket || now - bucket.at > 60_000 ? { at: now, count: 0 } : bucket;
       current.count++;
@@ -88,9 +91,25 @@ export default async function handler(request: Request, _context: Context) {
           client_reported: true,
           page: normaliseTracePath(event.route),
         };
-        if (typeof event.api_route === 'string' && event.api_route.length <= 2048) details.api_route = normaliseTracePath(event.api_route);
-        if (['Error', 'TypeError', 'ReferenceError'].includes(event.error_class)) details.error_class = event.error_class;
-        if (Array.isArray(event.frames)) details.frames = event.frames.filter((frame: unknown) => typeof frame === 'string' && /^\/assets\/[A-Za-z0-9_.-]{1,128}\.js:\d{1,8}:\d{1,8}$/.test(frame)).slice(0, 8);
+        if (
+          typeof event.api_route === "string" &&
+          event.api_route.length <= 2048
+        )
+          details.api_route = normaliseTracePath(event.api_route);
+        if (
+          ["Error", "TypeError", "ReferenceError"].includes(event.error_class)
+        )
+          details.error_class = event.error_class;
+        if (Array.isArray(event.frames))
+          details.frames = event.frames
+            .filter(
+              (frame: unknown) =>
+                typeof frame === "string" &&
+                /^\/assets\/[A-Za-z0-9_.-]{1,128}\.js:\d{1,8}:\d{1,8}$/.test(
+                  frame,
+                ),
+            )
+            .slice(0, 8);
         for (const key of ["interaction_id", "server_request_id"])
           if (typeof event[key] === "string" && UUID_PATTERN.test(event[key]))
             details[key] = event[key];
@@ -131,7 +150,9 @@ export default async function handler(request: Request, _context: Context) {
         if (typeof event.checked === "boolean") details.checked = event.checked;
         if (
           typeof event.client_time === "string" &&
-          /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(event.client_time) &&
+          /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(
+            event.client_time,
+          ) &&
           Number.isFinite(Date.parse(event.client_time))
         )
           details.client_time = event.client_time.slice(0, 32);
@@ -183,7 +204,11 @@ export default async function handler(request: Request, _context: Context) {
             limit: 100,
           })
         : { events: [] };
-    return jsonResponse({ ...status, collection: traceHealth(), ...tail }, 200, { 'Cache-Control': 'no-store' });
+    return jsonResponse(
+      { ...status, collection: traceHealth(), ...tail },
+      200,
+      { "Cache-Control": "no-store" },
+    );
   } catch (error) {
     if (error instanceof Response) return error;
     return errorResponse("Diagnostic logs are unavailable", 503);

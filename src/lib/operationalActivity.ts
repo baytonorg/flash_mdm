@@ -14,13 +14,18 @@ let dropped = 0;
 let interaction: string | undefined;
 let interactionExpiresAt = 0;
 let identityTransitions = 0;
-export function activityInteraction() { return Date.now() < interactionExpiresAt ? interaction : undefined; }
+export function activityInteraction() {
+  return Date.now() < interactionExpiresAt ? interaction : undefined;
+}
 export function recordActivity(
   kind: string,
   details: Record<string, unknown> = {},
 ) {
   if (!installed || !enabled) return;
-  if (identityTransitions) { dropped++; return; }
+  if (identityTransitions) {
+    dropped++;
+    return;
+  }
   if (queue.length >= 200) {
     dropped++;
     return;
@@ -30,17 +35,48 @@ export function recordActivity(
     kind,
     route: normaliseTracePath(location.pathname),
     client_time: new Date().toISOString(),
-    interaction_id: typeof details.interaction_id === 'string' ? details.interaction_id : Object.prototype.hasOwnProperty.call(details, 'interaction_id') ? undefined : activityInteraction(),
+    interaction_id:
+      typeof details.interaction_id === "string"
+        ? details.interaction_id
+        : Object.prototype.hasOwnProperty.call(details, "interaction_id")
+          ? undefined
+          : activityInteraction(),
   });
 }
 function errorDetails(error: unknown) {
   try {
-  const stack = error instanceof Error ? error.stack?.split('\n').slice(1).join('\n').slice(0, 16000) ?? '' : '';
-  return { error_class: error instanceof TypeError ? 'TypeError' : error instanceof ReferenceError ? 'ReferenceError' : 'Error', frames: [...stack.matchAll(/\/assets\/[A-Za-z0-9_.-]{1,128}\.js:\d{1,8}:\d{1,8}/g)].slice(0, 8).map(match => match[0]) };
-  } catch { return { error_class: 'Error', frames: [] }; }
+    const stack =
+      error instanceof Error
+        ? (error.stack?.split("\n").slice(1).join("\n").slice(0, 16000) ?? "")
+        : "";
+    return {
+      error_class:
+        error instanceof TypeError
+          ? "TypeError"
+          : error instanceof ReferenceError
+            ? "ReferenceError"
+            : "Error",
+      frames: [
+        ...stack.matchAll(
+          /\/assets\/[A-Za-z0-9_.-]{1,128}\.js:\d{1,8}:\d{1,8}/g,
+        ),
+      ]
+        .slice(0, 8)
+        .map((match) => match[0]),
+    };
+  } catch {
+    return { error_class: "Error", frames: [] };
+  }
 }
-export function reportReactError(error?: unknown) { recordActivity('react_error', errorDetails(error)); }
-export function recordApiResult(response: Response, duration: number, interactionId?: string, path?: string) {
+export function reportReactError(error?: unknown) {
+  recordActivity("react_error", errorDetails(error));
+}
+export function recordApiResult(
+  response: Response,
+  duration: number,
+  interactionId?: string,
+  path?: string,
+) {
   recordActivity("api_result", {
     server_request_id: response.headers.get("X-Flash-Request-ID"),
     status: response.status,
@@ -49,11 +85,24 @@ export function recordApiResult(response: Response, duration: number, interactio
     api_route: path ? normaliseTracePath(path) : undefined,
   });
 }
-export function recordApiFailure(error: unknown, duration: number, interactionId?: string, path?: string) {
-  recordActivity(error instanceof Error && error.name === 'AbortError' ? 'api_result' : 'api_failure', {
-    ...errorDetails(error), status: 0, duration_ms: Math.round(duration),
-    interaction_id: interactionId, api_route: path ? normaliseTracePath(path) : undefined,
-  });
+export function recordApiFailure(
+  error: unknown,
+  duration: number,
+  interactionId?: string,
+  path?: string,
+) {
+  recordActivity(
+    error instanceof Error && error.name === "AbortError"
+      ? "api_result"
+      : "api_failure",
+    {
+      ...errorDetails(error),
+      status: 0,
+      duration_ms: Math.round(duration),
+      interaction_id: interactionId,
+      api_route: path ? normaliseTracePath(path) : undefined,
+    },
+  );
 }
 async function flushActivity() {
   if (sending || !queue.length) return;
@@ -81,12 +130,18 @@ async function flushActivity() {
 }
 // Dispatch old-session evidence before a cookie-changing action. Do not carry
 // pending interactions across identities or delay authentication on diagnostics.
-export async function withActivityIdentityBoundary<T>(work: () => Promise<T>): Promise<T> {
+export async function withActivityIdentityBoundary<T>(
+  work: () => Promise<T>,
+): Promise<T> {
   void flushActivity();
-  dropped += queue.length; queue.length = 0;
+  dropped += queue.length;
+  queue.length = 0;
   identityTransitions++;
-  try { return await work(); }
-  finally { identityTransitions--; }
+  try {
+    return await work();
+  } finally {
+    identityTransitions--;
+  }
 }
 export function installOperationalActivity() {
   if (installed || typeof window === "undefined") return;
@@ -122,8 +177,10 @@ export function installOperationalActivity() {
   };
   for (const event of ["click", "change", "submit", "invalid"])
     document.addEventListener(event, handle, true);
-  window.addEventListener("error", event => recordActivity("javascript_error", errorDetails(event.error)));
-  window.addEventListener("unhandledrejection", event =>
+  window.addEventListener("error", (event) =>
+    recordActivity("javascript_error", errorDetails(event.error)),
+  );
+  window.addEventListener("unhandledrejection", (event) =>
     recordActivity("unhandled_rejection", errorDetails(event.reason)),
   );
   window.addEventListener("pagehide", () => {

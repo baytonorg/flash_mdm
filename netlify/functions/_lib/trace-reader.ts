@@ -73,13 +73,23 @@ export async function traceStatus(directory: string) {
     rotation: "09:00 Europe/London",
     current_window: traceWindow(),
     retained_windows: windows,
-    raw_windows: [...new Set(files.filter(f => !f.health).map(f => f.window))].sort().reverse(),
+    raw_windows: [
+      ...new Set(files.filter((f) => !f.health).map((f) => f.window)),
+    ]
+      .sort()
+      .reverse(),
     bytes: files.reduce((n, f) => n + f.bytes, 0),
     files: files.length,
     invalid_health_records: invalidHealth,
-    components: ['web', 'worker'].map(component => ({
+    components: ["web", "worker"].map((component) => ({
       component,
-      fresh: health.some(writer => writer.component === component && writer.window === traceWindow() && !writer.closed && Date.now() - Date.parse(writer.observed_at) < 120_000),
+      fresh: health.some(
+        (writer) =>
+          writer.component === component &&
+          writer.window === traceWindow() &&
+          !writer.closed &&
+          Date.now() - Date.parse(writer.observed_at) < 120_000,
+      ),
     })),
     writers: health,
   };
@@ -134,11 +144,32 @@ export async function readTraceTail(
       rows.push(record);
     }
   }
-  const identities = new Map(rows.filter(r => r.event === 'http.end' && r.request_id).map(r => [r.request_id!, r.actor]));
-  const matching = rows.map(record => {
-    const established = record.request_id ? identities.get(record.request_id) : undefined;
-    return record.actor?.type === 'anonymous' && established && established.type !== 'anonymous' ? { ...record, actor: established } : record;
-  }).filter(record => (!options.actor || [record.actor?.id, record.actor?.email, record.actor?.type].some(value => value?.toLowerCase().includes(options.actor!.toLowerCase()))) && (!options.requestId || record.request_id === options.requestId) && (options.outcome !== 'problems' || isTraceProblem(record)));
+  const identities = new Map(
+    rows
+      .filter((r) => r.event === "http.end" && r.request_id)
+      .map((r) => [r.request_id!, r.actor]),
+  );
+  const matching = rows
+    .map((record) => {
+      const established = record.request_id
+        ? identities.get(record.request_id)
+        : undefined;
+      return record.actor?.type === "anonymous" &&
+        established &&
+        established.type !== "anonymous"
+        ? { ...record, actor: established }
+        : record;
+    })
+    .filter(
+      (record) =>
+        (!options.actor ||
+          [record.actor?.id, record.actor?.email, record.actor?.type].some(
+            (value) =>
+              value?.toLowerCase().includes(options.actor!.toLowerCase()),
+          )) &&
+        (!options.requestId || record.request_id === options.requestId) &&
+        (options.outcome !== "problems" || isTraceProblem(record)),
+    );
   matching.sort((a, b) => b.time.localeCompare(a.time));
   const limit = Math.max(1, Math.min(options.limit ?? 100, 200));
   return {
@@ -186,7 +217,7 @@ export async function* streamTraceWindow(directory: string, window: string) {
     } finally {
       await handle.close();
     }
-    yield Buffer.from('\n');
+    yield Buffer.from("\n");
   }
 }
 export async function buildTraceReport(
@@ -283,7 +314,8 @@ export async function buildTraceReport(
     first = !first || record.time < String(first) ? record.time : first;
     last = !last || record.time > String(last) ? record.time : last;
     eventCounts[record.event] = (eventCounts[record.event] ?? 0) + 1;
-    if (record.event === 'ui.collection_gap') clientDrops += Number(record.data.dropped) || 0;
+    if (record.event === "ui.collection_gap")
+      clientDrops += Number(record.data.dropped) || 0;
     if (record.event === "http.end") {
       httpCount++;
       duration += Number(record.data.duration_ms) || 0;
@@ -344,28 +376,45 @@ export async function buildTraceReport(
     }
     if (problem && problems.length < 2000) problems.push({ ...record, actor });
   }
-  const writers = (status.writers as Array<{
-    window: string;
-    dropped?: number;
-    write_errors?: number;
-    budget_evictions?: number;
-    started_at?: string;
-    observed_at?: string;
-    closed?: boolean;
-  }>).filter(w => w.window >= traceWindow(from) && w.window <= traceWindow(new Date(to.getTime() - 1)));
-  const firstCollection = writers.map(w => w.started_at).filter((value): value is string => !!value).sort()[0] ?? null;
+  const writers = (
+    status.writers as Array<{
+      window: string;
+      dropped?: number;
+      write_errors?: number;
+      budget_evictions?: number;
+      started_at?: string;
+      observed_at?: string;
+      closed?: boolean;
+    }>
+  ).filter(
+    (w) =>
+      w.window >= traceWindow(from) &&
+      w.window <= traceWindow(new Date(to.getTime() - 1)),
+  );
+  const firstCollection =
+    writers
+      .map((w) => w.started_at)
+      .filter((value): value is string => !!value)
+      .sort()[0] ?? null;
   return {
     schema: 1,
     from: from.toISOString(),
     to: to.toISOString(),
     coverage: {
       collection_started_at: firstCollection,
-      collection_started_after_from: !firstCollection || Date.parse(firstCollection) > from.getTime(),
+      collection_started_after_from:
+        !firstCollection || Date.parse(firstCollection) > from.getTime(),
       first_event: first,
       client_reported_drops: clientDrops,
       last_event: last,
       invalid_lines: invalid,
-      unclosed_stale_writers: writers.filter(writer => !writer.closed && !!writer.observed_at && Date.parse(writer.observed_at) < Math.min(Date.now(), to.getTime()) - 120_000).length,
+      unclosed_stale_writers: writers.filter(
+        (writer) =>
+          !writer.closed &&
+          !!writer.observed_at &&
+          Date.parse(writer.observed_at) <
+            Math.min(Date.now(), to.getTime()) - 120_000,
+      ).length,
       actor_correlation_limited: actorCorrelationLimited,
       actor_limit_reached: actors.size >= 20_000,
       problem_examples_limited: problems.length >= 2000,

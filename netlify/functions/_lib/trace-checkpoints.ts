@@ -62,17 +62,30 @@ export async function writeTraceCheckpoint(
     bounds.to > new Date()
   )
     throw new Error("Checkpoint requires an exact completed rotation window");
-  if (!report.storage.writers.some(writer => writer.window === window)) return { written: false, reason: 'No collection evidence exists for this window' };
+  if (!report.storage.writers.some((writer) => writer.window === window))
+    return {
+      written: false,
+      reason: "No collection evidence exists for this window",
+    };
   const path = await checkpointDirectory(directory);
-  const previous = await open(join(path, window + '.json'), constants.O_RDONLY | constants.O_NOFOLLOW).catch(() => null);
+  const previous = await open(
+    join(path, window + ".json"),
+    constants.O_RDONLY | constants.O_NOFOLLOW,
+  ).catch(() => null);
   if (previous) {
     try {
       const stat = await previous.stat();
-      if (stat.size > 2 * 1024 * 1024) throw new Error('Invalid checkpoint');
-      const existing = JSON.parse(await previous.readFile('utf8'));
-      if (existing.schema !== 1) throw new Error('Invalid checkpoint');
-      if (existing.totals?.events > report.totals.events) return { written: false, reason: 'An existing checkpoint contains more evidence' };
-    } finally { await previous.close(); }
+      if (stat.size > 2 * 1024 * 1024) throw new Error("Invalid checkpoint");
+      const existing = JSON.parse(await previous.readFile("utf8"));
+      if (existing.schema !== 1) throw new Error("Invalid checkpoint");
+      if (existing.totals?.events > report.totals.events)
+        return {
+          written: false,
+          reason: "An existing checkpoint contains more evidence",
+        };
+    } finally {
+      await previous.close();
+    }
   }
   const checkpoint: Checkpoint = {
     schema: 1,
@@ -127,9 +140,10 @@ export async function writeTraceCheckpoint(
 export async function traceComparisons(directory: string, to: Date) {
   let path: string;
   try {
-    path = join(directory, 'reports');
+    path = join(directory, "reports");
     const info = await lstat(path);
-    if (!info.isDirectory() || info.isSymbolicLink() || info.mode & 0o077) throw new Error('Checkpoint storage is unavailable');
+    if (!info.isDirectory() || info.isSymbolicLink() || info.mode & 0o077)
+      throw new Error("Checkpoint storage is unavailable");
   } catch {
     return { available: false, note: "No checkpoints are available" };
   }
@@ -169,7 +183,18 @@ export async function traceComparisons(directory: string, to: Date) {
         0,
       ),
       http_requests: selected.reduce((n, c) => n + c.totals.http_requests, 0),
-      partial_history: selected.length < days || selected.some(c => c.coverage.collection_started_after_from || c.coverage.dropped_events || c.coverage.write_errors || c.coverage.invalid_lines || c.coverage.client_reported_drops || c.coverage.budget_evictions || c.coverage.unclosed_stale_writers),
+      partial_history:
+        selected.length < days ||
+        selected.some(
+          (c) =>
+            c.coverage.collection_started_after_from ||
+            c.coverage.dropped_events ||
+            c.coverage.write_errors ||
+            c.coverage.invalid_lines ||
+            c.coverage.client_reported_drops ||
+            c.coverage.budget_evictions ||
+            c.coverage.unclosed_stale_writers,
+        ),
     };
   };
   return {

@@ -51,10 +51,18 @@ export default function OperationalTraceCard() {
     enabled: open && !!selectedWindow && status.data?.enabled === true,
   });
   const data = status.data;
-  const missingComponents = data?.components?.filter(component => !component.fresh) ?? [];
+  const missingComponents =
+    data?.components?.filter((component) => !component.fresh) ?? [];
   const gaps = (data?.writers ?? [])
     .filter((w) => w.window === selectedWindow)
-    .reduce((n, w) => n + (w.dropped ?? 0) + (w.write_errors ?? 0) + (w.budget_evictions ?? 0), 0);
+    .reduce(
+      (n, w) =>
+        n +
+        (w.dropped ?? 0) +
+        (w.write_errors ?? 0) +
+        (w.budget_evictions ?? 0),
+      0,
+    );
   return (
     <details
       className="mb-3 rounded-lg border border-gray-200"
@@ -100,7 +108,9 @@ export default function OperationalTraceCard() {
                   </span>
                   <strong
                     className={
-                      data.collection?.accepting && !gaps && !missingComponents.length
+                      data.collection?.accepting &&
+                      !gaps &&
+                      !missingComponents.length
                         ? "text-green-700"
                         : "text-amber-800"
                     }
@@ -130,7 +140,15 @@ export default function OperationalTraceCard() {
                   evictions. A quiet log does not prove a clean platform.
                 </p>
               )}
-              {!!missingComponents.length && <p role="alert" className="text-sm text-amber-800">No fresh collection heartbeat from {missingComponents.map(component => component.component).join(', ')}. Check service health before relying on this window.</p>}
+              {!!missingComponents.length && (
+                <p role="alert" className="text-sm text-amber-800">
+                  No fresh collection heartbeat from{" "}
+                  {missingComponents
+                    .map((component) => component.component)
+                    .join(", ")}
+                  . Check service health before relying on this window.
+                </p>
+              )}
               <div className="flex flex-wrap gap-2 items-end">
                 <label className="text-xs text-gray-600">
                   Window
@@ -168,7 +186,11 @@ export default function OperationalTraceCard() {
                 <button
                   className="rounded border px-3 py-2 text-sm"
                   onClick={() => {
-                    if (filters.actor === actor && filters.requestId === requestId) void events.refetch();
+                    if (
+                      filters.actor === actor &&
+                      filters.requestId === requestId
+                    )
+                      void events.refetch();
                     else setFilters({ actor, requestId });
                     void status.refetch();
                   }}
@@ -183,14 +205,16 @@ export default function OperationalTraceCard() {
                   />
                   Problems only
                 </label>
-                {selectedWindow && (!data.raw_windows || data.raw_windows.includes(selectedWindow)) && (
-                  <a
-                    className="rounded bg-accent px-3 py-2 text-sm text-white"
-                    href={`/api/superadmin/operational-trace?window=${selectedWindow}&download=ndjson`}
-                  >
-                    Download window
-                  </a>
-                )}
+                {selectedWindow &&
+                  (!data.raw_windows ||
+                    data.raw_windows.includes(selectedWindow)) && (
+                    <a
+                      className="rounded bg-accent px-3 py-2 text-sm text-white"
+                      href={`/api/superadmin/operational-trace?window=${selectedWindow}&download=ndjson`}
+                    >
+                      Download window
+                    </a>
+                  )}
               </div>
               <p className="text-xs text-gray-500">
                 Latest 100 matching events from a bounded tail scan.{" "}

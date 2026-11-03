@@ -138,7 +138,14 @@ export function traceEvent(
           ["job_queue", "deployment_jobs"].includes(String(data.table)) &&
           Number(data.rows) > 0);
       const problem =
-        ['failure', 'partial_failure', 'rejected', 'transport_failure', 'dead', 'delivery_uncertain'].includes(String(data.outcome)) ||
+        [
+          "failure",
+          "partial_failure",
+          "rejected",
+          "transport_failure",
+          "dead",
+          "delivery_uncertain",
+        ].includes(String(data.outcome)) ||
         Number(data.status) >= 400 ||
         /exception|console\.(warn|error)/.test(event);
       if (!active && !problem && ctx.gate.records.length < 2048) {
@@ -230,20 +237,39 @@ export async function traceResponseOutcome(
   const reader = response.clone().body!.getReader();
   let bytes = 0;
   const chunks: Uint8Array[] = [];
-  try {
-    while (true) {
-      const next = await reader.read();
-      if (next.done) break;
-      bytes += next.value.byteLength;
-      if (bytes > 32768) {
-        void reader.cancel().catch(() => {});
-        return { detail: "size_limit" };
+  const inspect = async (): Promise<Record<string, unknown>> => {
+    try {
+      while (true) {
+        const next = await reader.read();
+        if (next.done) break;
+        bytes += next.value.byteLength;
+        if (bytes > 32768) {
+          void reader.cancel().catch(() => {});
+          return { detail: "size_limit" };
+        }
+        chunks.push(next.value);
       }
-      chunks.push(next.value);
+      return responseOutcome(
+        JSON.parse(Buffer.concat(chunks).toString("utf8")),
+      );
+    } catch {
+      return { detail: "unavailable" };
     }
-    return responseOutcome(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-  } catch {
-    return { detail: "unavailable" };
+  };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      inspect(),
+      new Promise<Record<string, unknown>>((resolve) => {
+        timer = setTimeout(() => {
+          resolve({ detail: "time_limit" });
+          void reader.cancel().catch(() => {});
+        }, 20);
+        timer.unref();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -264,12 +290,24 @@ export async function traceHttp(
   };
   if (component() === "worker")
     ctx.gate = { records: [], open: false, queries: 0 };
-  const resourceScopes: Record<string, string> = { workspaces: 'workspace_id', environments: 'environment_id', groups: 'group_id', devices: 'device_id', policies: 'policy_id', apps: 'app_id', networks: 'network_id', workflows: 'workflow_id', geofences: 'geofence_id' };
-  const segments = url.pathname.split('/').filter(Boolean);
-  if (segments[0] === 'api') for (let index = 1; index < segments.length - 1; index++) {
-    const scope = resourceScopes[segments[index]];
-    if (scope && UUID_PATTERN.test(segments[index + 1])) ctx.scope[scope] = segments[index + 1];
-  }
+  const resourceScopes: Record<string, string> = {
+    workspaces: "workspace_id",
+    environments: "environment_id",
+    groups: "group_id",
+    devices: "device_id",
+    policies: "policy_id",
+    apps: "app_id",
+    networks: "network_id",
+    workflows: "workflow_id",
+    geofences: "geofence_id",
+  };
+  const segments = url.pathname.split("/").filter(Boolean);
+  if (segments[0] === "api")
+    for (let index = 1; index < segments.length - 1; index++) {
+      const scope = resourceScopes[segments[index]];
+      if (scope && UUID_PATTERN.test(segments[index + 1]))
+        ctx.scope[scope] = segments[index + 1];
+    }
   for (const key of [
     "workspace_id",
     "environment_id",
@@ -306,16 +344,9 @@ export async function traceHttp(
       const status = response.status;
       let outcome =
         status >= 500 ? "failure" : status >= 400 ? "rejected" : "success";
-      const detail = await Promise.race([
-        traceResponseOutcome(response),
-        new Promise<Record<string, unknown>>((resolve) => {
-          const timeout = setTimeout(
-            () => resolve({ detail: "time_limit" }),
-            20,
-          );
-          timeout.unref();
-        }),
-      ]);
+      const detail = await traceResponseOutcome(response).catch(
+        () => ({ detail: "unavailable" }) as Record<string, unknown>,
+      );
       if (
         status === 401 &&
         (detail.needs_totp === true || detail.needs_mfa === true)
@@ -328,8 +359,20 @@ export async function traceHttp(
         detail.success === false ||
         detail.result_status === "failed" ||
         detail.result_status === "error";
-      const responseKind = response.headers.get('content-type')?.includes('application/json') ? 'json' : response.headers.get('content-type')?.includes('text/html') ? 'html' : 'other';
-      if (url.pathname.startsWith('/api/') && status >= 200 && status < 300 && responseKind === 'html') outcome = 'protocol_failure';
+      const responseKind = response.headers
+        .get("content-type")
+        ?.includes("application/json")
+        ? "json"
+        : response.headers.get("content-type")?.includes("text/html")
+          ? "html"
+          : "other";
+      if (
+        url.pathname.startsWith("/api/") &&
+        status >= 200 &&
+        status < 300 &&
+        responseKind === "html"
+      )
+        outcome = "protocol_failure";
       traceEvent("http.end", {
         method: request.method,
         status,
