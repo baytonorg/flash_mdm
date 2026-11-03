@@ -161,6 +161,18 @@ describe('VPS server parity', () => {
     expect(spaFallback).toBeGreaterThan(staticAssets);
   });
 
+  it('keeps signup-link pages out of search indexes across hosting paths', () => {
+    const installer = readText('install.sh');
+    const netlify = readText('netlify.toml');
+
+    expect(server).toContain("app.use('/join/*'");
+    expect(server).toContain("c.header('X-Robots-Tag', 'noindex, nofollow, noarchive')");
+    expect(installer).toContain('header /join/* X-Robots-Tag "noindex, nofollow, noarchive"');
+    expect(netlify).toMatch(
+      /\[\[headers\]\]\s+for = "\/join\/\*"\s+\[headers\.values\]\s+X-Robots-Tag = "noindex, nofollow, noarchive"/
+    );
+  });
+
   it('generates an autonomous worker and a restartable VPS service', () => {
     const installer = readText('install.sh');
     const worker = extractGeneratedWorker();

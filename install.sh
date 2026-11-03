@@ -974,6 +974,13 @@ app.all('/.netlify/functions/sync-process-background', h(syncProcessBackground))
 app.all('/.netlify/functions/workflow-evaluate-background', h(workflowEvaluateBackground));
 
 // ── Static assets & SPA fallback ────────────────────────────────────────────
+// Signup-link URLs are public entry points, not discoverable content. Apply the
+// crawler directive at the HTTP layer even when JavaScript is not executed.
+app.use('/join/*', async (c, next) => {
+  await next();
+  c.header('X-Robots-Tag', 'noindex, nofollow, noarchive');
+});
+
 // Serve every Vite public asset before the client-side route fallback. Limiting
 // this to /assets/* causes root-level files such as /favicon.svg to become HTML.
 app.use('/*', serveStatic({ root: './dist' }));
@@ -1127,6 +1134,8 @@ else
 
   sudo tee /etc/caddy/Caddyfile > /dev/null <<CADDYEOF
 ${DOMAIN} {
+    header /join/* X-Robots-Tag "noindex, nofollow, noarchive"
+
     ${AUTO_DEPLOY_CADDY_HANDLE}handle /api/* {
         reverse_proxy localhost:3000
     }
