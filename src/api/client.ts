@@ -1,3 +1,4 @@
+import { recordApiResult, recordApiFailure, activityInteraction, withActivityIdentityBoundary } from '@/lib/operationalActivity';
 export class ApiError extends Error {
   status: number;
   data: unknown;
@@ -23,6 +24,8 @@ class ApiClient {
       path === '/api/auth/login' ||
       path === '/api/auth/magic-link-complete' ||
       path === '/api/auth/password-reset-complete';
+    const started = performance.now();
+    const interactionId = activityInteraction();
     const response = await fetch(url, {
       ...options,
       credentials: 'include',
@@ -31,8 +34,12 @@ class ApiClient {
         'X-Requested-With': 'XMLHttpRequest',
         ...options.headers,
       },
+    }).catch(error => {
+      recordApiFailure(error, performance.now() - started, interactionId, path);
+      throw error;
     });
 
+    recordApiResult(response, performance.now() - started, interactionId, path);
     if (!response.ok) {
       // Read body as text first to avoid "body stream already read" errors
       const text = await response.text();
@@ -82,10 +89,13 @@ class ApiClient {
   }
 
   post<T>(path: string, body?: unknown): Promise<T> {
-    return this.request<T>(path, {
+    const send = () => this.request<T>(path, {
       method: 'POST',
       body: body ? JSON.stringify(body) : undefined,
     });
+    const identityChange = /^\/api\/auth\/(login|logout|register|magic-link-complete|password-reset-complete)$/.test(path)
+      || (path === '/api/superadmin/actions' && !!body && typeof body === 'object' && 'action' in body && ['impersonate', 'stop_impersonation'].includes(String(body.action)));
+    return identityChange ? withActivityIdentityBoundary(send) : send();
   }
 
   put<T>(path: string, body?: unknown): Promise<T> {

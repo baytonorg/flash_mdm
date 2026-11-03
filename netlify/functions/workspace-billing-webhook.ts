@@ -4,6 +4,7 @@ import type { PoolClient } from 'pg';
 import { transaction } from './_lib/db.js';
 import { getSearchParams, jsonResponse, errorResponse, isValidUuid } from './_lib/helpers.js';
 import { logAudit } from './_lib/audit.js';
+import { setTraceActor, traceEvent } from './_lib/operational-trace.js';
 import { createWorkspaceStripeClient, getWorkspaceStripeCredentials } from './_lib/workspace-stripe.js';
 import { getWorkspaceLicensingSettings } from './_lib/licensing.js';
 import {
@@ -80,6 +81,8 @@ export default async function handler(request: Request, _context: Context) {
     if (!metadataWorkspaceId || metadataWorkspaceId !== workspaceId) {
       return errorResponse('workspace_id does not match signed event metadata', 403);
     }
+    setTraceActor({ type: 'webhook', role: 'workspace_stripe' }, { workspace_id: workspaceId });
+    traceEvent('webhook.received', { provider: 'workspace_stripe', authenticated: true });
 
     const processing = await transaction(async (client) => {
       const claim = await client.query<{ id: string }>(

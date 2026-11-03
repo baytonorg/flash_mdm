@@ -27,6 +27,7 @@ describe('auth-config', () => {
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({
       invite_only_registration: true,
+      operational_trace_enabled: false,
     });
   });
 
@@ -39,6 +40,7 @@ describe('auth-config', () => {
     await expect(res.json()).resolves.toEqual({
       invite_only_registration: false,
       fallback: true,
+      operational_trace_enabled: false,
     });
   });
 });

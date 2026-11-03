@@ -667,6 +667,9 @@ import 'dotenv/config';
 import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
+import { traceHttp, installOperationalConsoleCapture, closeOperationalTrace } from './netlify/functions/_lib/operational-trace.js';
+import operationalTrace from './netlify/functions/operational-trace.js';
+installOperationalConsoleCapture();
 
 // ── Handler imports ─────────────────────────────────────────────────────────
 import health from './netlify/functions/health.js';
@@ -786,6 +789,9 @@ const h = (handler: any) => async (c: any) => {
 };
 
 const app = new Hono();
+app.use('/*', async (c, next) => traceHttp(c.req.raw, async () => { await next(); return c.res; }));
+app.all('/api/activity', h(operationalTrace));
+app.all('/api/superadmin/operational-trace', h(operationalTrace));
 
 // ── Health ──────────────────────────────────────────────────────────────────
 app.all('/api/health', h(health));
@@ -989,7 +995,11 @@ app.get('*', serveStatic({ root: './dist', path: '/index.html' }));
 // ── Start ───────────────────────────────────────────────────────────────────
 const port = parseInt(process.env.PORT || '3000', 10);
 console.log(`Flash MDM server listening on http://localhost:${port}`);
-serve({ fetch: app.fetch, port });
+const server = serve({ fetch: app.fetch, port });
+process.once('SIGTERM', () => {
+  const deadline = setTimeout(() => process.exit(0), 10000); deadline.unref();
+  server.close(() => { void closeOperationalTrace().finally(() => process.exit(0)); });
+});
 SERVEREOF
 
 success "server.ts generated with all routes"
@@ -1001,6 +1011,8 @@ import deploymentJobsBackground from './netlify/functions/deployment-jobs-backgr
 import { closeDatabasePool } from './netlify/functions/_lib/db.js';
 import { isDatabaseInfrastructureError } from './netlify/functions/_lib/db-errors.js';
 import { databaseBackoffDelayMs } from './netlify/functions/_lib/worker-backoff.js';
+import { traceHttp, installOperationalConsoleCapture, closeOperationalTrace } from './netlify/functions/_lib/operational-trace.js';
+installOperationalConsoleCapture();
 
 const configuredPollMs = Number.parseInt(process.env.FLASH_WORKER_POLL_MS || '2000', 10);
 const pollMs = Number.isFinite(configuredPollMs) ? Math.max(250, configuredPollMs) : 2000;
@@ -1056,7 +1068,8 @@ async function runLoop(name: string, work: () => Promise<Response | undefined>):
   while (!stopping) {
     let nextDelayMs = pollMs;
     try {
-      const response = await work();
+      const route = name === 'queue' ? 'sync-process-background' : 'deployment-jobs-background';
+      const response = await traceHttp(internalRequest(route), async () => await work() ?? new Response(null, { status: 204 }));
       const databaseUnavailable = response?.status === 503
         && response.headers.get('X-Flash-Degraded') === 'database';
 
@@ -1112,6 +1125,7 @@ await Promise.all([
   )),
 ]);
 await closeDatabasePool();
+await closeOperationalTrace();
 WORKEREOF
 
 success "worker.ts generated with queue and deployment drains"
@@ -1195,6 +1209,8 @@ Environment=NODE_ENV=production
 Environment=FLASH_RUNTIME=vps
 Environment=FLASH_INTERNAL_ORIGIN=http://127.0.0.1:3000
 Environment=FLASH_RELEASE_COMMIT=${RELEASE_COMMIT}
+Environment=FLASH_TRACE_DIR=${INSTALL_DIR}/data/operational-trace
+Environment=FLASH_TRACE_COMPONENT=web
 EnvironmentFile=${ENV_FILE}
 
 [Install]
@@ -1220,6 +1236,8 @@ Environment=NODE_ENV=production
 Environment=FLASH_RUNTIME=vps
 Environment=FLASH_INTERNAL_ORIGIN=http://127.0.0.1:3000
 Environment=FLASH_RELEASE_COMMIT=${RELEASE_COMMIT}
+Environment=FLASH_TRACE_DIR=${INSTALL_DIR}/data/operational-trace
+Environment=FLASH_TRACE_COMPONENT=worker
 EnvironmentFile=${ENV_FILE}
 
 [Install]

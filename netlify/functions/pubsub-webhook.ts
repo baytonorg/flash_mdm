@@ -6,6 +6,7 @@ import { jsonResponse, errorResponse } from './_lib/helpers.js';
 import { timingSafeEqual, randomUUID } from 'crypto';
 import { internalFunctionUrl, shouldTriggerBackgroundFunction } from './_lib/runtime.js';
 import { resolveAmapiDeviceImei } from './_lib/amapi-device-network.js';
+import { setTraceActor, traceEvent } from './_lib/operational-trace.js';
 
 /**
  * PubSub push subscription webhook handler.
@@ -37,7 +38,9 @@ export default async (request: Request, context: Context) => {
     if (expectedBuf.length !== tokenBuf.length || !timingSafeEqual(expectedBuf, tokenBuf)) {
       return errorResponse('Unauthorized', 401);
     }
+    setTraceActor({ type: 'webhook', role: 'pubsub' });
   }
+  traceEvent('webhook.received', { provider: 'pubsub', authenticated: !!expectedSecret });
 
   let body: {
     message?: {
@@ -135,6 +138,7 @@ export default async (request: Request, context: Context) => {
     console.warn(`PubSub event ${messageId}: no matching environment for enterprise ${enterpriseId}`);
     return new Response(null, { status: 204 });
   }
+  if (expectedSecret) setTraceActor({ type: 'webhook', role: 'pubsub' }, { environment_id: environmentId });
 
   // Idempotent insert
   const deviceAmapiName = buildDeviceAmapiName(payload, enterpriseId);

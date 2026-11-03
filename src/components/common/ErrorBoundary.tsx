@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { AlertTriangle } from 'lucide-react';
+import { reportReactError } from '@/lib/operationalActivity';
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -37,6 +38,7 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
+    reportReactError(error);
     console.error('ErrorBoundary caught an error:', error, errorInfo);
   }
 

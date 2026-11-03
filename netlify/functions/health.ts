@@ -1,6 +1,7 @@
 import type { Context } from '@netlify/functions';
 import { queryOne } from './_lib/db.js';
 import { errorResponse, jsonResponse } from './_lib/helpers.js';
+import { traceHealth } from './_lib/operational-trace.js';
 
 function deployedVersion(): string | null {
   return process.env.FLASH_RELEASE_COMMIT?.trim()
@@ -17,7 +18,7 @@ export default async function handler(request: Request, _context: Context) {
   try {
     await queryOne('SELECT 1 AS ok');
     return jsonResponse(
-      { status: 'ok', database: 'ok', version, runtime },
+      { status: 'ok', database: 'ok', version, runtime, operational_trace: traceHealth() },
       200,
       { 'Cache-Control': 'no-store' }
     );

@@ -1,4 +1,5 @@
 import type { Context } from '@netlify/functions';
+import { traceEvent, traceError } from './_lib/operational-trace.js';
 import { reconcileDevicePolicy } from './_lib/device-policy-reconcile.js';
 import { query, queryOne, execute, transaction } from './_lib/db.js';
 import {
@@ -1731,6 +1732,8 @@ export default async (request: Request, _context: Context) => {
       console.log(`Processing batch ${batchNum + 1}: ${jobs.length} jobs`);
 
     for (const job of jobs) {
+      const traceStarted = performance.now();
+      traceEvent('job.start', { job_id: job.id, job_type: job.job_type, environment_id: job.environment_id, attempt: job.attempts + 1 });
       try {
         const payload = parseJobPayload(job.payload);
 
@@ -2034,7 +2037,9 @@ export default async (request: Request, _context: Context) => {
            WHERE id = $1`,
           [job.id]
         );
+        traceEvent('job.completed', { job_id: job.id, job_type: job.job_type, environment_id: job.environment_id, outcome: 'success' });
       } catch (err) {
+        traceEvent('job.failure', { job_id: job.id, job_type: job.job_type, environment_id: job.environment_id, attempt: job.attempts + 1, ...traceError(err) });
         if (isDatabaseInfrastructureError(err)) {
           // The claim remains leased. Do not guess whether a preceding write or
           // external action committed, and do not spend a job attempt on an outage.
@@ -2093,6 +2098,8 @@ export default async (request: Request, _context: Context) => {
             );
           }
         }
+      } finally {
+        traceEvent('job.end', { job_id: job.id, job_type: job.job_type, duration_ms: Math.round(performance.now() - traceStarted) });
       }
     }
 
@@ -2178,6 +2185,7 @@ async function updateJobQueueFailure(
         `UPDATE job_queue SET status = 'dead', attempts = $2, error = $3, locked_at = NULL, locked_by = NULL, updated_at = now() WHERE id = $1`,
         [jobId, attempts, error]
       );
+      traceEvent('job.transition', { job_id: jobId, status: 'dead', outcome: 'dead', attempts });
       return;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -2186,6 +2194,7 @@ async function updateJobQueueFailure(
         `UPDATE job_queue SET status = 'dead', attempts = $2, error = $3, locked_at = NULL, locked_by = NULL WHERE id = $1`,
         [jobId, attempts, error]
       );
+      traceEvent('job.transition', { job_id: jobId, status: 'dead', outcome: 'dead', attempts });
       return;
     }
   }
@@ -2218,6 +2227,7 @@ async function updateJobQueueFailure(
       [jobId, attempts, error, backoffSeconds]
     );
   }
+  traceEvent('job.transition', { job_id: jobId, status: 'pending', attempts, retry_after_seconds: backoffSeconds });
 }
 
 async function markJobDeliveryUncertain(
@@ -2234,4 +2244,5 @@ async function markJobDeliveryUncertain(
      WHERE id = $1`,
     [jobId, detail]
   );
+  traceEvent('job.transition', { job_id: jobId, status: 'delivery_uncertain', outcome: 'delivery_uncertain' });
 }

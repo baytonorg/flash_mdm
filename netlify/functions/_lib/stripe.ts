@@ -1,4 +1,11 @@
 import Stripe from 'stripe';
+import { traceEvent } from './operational-trace.js';
+import { normaliseTracePath } from '../../../shared/trace-contract.js';
+
+export function attachStripeTrace(client: Stripe): Stripe {
+  client.on?.('response', response => traceEvent('provider.stripe', { method: response.method, operation: normaliseTracePath(response.path), status: response.status, duration_ms: response.elapsed, outcome: response.status >= 400 ? 'failure' : 'success' }));
+  return client;
+}
 
 let stripeInstance: Stripe | null = null;
 
@@ -6,7 +13,7 @@ export function getStripe(): Stripe {
   if (!stripeInstance) {
     const key = process.env.STRIPE_SECRET_KEY;
     if (!key) throw new Error('STRIPE_SECRET_KEY is not configured');
-    stripeInstance = new Stripe(key, { apiVersion: '2024-12-18.acacia' });
+    stripeInstance = attachStripeTrace(new Stripe(key, { apiVersion: '2024-12-18.acacia' }));
   }
   return stripeInstance;
 }

@@ -22,6 +22,10 @@ export interface AuditRequestAuthContext {
 
 const requestAuthContext = new AsyncLocalStorage<AuditRequestAuthContext>();
 
+export function runWithoutAuditAuthContext<T>(fn: () => Promise<T>): Promise<T> {
+  return requestAuthContext.run(undefined as never, fn);
+}
+
 export function setCurrentAuditAuthContext(ctx: AuditRequestAuthContext): void {
   requestAuthContext.enterWith(ctx);
 }

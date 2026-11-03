@@ -1,4 +1,6 @@
 import { setCurrentAuditAuthContext, type AuditRequestAuthContext } from './request-auth-context.js';
+import { traceEvent } from './operational-trace.js';
+import { UUID_PATTERN } from '../../../shared/trace-contract.js';
 
 export function jsonResponse(data: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(data), {
@@ -113,7 +115,15 @@ export async function parseJsonBody<T = unknown>(request: Request): Promise<T> {
   }
 
   try {
-    return await request.json() as T;
+    const body = await request.json() as T;
+    if (body && typeof body === 'object' && !Array.isArray(body)) {
+      const ids: Record<string, string> = {};
+      for (const key of ['id', 'workspace_id', 'environment_id', 'group_id', 'device_id', 'policy_id', 'user_id', 'target_id', 'scope_id']) {
+        const value = (body as Record<string, unknown>)[key]; if (typeof value === 'string' && UUID_PATTERN.test(value)) ids[key] = value;
+      }
+      if (Object.keys(ids).length) traceEvent('request.resources', ids);
+    }
+    return body;
   } catch {
     throw new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
       status: 400,

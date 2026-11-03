@@ -1,3 +1,4 @@
+import { tracedFetch } from './operational-trace.js';
 /**
  * Flashi tool-calling runtime.
  *
@@ -869,7 +870,7 @@ async function executeFlashTool(
     const timeout = setTimeout(() => controller.abort(), 20_000);
     let response: Response;
     try {
-      response = await fetch(url.toString(), {
+      response = await tracedFetch('flash', 'assistant_read', url.toString(), {
         method: "GET",
         headers: {
           Accept: "application/json",
@@ -1070,7 +1071,7 @@ async function callOpenAI(
       );
       let response: Response;
       try {
-        response = await fetch("https://api.openai.com/v1/chat/completions", {
+        response = await tracedFetch('openai', 'chat_completion', "https://api.openai.com/v1/chat/completions", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

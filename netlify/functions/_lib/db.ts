@@ -1,6 +1,7 @@
 import pg from 'pg';
 import { normalizePostgresConnectionString } from './postgres-connection.js';
 import { markDatabaseError } from './db-errors.js';
+import { traceSpan, traceEvent } from './operational-trace.js';
 
 const { Pool } = pg;
 
@@ -39,7 +40,7 @@ export async function query<T = Record<string, unknown>>(
 ): Promise<T[]> {
   const client = getPool();
   try {
-    const result = await client.query(sql, params);
+    const result = await tracedQuery(() => client.query(sql, params), sql);
     return result.rows as T[];
   } catch (err) {
     throw markDatabaseError(err);
@@ -60,7 +61,7 @@ export async function execute(
 ): Promise<{ rowCount: number }> {
   const client = getPool();
   try {
-    const result = await client.query(sql, params);
+    const result = await tracedQuery(() => client.query(sql, params), sql);
     return { rowCount: result.rowCount ?? 0 };
   } catch (err) {
     throw markDatabaseError(err);
@@ -82,7 +83,7 @@ export async function withClient<T>(
       if (property !== 'query') return Reflect.get(target, property, receiver);
       return async (...args: unknown[]) => {
         try {
-          return await Reflect.apply(target.query, target, args);
+          return await tracedQuery(() => Reflect.apply(target.query, target, args), typeof args[0] === 'string' ? args[0] : 'unknown');
         } catch (err) {
           throw markDatabaseError(err);
         }
@@ -100,15 +101,23 @@ export async function withClient<T>(
 export async function transaction<T>(
   fn: (client: pg.PoolClient) => Promise<T>
 ): Promise<T> {
-  return withClient(async (client) => {
+  return traceSpan('db.transaction', {}, () => withClient(async (client) => {
     try {
       await client.query('BEGIN');
       const result = await fn(client);
       await client.query('COMMIT');
+      traceEvent('db.transaction.committed');
       return result;
     } catch (err) {
       await client.query('ROLLBACK');
+      traceEvent('db.transaction.rolled_back');
       throw err;
     }
-  });
+  }));
+}
+
+async function tracedQuery<T extends { rowCount?: number | null }>(fn: () => Promise<T>, sql: string): Promise<T> {
+  const operation = /^\s*(SELECT|INSERT|UPDATE|DELETE|BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE|WITH|ALTER|CREATE|DROP|TRUNCATE)/i.exec(sql)?.[1]?.toUpperCase() ?? 'OTHER';
+  const table = /\b(?:FROM|INTO|UPDATE|TABLE)\s+([a-z_][a-z0-9_]*)/i.exec(sql)?.[1]?.toLowerCase();
+  return traceSpan('db.query', { operation, table }, async () => { const result = await fn(); traceEvent('db.rows', { operation, table, rows: result.rowCount ?? 0 }); return result; });
 }

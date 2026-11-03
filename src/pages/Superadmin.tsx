@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import OperationalTraceCard from '@/components/superadmin/OperationalTraceCard';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Building2, Users, Smartphone, Globe, Search, ChevronRight,
@@ -2844,10 +2845,11 @@ export function SuperadminStats() {
             <div>
               <h2 className="text-lg font-semibold text-gray-900 mb-2">Logs</h2>
               <p className="text-sm text-gray-500">
-                Collapsed function log sections. Starting with Pub/Sub webhook ingestion events.
+                Operational activity and function execution logs. Open a section to inspect outcomes and supporting detail.
               </p>
             </div>
           </div>
+          <OperationalTraceCard />
           <details className="group rounded-lg border border-gray-200">
             <summary className="cursor-pointer list-none px-4 py-3 flex items-center justify-between">
               <div>
