@@ -9,6 +9,7 @@ import {
 import { amapiCall, getAmapiErrorHttpStatus } from './_lib/amapi.js';
 import { logAudit } from './_lib/audit.js';
 import { jsonResponse, errorResponse, parseJsonBody, getClientIp, getSearchParams } from './_lib/helpers.js';
+import { withSignupLinkReferenceLock } from './_lib/signup-link-reference-lock.js';
 
 type PgLikeError = {
   code?: unknown;
@@ -433,7 +434,10 @@ export default async (request: Request, _context: Context) => {
     const confirmAccessCleanup = getSearchParams(request).get('confirm_access_cleanup') === 'true';
     let accessCleanup = { keys_deleted: 0, signup_links_deleted: 0, shared_links_updated: 0 };
     try {
-      await transaction(async (client) => {
+      // Signup links use polymorphic and JSON references rather than foreign
+      // keys. Share a lock with their write path so validation/cleanup cannot
+      // race a create or assignment update.
+      await withSignupLinkReferenceLock(() => transaction(async (client) => {
         // Lock the parent before checking credentials so new FK-backed keys
         // cannot appear between the preflight and the cascade.
         await client.query('SELECT id FROM environments WHERE id = $1 FOR UPDATE', [action]);
@@ -495,7 +499,7 @@ export default async (request: Request, _context: Context) => {
         }
 
         await client.query('DELETE FROM environments WHERE id = $1', [action]);
-      });
+      }));
     } catch (err) {
       if (err instanceof Response) return err;
       const pgCode = getPgCode(err);

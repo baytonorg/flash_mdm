@@ -1,10 +1,11 @@
 import type { Context } from '@netlify/functions';
-import { queryOne, execute } from './_lib/db.js';
+import { query, queryOne, execute } from './_lib/db.js';
 import { requireAuth } from './_lib/auth.js';
 import { requireWorkspaceResourcePermission, requireEnvironmentResourcePermission } from './_lib/rbac.js';
 import { generateToken, hashToken } from './_lib/crypto.js';
 import { logAudit } from './_lib/audit.js';
 import { jsonResponse, errorResponse, parseJsonBody, getClientIp, getSearchParams, isValidUuid } from './_lib/helpers.js';
+import { withSignupLinkReferenceLock } from './_lib/signup-link-reference-lock.js';
 
 const SLUG_REGEX = /^[a-z0-9][a-z0-9-]{2,99}$/;
 const DOMAIN_REGEX = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
@@ -39,6 +40,12 @@ function parseSignupLinkPathSegments(pathname: string): string[] {
 
 function validateUuidArray(values: string[]): boolean {
   return values.every(isValidUuid);
+}
+
+async function requireSignupLinkScope(scopeType: 'workspace' | 'environment', scopeId: string): Promise<Response | null> {
+  const table = scopeType === 'workspace' ? 'workspaces' : 'environments';
+  const rows = await query<{ id: string }>(`SELECT id FROM ${table} WHERE id = $1`, [scopeId]);
+  return rows.length > 0 ? null : errorResponse('Signup link scope no longer exists', 409);
 }
 
 async function validateAutoAssignmentScope(
@@ -101,11 +108,21 @@ async function validateAutoAssignmentScope(
   return null;
 }
 
-export default async (request: Request, _context: Context) => {
+async function handleSignupLinkRequest(
+  request: Request,
+  context: Context,
+  lockHeld = false,
+  existingAuth?: Awaited<ReturnType<typeof requireAuth>>
+) {
   try {
-    const auth = await requireAuth(request);
+    const auth = existingAuth ?? await requireAuth(request);
     const url = new URL(request.url);
     const segments = parseSignupLinkPathSegments(url.pathname);
+    if ((request.method === 'POST' || request.method === 'PATCH') && !lockHeld) {
+      return withSignupLinkReferenceLock(
+        () => handleSignupLinkRequest(request, context, true, auth)
+      );
+    }
 
   // GET /api/signup-links?scope_type=...&scope_id=...
   if (request.method === 'GET') {
@@ -174,6 +191,8 @@ export default async (request: Request, _context: Context) => {
     if (purpose === 'customer' && scope_type !== 'workspace') {
       return errorResponse('customer purpose is only supported for workspace signup links');
     }
+    const missingScopeResponse = await requireSignupLinkScope(scope_type, scope_id);
+    if (missingScopeResponse) return missingScopeResponse;
 
     // Auth check
     if (scope_type === 'workspace') {
@@ -317,6 +336,11 @@ export default async (request: Request, _context: Context) => {
       id: string; scope_type: string; scope_id: string; purpose: SignupLinkPurpose;
     }>('SELECT id, scope_type, scope_id, purpose FROM signup_links WHERE id = $1', [linkId]);
     if (!link) return errorResponse('Signup link not found', 404);
+    const missingScopeResponse = await requireSignupLinkScope(
+      link.scope_type as 'workspace' | 'environment',
+      link.scope_id
+    );
+    if (missingScopeResponse) return missingScopeResponse;
 
     // Auth check
     if (link.scope_type === 'workspace') {
@@ -528,4 +552,8 @@ export default async (request: Request, _context: Context) => {
     console.error('signup-link-crud error:', err);
     return errorResponse('Internal server error', 500);
   }
+}
+
+export default async (request: Request, context: Context) => {
+  return handleSignupLinkRequest(request, context);
 };

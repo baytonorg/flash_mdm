@@ -20,7 +20,8 @@
 
 | Import | From | Used for |
 |--------|------|----------|
-| `queryOne`, `execute` | `_lib/db.js` | Database operations |
+| `query`, `queryOne`, `execute` | `_lib/db.js` | Database operations |
+| `withSignupLinkReferenceLock` | `_lib/signup-link-reference-lock.js` | Serializes reference validation and writes with environment deletion |
 | `requireAuth` | `_lib/auth.js` | Authenticate the caller |
 | `requireWorkspaceResourcePermission`, `requireEnvironmentResourcePermission` | `_lib/rbac.js` | Enforce scope-appropriate permissions (`invite:read/write/delete` or `environment:manage_users`) |
 | `generateToken`, `hashToken` | `_lib/crypto.js` | Generate and hash signup link tokens |
@@ -37,6 +38,7 @@
 
 **POST** (create/regenerate):
 - Validates scope type (`workspace` or `environment`), slug uniqueness, role (`viewer`/`member`/`admin`), and access scope (`workspace`/`scoped`).
+- After authentication, holds the shared signup-link reference lock across scope checks, assignment validation, and the upsert. If a queued write resumes after its scope was deleted, it returns 409 instead of creating a dangling reference.
 - Environment-scoped links force `default_access_scope = 'scoped'`.
 - Scoped workspace links without environment creation require at least one auto-assign environment.
 - Generates a new cryptographic token, hashes it, and upserts into `signup_links`.
@@ -45,6 +47,7 @@
 **PATCH** (`/api/signup-links/:id`):
 - Partial update with field-by-field validation. Supports updating slug, enabled, role, access scope, auto-assign lists, allowed domains, environment creation flag, and display fields.
 - Re-validates slug uniqueness excluding the current link.
+- Uses the same reference lock as POST and environment deletion.
 
 **DELETE** (`/api/signup-links/:id`):
 - Looks up the link, checks scope-appropriate permissions, deletes the row.

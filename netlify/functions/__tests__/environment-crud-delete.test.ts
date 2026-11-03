@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const mockLockClientQuery = vi.fn();
+
 vi.mock('../_lib/db.js', () => ({
   query: vi.fn(),
   queryOne: vi.fn(),
   execute: vi.fn(),
+  withClient: vi.fn(async (fn: (client: { query: typeof mockLockClientQuery }) => Promise<unknown>) => fn({ query: mockLockClientQuery })),
   transaction: vi.fn(),
 }));
 
@@ -40,6 +43,10 @@ const mockLogAudit = vi.mocked(logAudit);
 
 beforeEach(() => {
   mockQueryOne.mockReset();
+  mockLockClientQuery.mockReset();
+  mockLockClientQuery.mockImplementation(async (sql: string) => ({
+    rows: String(sql).includes('pg_try_advisory_lock') ? [{ locked: true }] : [{ unlocked: true }],
+  }));
   mockTransaction.mockReset();
   mockRequireAuth.mockReset();
   mockRequireEnvironmentPermission.mockReset();
@@ -61,6 +68,7 @@ describe('environment-crud delete hardening', () => {
     mockTransaction.mockImplementationOnce(async (fn) => fn(client as never));
     const res = await handler(new Request('http://localhost/api/environments/33333333-3333-4333-8333-333333333333', { method: 'DELETE' }), {} as never);
     expect(res.status).toBe(409);
+    expect(String(mockLockClientQuery.mock.calls[0]?.[0])).toContain('pg_try_advisory_lock');
     expect(client.query.mock.calls.some(([sql]) => /^(DELETE|UPDATE)/.test(sql))).toBe(false);
     expect(mockLogAudit).not.toHaveBeenCalled();
   });
