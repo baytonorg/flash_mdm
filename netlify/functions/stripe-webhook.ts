@@ -3,6 +3,7 @@ import { queryOne, transaction } from './_lib/db.js';
 import { jsonResponse, errorResponse } from './_lib/helpers.js';
 import { verifyWebhookSignature } from './_lib/stripe.js';
 import { logAudit } from './_lib/audit.js';
+import { setTraceActor, traceEvent } from './_lib/operational-trace.js';
 import { getWorkspaceLicensingSettings, isPlatformLicensingEnabled } from './_lib/licensing.js';
 import {
   buildPaymentFailedEmail,
@@ -176,6 +177,8 @@ export default async function handler(request: Request, _context: Context) {
       console.error('Webhook signature verification failed:', err);
       return errorResponse('Invalid signature', 400);
     }
+    setTraceActor({ type: 'webhook', role: 'platform_stripe' });
+    traceEvent('webhook.received', { provider: 'platform_stripe', authenticated: true });
 
     const workspaceId = await getWorkspaceIdForEvent(event);
     const platformLicensingEnabled = await isPlatformLicensingEnabled();
