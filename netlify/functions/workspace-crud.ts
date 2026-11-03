@@ -1,5 +1,5 @@
 import type { Context } from '@netlify/functions';
-import { query, queryOne, execute } from './_lib/db.js';
+import { query, queryOne, execute, transaction } from './_lib/db.js';
 import { requireAuth } from './_lib/auth.js';
 import { requireWorkspacePermission, requireWorkspaceResourcePermission } from './_lib/rbac.js';
 import { encrypt } from './_lib/crypto.js';
@@ -135,16 +135,18 @@ export default async (request: Request, context: Context) => {
     if (!body.name) return errorResponse('Name is required');
 
     const id = crypto.randomUUID();
-    await execute(
+    await transaction(async (client) => {
+    await client.query(
       'INSERT INTO workspaces (id, name, gcp_project_id) VALUES ($1, $2, $3)',
       [id, body.name, body.gcp_project_id ?? null]
     );
 
-    // Add creator as owner
-    await execute(
+    // The workspace and its first owner commit together.
+    await client.query(
       'INSERT INTO workspace_memberships (workspace_id, user_id, role) VALUES ($1, $2, $3)',
       [id, auth.user.id, 'owner']
     );
+    });
 
     await logAudit({
       workspace_id: id,

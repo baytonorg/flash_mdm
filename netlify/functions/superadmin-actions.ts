@@ -1,6 +1,10 @@
+import { userDeletionPreflight, deleteUserAccount } from './_lib/user-offboarding.js';
+import { deleteEnvironmentData } from './_lib/environment-deletion.js';
+import { lockMembershipWorkspaces } from './_lib/membership-lifecycle.js';
+import { withSignupLinkReferenceLock } from './_lib/signup-link-reference-lock.js';
 import type { Context } from '@netlify/functions';
 import { validateSession, requireSuperadmin, setSessionCookie, clearSessionCookie } from './_lib/auth.js';
-import { queryOne, execute, transaction } from './_lib/db.js';
+import { queryOne, execute, transaction, withClient } from './_lib/db.js';
 import { generateToken, hashToken } from './_lib/crypto.js';
 import { jsonResponse, errorResponse, parseJsonBody, getClientIp } from './_lib/helpers.js';
 import { logAudit } from './_lib/audit.js';
@@ -66,8 +70,15 @@ export default async function handler(request: Request, _context: Context) {
       case 'revoke_superadmin':
         return handleRevokeSuperadmin(body.target_id, auth.user.id, ip);
 
+      case 'preflight_user_deletion':
+        return jsonResponse(await withClient(client => userDeletionPreflight(client, body.target_id!, auth.user.id)));
       case 'delete_user':
-        return handleDeleteUser(body.target_id, auth.user.id, ip);
+        return jsonResponse(await deleteUserAccount({
+          userId: body.target_id!, actorUserId: auth.user.id, ip,
+          confirmationEmail: body.params?.confirmation_email,
+          endSessionsAndCredentials: body.params?.end_sessions_and_delete_signin_credentials === true,
+          cancelPendingInvites: body.params?.cancel_pending_invites === true,
+        }));
 
       case 'run_migrations':
         return handleRunMigrations(request, auth.user.id, ip);
@@ -143,46 +154,6 @@ async function handleRevokeSuperadmin(targetUserId: string, actorUserId: string,
   });
 
   return jsonResponse({ message: `${user.email} superadmin access revoked` });
-}
-
-async function handleDeleteUser(targetUserId: string, actorUserId: string, ip: string): Promise<Response> {
-  if (targetUserId === actorUserId) {
-    return errorResponse('Cannot delete your own user account', 400);
-  }
-
-  const user = await queryOne<{ id: string; email: string; is_superadmin: boolean }>(
-    'SELECT id, email, is_superadmin FROM users WHERE id = $1',
-    [targetUserId]
-  );
-  if (!user) return errorResponse('User not found', 404);
-
-  const memberships = await queryOne<{ membership_count: number }>(
-    `SELECT COUNT(*)::int AS membership_count
-     FROM workspace_memberships
-     WHERE user_id = $1`,
-    [targetUserId]
-  );
-  if ((memberships?.membership_count ?? 0) > 0) {
-    return errorResponse('Remove user from all workspaces before permanent deletion', 409);
-  }
-
-  await transaction(async (client) => {
-    await client.query('UPDATE audit_log SET user_id = NULL WHERE user_id = $1', [targetUserId]);
-    await client.query('UPDATE user_invites SET invited_by = NULL WHERE invited_by = $1', [targetUserId]);
-    await client.query('UPDATE policy_versions SET changed_by = NULL WHERE changed_by = $1', [targetUserId]);
-    await client.query('DELETE FROM users WHERE id = $1', [targetUserId]);
-  });
-
-  await logAudit({
-    user_id: actorUserId,
-    action: 'superadmin.user.deleted',
-    resource_type: 'user',
-    resource_id: targetUserId,
-    details: { email: user.email, was_superadmin: user.is_superadmin },
-    ip_address: ip,
-  });
-
-  return jsonResponse({ message: `${user.email} permanently deleted` });
 }
 
 async function handleRunMigrations(request: Request, userId: string, ip: string): Promise<Response> {
@@ -639,12 +610,14 @@ async function handlePurgeData(
     ip_address: ip,
   });
 
-  await transaction(async (client) => {
-    // Delete in order respecting foreign keys
-    // Environments cascade deletes devices, policies, etc.
-    await client.query(`DELETE FROM environments WHERE workspace_id = $1`, [workspaceId]);
+  await withSignupLinkReferenceLock(() => transaction(async (client) => {
+    await lockMembershipWorkspaces(client, [workspaceId]);
+    const environments = await client.query('SELECT id FROM environments WHERE workspace_id = $1 ORDER BY id', [workspaceId]);
+    for (const environment of environments.rows) {
+      await deleteEnvironmentData(client, environment.id, params?.confirm_environment_access_cleanup === true);
+    }
     await client.query(`DELETE FROM licenses WHERE workspace_id = $1`, [workspaceId]);
-  });
+  }));
   // Keep the workspace and members but all operational data is purged
 
   await logAudit({

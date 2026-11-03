@@ -68,7 +68,8 @@ export default async function handler(request: Request, _context: Context) {
       type: body.type,
       format: body.format,
       environment_id: body.environment_id,
-      created_by: auth.user.id,
+      created_by: auth.authType === 'api_key' ? auth.apiKey.id : auth.user.id,
+      created_by_type: auth.authType === 'api_key' ? 'api_key' : 'user',
       created_at: new Date().toISOString(),
     });
 

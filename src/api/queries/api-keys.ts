@@ -10,7 +10,7 @@ export interface ApiKeyRecord {
   role: 'owner' | 'admin' | 'member' | 'viewer';
   token: string | null;
   token_prefix: string;
-  created_by_user_id: string;
+  created_by_user_id: string | null;
   created_by_email: string | null;
   created_by_name?: string | null;
   created_at: string;

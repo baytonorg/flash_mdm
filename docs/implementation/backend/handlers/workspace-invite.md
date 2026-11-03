@@ -9,7 +9,6 @@
 | `default` | `(request: Request, context: Context) => Promise<Response>` | Netlify function handler |
 | `InviteType` | `type` | `'workspace_access' \| 'platform_access'` |
 | `parseJsonStringArray` | `function` | Safely parses a JSON string into a `string[]` |
-| `upsertWorkspaceMembershipFromInvite` | `function` | Inserts or updates a workspace membership row (with `access_scope` fallback) |
 | `getInviteForAccept` | `function` | Retrieves an invite by token hash, with legacy schema compatibility |
 | `getInviteTypeFromPermissions` | `function` | Extracts the invite type from the `permissions` JSONB column |
 
@@ -21,8 +20,7 @@
 | `roleLevel` | 322-324 | Maps role string to numeric level |
 | `canGrantRole` | 326-328 | Checks whether inviter's role is high enough to grant a target role |
 | `authorizeScopedInvite` | 330-413 | Validates that the caller has sufficient permissions across all targeted environments/groups to send a scoped invite |
-| `insertInviteWithSchemaCompat` | 448-507 | Inserts a new invite row; falls back to legacy single-column schema if `environment_ids`/`group_ids` columns are missing |
-| `refreshInviteWithSchemaCompat` | 509-580 | Re-issues an existing pending invite with a new token and expiry; same legacy fallback |
+| `writeInviteOffer` | `_lib/invite-offer-write.ts` | Serialises offer creation/resend with membership and scope lifecycle writes, revalidating current authority and scopes under locks |
 | `parsePermissionsMetadata` | 648-658 | Parses the `permissions` JSONB column into an object |
 
 ## Constants
@@ -50,9 +48,9 @@
 
 2. **GET /api/invites/:token** -- Validates the token, checks expiry and status, and returns invite metadata (email, role, workspace name, inviter). Does not require authentication (public validation endpoint).
 
-3. **POST /api/invites/:token/accept** -- Requires authentication. Verifies the signed-in user's email matches the invite. Within a transaction: upserts workspace membership, creates environment/group memberships for scoped invites, and marks the invite as accepted.
+3. **POST /api/invites/:token/accept**: Requires session authentication. The shared invite-membership service locks the workspace and offer, revalidates identity, expiry, scope and current issuer authority, applies a bounded grant and consumes the offer once. Repeats return the already-applied result. Existing broader access survives; conflicting direct grants require explicit management review rather than an overwrite. Registration uses the same service.
 
-Schema compatibility: all invite insert/update operations fall back to legacy single-column (`environment_id`/`group_id`) if the multi-value columns are missing, ensuring zero-downtime deployments.
+Migration 059 establishes nullable multi-value columns without rewriting existing token records. Null falls back to legacy single-scope columns; an explicit empty array takes precedence. Run migrations before switching the application release. Writes and acceptance require the current schema and validate scopes at commit.
 
 ## API Surface
 

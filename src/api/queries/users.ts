@@ -66,6 +66,8 @@ interface UpdateUserAccessParams {
   user_id: string;
   access_scope: 'workspace' | 'scoped';
   scoped_role?: string;
+  workspace_role?: string;
+  cancel_pending_invites?: boolean;
   environment_ids?: string[];
   group_ids?: string[];
   acting_environment_id?: string;
@@ -79,6 +81,7 @@ interface UpdateUserRoleParams {
 interface RemoveWorkspaceUserParams {
   workspace_id: string;
   user_id: string;
+  cancel_pending_invites?: boolean;
 }
 
 // --- Query Keys ---
@@ -107,6 +110,7 @@ export function useInviteUser() {
       apiClient.post<InviteUserResponse>('/api/workspaces/invite', params),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: userKeys.list(variables.workspace_id) });
+      queryClient.invalidateQueries({ queryKey: ['workspace-users', variables.workspace_id] });
     },
   });
 }
@@ -118,6 +122,7 @@ export function useUpdateWorkspaceUserAccess() {
       apiClient.put<UpdateUserAccessResponse>('/api/workspaces/users/access', params),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: userKeys.list(variables.workspace_id) });
+      queryClient.invalidateQueries({ queryKey: ['workspace-users', variables.workspace_id] });
     },
   });
 }
@@ -129,6 +134,7 @@ export function useUpdateWorkspaceUserRole() {
       apiClient.put<UpdateUserRoleResponse>('/api/workspaces/users/role', params),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: userKeys.list(variables.workspace_id) });
+      queryClient.invalidateQueries({ queryKey: ['workspace-users', variables.workspace_id] });
     },
   });
 }
@@ -136,12 +142,13 @@ export function useUpdateWorkspaceUserRole() {
 export function useRemoveWorkspaceUser() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ workspace_id, user_id }: RemoveWorkspaceUserParams) =>
+    mutationFn: ({ workspace_id, user_id, cancel_pending_invites }: RemoveWorkspaceUserParams) =>
       apiClient.delete<RemoveWorkspaceUserResponse>(
-        `/api/workspaces/users/${encodeURIComponent(user_id)}?workspace_id=${encodeURIComponent(workspace_id)}`
+        `/api/workspaces/users/${encodeURIComponent(user_id)}?workspace_id=${encodeURIComponent(workspace_id)}&cancel_pending_invites=${cancel_pending_invites === true}`
       ),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: userKeys.list(variables.workspace_id) });
+      queryClient.invalidateQueries({ queryKey: ['workspace-users', variables.workspace_id] });
     },
   });
 }
@@ -159,6 +166,7 @@ export function useBulkWorkspaceUsersAction() {
       };
       options?: {
         role?: string;
+        cancel_pending_invites?: boolean;
         access_scope?: 'workspace' | 'scoped';
         environment_ids?: string[];
         group_ids?: string[];
@@ -166,6 +174,7 @@ export function useBulkWorkspaceUsersAction() {
     }) => apiClient.post<BulkWorkspaceUsersResponse>('/api/workspaces/users/bulk', params),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: userKeys.list(variables.workspace_id) });
+      queryClient.invalidateQueries({ queryKey: ['workspace-users', variables.workspace_id] });
     },
   });
 }

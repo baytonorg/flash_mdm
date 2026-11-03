@@ -1032,7 +1032,7 @@ export function SuperadminWorkspaces() {
   const [invoiceStatusNow] = useState(() => Date.now());
 
   useEffect(() => {
-    if (confirmAction?.action !== 'impersonate') return;
+    if (!['impersonate', 'purge_data'].includes(confirmAction?.action ?? '')) return;
     setImpersonationMode('read_only');
     setSupportReason('');
     setSupportTicketRef('');
@@ -1834,7 +1834,7 @@ export function SuperadminWorkspaces() {
                     onClick={() => setConfirmAction({
                       action: 'purge_data',
                       targetId: detail.workspace.id,
-                      label: 'PURGE ALL DATA for this workspace? This action cannot be undone.',
+                      label: 'Clear this workspace\'s environments, operational data and licences? The workspace, users, memberships and audit history remain. Google resources and billing/subscriptions are unchanged. This cannot be undone.',
                     })}
                     className="flex items-center gap-2 w-full px-3 py-2 text-sm font-medium text-red-700 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
                   >
@@ -1868,11 +1868,13 @@ export function SuperadminWorkspaces() {
               </button>
               <button
                 onClick={() => {
-                  if (confirmAction.action === 'impersonate' && (!supportReason.trim() || !noticeAck)) {
+                  if (['impersonate', 'purge_data'].includes(confirmAction.action) && (!supportReason.trim() || !noticeAck)) {
                     return;
                   }
                   const params = confirmAction.action === 'force_plan'
                     ? { plan_id: forcePlanId }
+                    : confirmAction.action === 'purge_data'
+                    ? { support_reason: supportReason.trim(), customer_notice_acknowledged: noticeAck }
                     : confirmAction.action === 'impersonate'
                     ? {
                         impersonation_mode: impersonationMode,
@@ -1883,7 +1885,7 @@ export function SuperadminWorkspaces() {
                     : undefined;
                   executeAction(confirmAction.action, confirmAction.targetId, params);
                 }}
-                disabled={actionMutation.isPending || (confirmAction.action === 'impersonate' && (!supportReason.trim() || !noticeAck))}
+                disabled={actionMutation.isPending || (['impersonate', 'purge_data'].includes(confirmAction.action) && (!supportReason.trim() || !noticeAck))}
                 className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
               >
                 {actionMutation.isPending ? (
@@ -1893,6 +1895,15 @@ export function SuperadminWorkspaces() {
                 )}
               </button>
             </div>
+            {confirmAction.action === 'purge_data' && (
+              <div className="mt-4 space-y-3 border-t border-gray-100 pt-4 text-sm">
+                <label className="block">Reason for clearing operational data
+                  <textarea className="mt-1 w-full rounded border border-gray-300 p-2" value={supportReason} onChange={e => setSupportReason(e.target.value)} />
+                </label>
+                <label className="flex gap-2"><input type="checkbox" checked={noticeAck} onChange={e => setNoticeAck(e.target.checked)} />The customer has been notified of this exact scope.</label>
+                <p className="text-xs text-red-700">If environments have API keys or signup-link dependencies, this operation is blocked. Delete those environments individually using their explicit access-cleanup confirmation first. Workspace API keys stay intact.</p>
+              </div>
+            )}
             {confirmAction.action === 'impersonate' && (
               <div className="mt-4 space-y-3 border-t border-gray-100 pt-4">
                 <div>
@@ -2004,6 +2015,22 @@ export function SuperadminUsers() {
   const [inviteFeedback, setInviteFeedback] = useState<{ success?: string; error?: string }>({});
   const [confirmDemote, setConfirmDemote] = useState<{ userId: string; email: string } | null>(null);
   const [confirmDeleteUser, setConfirmDeleteUser] = useState<{ userId: string; email: string } | null>(null);
+  const [deleteEmail, setDeleteEmail] = useState('');
+  const [deleteSigninAck, setDeleteSigninAck] = useState(false);
+  const [deleteInvitesAck, setDeleteInvitesAck] = useState(false);
+  useEffect(() => {
+    setDeleteEmail(''); setDeleteSigninAck(false); setDeleteInvitesAck(false);
+  }, [confirmDeleteUser?.userId]);
+  const deletionPreflight = useQuery<{
+    memberships: Array<{ workspace_id: string; name: string; role: string; access_scope: string; sole_owner: boolean }>;
+    counts: Record<string, number>;
+    blockers: string[];
+    effects: { deletes: string[]; retains: string[]; rollback: string };
+  }>({
+    queryKey: ['superadmin', 'user-deletion-preflight', confirmDeleteUser?.userId],
+    queryFn: () => apiClient.post('/api/superadmin/actions', { action: 'preflight_user_deletion', target_id: confirmDeleteUser!.userId }),
+    enabled: !!confirmDeleteUser, staleTime: 0,
+  });
 
   const { data, isLoading } = useQuery<{
     users: SuperadminUserListItem[];
@@ -2073,6 +2100,7 @@ export function SuperadminUsers() {
       apiClient.post<{ message: string }>('/api/superadmin/actions', {
         action: 'delete_user',
         target_id: targetId,
+        params: { confirmation_email: deleteEmail, end_sessions_and_delete_signin_credentials: deleteSigninAck, cancel_pending_invites: deleteInvitesAck },
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['superadmin', 'users'] });
@@ -2644,14 +2672,33 @@ export function SuperadminUsers() {
       )}
       {confirmDeleteUser && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-xl border border-red-200 bg-white p-6 shadow-xl">
+          <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-xl border border-red-200 bg-white p-6 shadow-xl">
             <h2 className="text-lg font-semibold text-gray-900">Permanently Delete User</h2>
             <p className="mt-2 text-sm text-gray-600">
               Permanently delete <span className="font-medium text-gray-800">{confirmDeleteUser.email}</span>?
             </p>
             <p className="mt-1 text-xs text-red-700">
-              This currently requires the user to be removed from all workspaces first.
+              All memberships are removed automatically. Establish another owner first for any surviving workspace this person solely owns.
             </p>
+            {deletionPreflight.isFetching && <p className="mt-2 text-sm">Checking deletion consequences...</p>}
+            {deletionPreflight.error && <p className="mt-2 text-sm text-red-700">Preflight failed. Close and retry before deleting.</p>}
+            {deletionPreflight.data && (
+              <div className="mt-3 space-y-3 text-sm text-gray-700">
+                <ul className="list-disc pl-5">{deletionPreflight.data.memberships.map(m => <li key={m.workspace_id}>{m.name}: {m.role}, {m.access_scope} access{m.sole_owner ? '. Sole workspace owner, transfer required.' : ''}</li>)}</ul>
+                <p>{deletionPreflight.data.counts.sessions} sessions; {deletionPreflight.data.counts.support_sessions} support sessions; {deletionPreflight.data.counts.pending_invites} pending invitations; {deletionPreflight.data.counts.independent_keys_retained} independent API keys retained.</p>
+                <p className="font-medium">Deleted</p>
+                <ul className="list-disc pl-5">{deletionPreflight.data.effects.deletes.map(x => <li key={x}>{x}</li>)}</ul>
+                <p className="font-medium">Preserved</p>
+                <ul className="list-disc pl-5">{deletionPreflight.data.effects.retains.map(x => <li key={x}>{x}</li>)}</ul>
+                <p>{deletionPreflight.data.effects.rollback}</p>
+                {deletionPreflight.data.blockers.map(x => <p key={x} className="text-red-700">{x}</p>)}
+              </div>
+            )}
+            <label className="mt-3 block text-sm">Type the user's email to confirm
+              <input className="mt-1 w-full rounded border border-gray-300 p-2" value={deleteEmail} onChange={e => setDeleteEmail(e.target.value)} autoComplete="off" />
+            </label>
+            <label className="mt-3 flex gap-2 text-sm"><input type="checkbox" checked={deleteSigninAck} onChange={e => setDeleteSigninAck(e.target.checked)} />Delete this account's password/MFA and sign-in links, and end its login and support sessions. Independent API keys stay unchanged.</label>
+            <label className="mt-3 flex gap-2 text-sm"><input type="checkbox" checked={deleteInvitesAck} onChange={e => setDeleteInvitesAck(e.target.checked)} />Cancel pending invitations addressed to this account.</label>
             {deleteUserMutation.error && (
               <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                 {deleteUserMutation.error instanceof Error ? deleteUserMutation.error.message : 'Failed to delete user'}
@@ -2669,7 +2716,7 @@ export function SuperadminUsers() {
               <button
                 type="button"
                 onClick={() => deleteUserMutation.mutate(confirmDeleteUser.userId)}
-                disabled={deleteUserMutation.isPending}
+                disabled={deleteUserMutation.isPending || deletionPreflight.isFetching || !deletionPreflight.data || !!deletionPreflight.error || deletionPreflight.data.blockers.length > 0 || deleteEmail !== confirmDeleteUser.email || !deleteSigninAck || (deletionPreflight.data.counts.pending_invites > 0 && !deleteInvitesAck)}
                 className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
               >
                 {deleteUserMutation.isPending ? 'Deleting…' : 'Delete User'}

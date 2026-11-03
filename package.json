@@ -16,6 +16,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run && node --test scripts/__tests__/amapi-schema-generator.test.mjs",
+    "test:membership-postgres": "bash scripts/test-membership-postgres.sh",
     "test:deploy-webhook": "node --test scripts/__tests__/vps-auto-deploy-webhook.test.mjs",
     "test:blob-migration": "node --test scripts/__tests__/blob-migration.test.mjs",
     "maintenance:rekey": "tsx scripts/rekey-encrypted-state.ts",

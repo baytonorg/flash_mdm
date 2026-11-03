@@ -57,7 +57,7 @@ export function sanitizeConfig(obj: unknown): unknown {
  * 5. Update policies.config with the compiled result
  * 6. Increment version, store in policy_versions
  */
-export async function recompilePolicy(policyId: string, userId: string): Promise<void> {
+export async function recompilePolicy(policyId: string, userId: string | null): Promise<void> {
   // Fetch assigned components ordered by priority (read-only, safe outside transaction)
   const assignments = await query<{
     config_fragment: Record<string, any>;

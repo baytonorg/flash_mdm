@@ -55,7 +55,7 @@ describe('Groups bulk actions', () => {
 
     await user.click(screen.getByRole('button', { name: 'Delete' }));
 
-    expect(confirmSpy).toHaveBeenCalledWith('Delete 2 selected group(s)?');
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('Delete 2 selected group(s) and their descendants?'));
     expect(mocks.bulkMutate).toHaveBeenCalledWith(
       {
         environment_id: 'env1',

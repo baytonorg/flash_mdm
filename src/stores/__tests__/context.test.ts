@@ -42,6 +42,14 @@ beforeEach(() => {
 
 describe('useContextStore', () => {
   describe('fetchWorkspaces', () => {
+    it('clears a removed workspace and all downstream cached selections', async () => {
+      useContextStore.setState({ activeWorkspace: mockWorkspaces[0], environments: mockEnvironments, activeEnvironment: mockEnvironments[0], groups: mockGroups, activeGroup: mockGroups[0] });
+      mockedGet.mockResolvedValueOnce({workspaces:[]});
+      await useContextStore.getState().fetchWorkspaces();
+      expect(useContextStore.getState()).toMatchObject({workspaces:[],activeWorkspace:null,environments:[],activeEnvironment:null,groups:[],activeGroup:null});
+      expect(JSON.parse(localStorage.getItem('flash_context') ?? '{}')).toEqual({});
+    });
+
     it('populates workspace list on success', async () => {
       mockedGet.mockResolvedValueOnce({ workspaces: mockWorkspaces });
       await useContextStore.getState().fetchWorkspaces();
@@ -106,6 +114,12 @@ describe('useContextStore', () => {
   });
 
   describe('fetchEnvironments', () => {
+    it('clears group context when environment access disappears', async () => {
+      useContextStore.setState({activeWorkspace:mockWorkspaces[0],activeEnvironment:mockEnvironments[0],environments:mockEnvironments,groups:mockGroups,activeGroup:mockGroups[0]});
+      mockedGet.mockResolvedValueOnce({environments:[mockEnvironments[1]]});
+      await useContextStore.getState().fetchEnvironments('ws-1');
+      expect(useContextStore.getState()).toMatchObject({activeEnvironment:null,groups:[],activeGroup:null});
+    });
     it('populates environments for a workspace', async () => {
       mockedGet.mockResolvedValueOnce({ environments: mockEnvironments });
       await useContextStore.getState().fetchEnvironments('ws-1');

@@ -94,7 +94,7 @@ describe('environment-crud transactional creation', () => {
       const client = {
         query: vi.fn(async (sql: string) => {
           stagedSql.push(sql);
-          return { rows: [], rowCount: 1 };
+          return { rows: [{ id: 'ws_1' }], rowCount: 1 };
         }),
       };
       const result = await callback(client as never);
@@ -109,7 +109,7 @@ describe('environment-crud transactional creation', () => {
     const response = await handler(makeCreateRequest(), {} as never);
 
     expect(response.status).toBe(201);
-    expect(committedSql.map(insertedTable)).toEqual(expectedCreateTables);
+    expect(committedSql.map(insertedTable).filter(Boolean)).toEqual(expectedCreateTables);
     expect(events).toEqual(['commit', 'audit']);
     expect(mockTransaction).toHaveBeenCalledTimes(1);
     expect(mockExecute).not.toHaveBeenCalled();
@@ -128,10 +128,10 @@ describe('environment-crud transactional creation', () => {
     async ({ table, index }) => {
       const committedSql: string[] = [];
       const clientQuery = vi.fn(async (_sql: string, _params?: unknown[]) => {
-        if (clientQuery.mock.calls.length === index + 1) {
+        if (insertedTable(_sql) === table) {
           throw new Error(`injected create failure at write ${index + 1}`);
         }
-        return { rows: [], rowCount: 1 };
+        return { rows: [{ id: 'ws_1' }], rowCount: 1 };
       });
 
       mockTransaction.mockImplementationOnce(async (callback) => {
@@ -140,7 +140,7 @@ describe('environment-crud transactional creation', () => {
           query: vi.fn(async (sql: string, params?: unknown[]) => {
             await clientQuery(sql, params);
             stagedSql.push(sql);
-            return { rows: [], rowCount: 1 };
+            return { rows: [{ id: 'ws_1' }], rowCount: 1 };
           }),
         };
 
@@ -158,8 +158,8 @@ describe('environment-crud transactional creation', () => {
 
       expect(response.status).toBe(500);
       await expect(response.json()).resolves.toEqual({ error: 'Internal server error' });
-      expect(clientQuery).toHaveBeenCalledTimes(index + 1);
-      expect(insertedTable(clientQuery.mock.calls[index]?.[0])).toBe(table);
+      expect(clientQuery).toHaveBeenCalledTimes(index + 2);
+      expect(insertedTable(clientQuery.mock.calls.at(-1)?.[0])).toBe(table);
       expect(committedSql).toEqual([]);
       expect(mockLogAudit).not.toHaveBeenCalled();
       expect(mockExecute).not.toHaveBeenCalled();

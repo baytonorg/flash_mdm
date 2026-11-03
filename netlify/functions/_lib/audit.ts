@@ -1,10 +1,11 @@
+import type { PoolClient } from 'pg';
 import { execute } from './db.js';
 import { getCurrentAuditAuthContext } from './request-auth-context.js';
 
 interface AuditEntry {
   workspace_id?: string;
   environment_id?: string;
-  user_id?: string;
+  user_id?: string | null;
   api_key_id?: string | null;
   device_id?: string;
   actor_type?: 'user' | 'system' | 'api_key';
@@ -88,13 +89,14 @@ function applyRequestAuthAttribution(entry: AuditEntry): AuditEntry {
   };
 }
 
-export async function logAudit(entry: AuditEntry): Promise<void> {
+export async function logAudit(entry: AuditEntry, client?: PoolClient): Promise<void> {
   const attributedEntry = applyRequestAuthAttribution(entry);
   const safeDetails = sanitizeAuditValue(attributedEntry.details ?? {}) as Record<string, unknown>;
   const detailsJson = JSON.stringify(safeDetails);
 
+  const write = client ? async (sql: string, params: unknown[]) => client.query(sql, params) : execute;
   try {
-    await execute(
+    await write(
       `INSERT INTO audit_log (
          workspace_id, environment_id, user_id, api_key_id, device_id,
          actor_type, visibility_scope,
@@ -117,6 +119,8 @@ export async function logAudit(entry: AuditEntry): Promise<void> {
       ]
     );
   } catch (err) {
+    // Lifecycle audit is part of the transaction: failure must roll it back.
+    if (client) throw err;
     if (isMissingAuditLogColumnError(err)) {
       try {
         // Compatibility path for databases that have not yet run newer audit_log migrations.

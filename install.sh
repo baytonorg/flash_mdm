@@ -1241,6 +1241,13 @@ echo
 sudo chown -hR root:root "$RELEASE_DIR"
 sudo chmod -R a-w "$RELEASE_DIR"
 
+info "Applying candidate database migrations before activation..."
+if ! (cd "$RELEASE_DIR" && DOTENV_CONFIG_PATH="$ENV_FILE" NODE_ENV=production \
+  NODE_EXTRA_CA_CERTS="$(read_env_value "$ENV_FILE" NODE_EXTRA_CA_CERTS || true)" \
+  node --import tsx scripts/run-migrations.ts); then
+  fail "Candidate database migration failed; previous release remains active"
+fi
+
 info "Activating candidate release..."
 sudo systemctl stop flashmdm-worker 2>/dev/null || true
 if ! activate_release "$RELEASE_DIR" "$CURRENT_LINK"; then

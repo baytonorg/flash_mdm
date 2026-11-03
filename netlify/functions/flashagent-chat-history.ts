@@ -41,10 +41,11 @@ function historyRateLimitedResponse(retryAfterMs?: number): Response {
 async function pruneOldMessages(
   environmentId: string,
   userId: string,
+  principalColumn: 'user_id' | 'api_key_id' = 'user_id',
 ): Promise<void> {
   await execute(
     `DELETE FROM flashagent_chat_messages
-     WHERE environment_id = $1 AND user_id = $2
+     WHERE environment_id = $1 AND ${principalColumn} = $2
        AND created_at < now() - make_interval(days => $3)`,
     [environmentId, userId, RETENTION_DAYS],
   );
@@ -108,7 +109,8 @@ export default async function handler(request: Request, _context: Context) {
         "read",
       );
 
-      const userId = auth.user.id;
+      const principalColumn = auth.authType === 'api_key' ? 'api_key_id' : 'user_id';
+      const userId = auth.authType === 'api_key' ? auth.apiKey?.id : auth.user.id;
       if (!userId) return errorResponse("Unable to resolve user", 400);
       const ip = getClientIp(request);
       const principalId =
@@ -145,7 +147,7 @@ export default async function handler(request: Request, _context: Context) {
          FROM (
            SELECT id, role, text, created_at
            FROM flashagent_chat_messages
-           WHERE environment_id = $1 AND user_id = $2
+           WHERE environment_id = $1 AND ${principalColumn} = $2
            ORDER BY created_at DESC
            LIMIT $3
          ) recent
@@ -197,7 +199,8 @@ export default async function handler(request: Request, _context: Context) {
         "read",
       );
 
-      const userId = auth.user.id;
+      const principalColumn = auth.authType === 'api_key' ? 'api_key_id' : 'user_id';
+      const userId = auth.authType === 'api_key' ? auth.apiKey?.id : auth.user.id;
       if (!userId) return errorResponse("Unable to resolve user", 400);
 
       const ip = getClientIp(request);
@@ -224,11 +227,11 @@ export default async function handler(request: Request, _context: Context) {
         return historyRateLimitedResponse(principalLimit.retryAfterMs);
       }
 
-      await pruneOldMessages(body.environment_id, userId);
+      await pruneOldMessages(body.environment_id, userId, principalColumn);
 
       // Cap total messages
       const countResult = await queryOne<{ count: string }>(
-        "SELECT COUNT(*)::text as count FROM flashagent_chat_messages WHERE environment_id = $1 AND user_id = $2",
+        `SELECT COUNT(*)::text as count FROM flashagent_chat_messages WHERE environment_id = $1 AND ${principalColumn} = $2`,
         [body.environment_id, userId],
       );
       const currentCount = Number(countResult?.count || 0);
@@ -258,7 +261,7 @@ export default async function handler(request: Request, _context: Context) {
 
       if (valuesClauses.length > 0) {
         await execute(
-          `INSERT INTO flashagent_chat_messages (workspace_id, environment_id, user_id, role, text)
+          `INSERT INTO flashagent_chat_messages (workspace_id, environment_id, ${principalColumn}, role, text)
            VALUES ${valuesClauses.join(", ")}`,
           params,
         );
@@ -288,7 +291,8 @@ export default async function handler(request: Request, _context: Context) {
         "write",
       );
 
-      const userId = auth.user.id;
+      const principalColumn = auth.authType === 'api_key' ? 'api_key_id' : 'user_id';
+      const userId = auth.authType === 'api_key' ? auth.apiKey?.id : auth.user.id;
       if (!userId) return errorResponse("Unable to resolve user", 400);
 
       const ip = getClientIp(request);
@@ -316,13 +320,13 @@ export default async function handler(request: Request, _context: Context) {
       }
 
       await execute(
-        "DELETE FROM flashagent_chat_messages WHERE environment_id = $1 AND user_id = $2",
+        `DELETE FROM flashagent_chat_messages WHERE environment_id = $1 AND ${principalColumn} = $2`,
         [environmentId, userId],
       );
 
       await logAudit({
         workspace_id: env.workspace_id,
-        user_id: userId,
+        user_id: auth.user.id,
         action: "flashagent.chat_history.cleared",
         resource_type: "flashagent",
         resource_id: environmentId,

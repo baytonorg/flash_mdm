@@ -1,3 +1,5 @@
+vi.mock('../_lib/membership-lifecycle.js', () => ({ changeMemberships: vi.fn().mockResolvedValue(undefined) }));
+import { changeMemberships } from '../_lib/membership-lifecycle.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../_lib/db.js', () => ({
@@ -35,6 +37,7 @@ describe('POST /api/workspaces/users/bulk', () => {
       user: { id: '11111111-1111-4111-8111-111111111111', is_superadmin: false },
     } as never);
     mockRequireWorkspacePermission.mockResolvedValue('admin' as never);
+    vi.mocked(changeMemberships).mockReset().mockResolvedValue(undefined);
   });
 
   function makeRequest(body: Record<string, unknown>) {
@@ -66,6 +69,7 @@ describe('POST /api/workspaces/users/bulk', () => {
 
   it('bulk access_overwrite enforces owner promotion guardrails', async () => {
     mockQueryOne.mockResolvedValueOnce({ role: 'member' } as never);
+    vi.mocked(changeMemberships).mockRejectedValueOnce(new Response(JSON.stringify({ error: 'Only owners can promote to owner' }), { status: 403 }));
 
     const res = await handler(makeRequest({
       workspace_id: '22222222-2222-4222-8222-222222222222',
@@ -115,10 +119,10 @@ describe('POST /api/workspaces/users/bulk', () => {
     expect(body.succeeded).toBe(1);
     expect(body.failed).toBe(0);
     expect(body.results).toEqual([{ id: '44444444-4444-4444-8444-444444444444', ok: true }]);
-    expect(mockExecute).toHaveBeenCalledWith(
-      'DELETE FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2',
-      ['22222222-2222-4222-8222-222222222222', '44444444-4444-4444-8444-444444444444'],
-    );
+    expect(changeMemberships).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: '22222222-2222-4222-8222-222222222222',
+      changes: [expect.objectContaining({ userId: '44444444-4444-4444-8444-444444444444', operation: 'remove' })],
+    }));
   });
 
   it('bulk access_overwrite rewrites role, scope, and direct assignments on success', async () => {
@@ -148,21 +152,9 @@ describe('POST /api/workspaces/users/bulk', () => {
     expect(body.succeeded).toBe(1);
     expect(body.failed).toBe(0);
     expect(body.results).toEqual([{ id: '33333333-3333-4333-8333-333333333333', ok: true }]);
-    expect(txQuery).toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE workspace_memberships SET role = $1'),
-      ['admin', '22222222-2222-4222-8222-222222222222', '33333333-3333-4333-8333-333333333333'],
-    );
-    expect(txQuery).toHaveBeenCalledWith(
-      expect.stringContaining('SET access_scope = $1'),
-      ['scoped', '22222222-2222-4222-8222-222222222222', '33333333-3333-4333-8333-333333333333'],
-    );
-    expect(txQuery).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO environment_memberships'),
-      ['55555555-5555-4555-8555-555555555555', '33333333-3333-4333-8333-333333333333', 'admin'],
-    );
-    expect(txQuery).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO group_memberships'),
-      ['66666666-6666-4666-8666-666666666666', '33333333-3333-4333-8333-333333333333', 'admin'],
-    );
+    expect(changeMemberships).toHaveBeenCalledWith(expect.objectContaining({
+      changes: [expect.objectContaining({ operation: 'access', role: 'admin', assignmentRole: 'admin', accessScope: 'scoped',
+        environmentIds: ['55555555-5555-4555-8555-555555555555'], groupIds: ['66666666-6666-4666-8666-666666666666'] })],
+    }));
   });
 });

@@ -65,7 +65,7 @@ describe('environment-crud customer setup flow', () => {
       },
     } as never);
     mockExecute.mockResolvedValue({ rowCount: 1 } as never);
-    mockTransactionQuery.mockResolvedValue({ rows: [], rowCount: 1 });
+    mockTransactionQuery.mockResolvedValue({ rows: [{ id: 'user_1' }], rowCount: 1 });
     mockTransaction.mockImplementation(async (callback) => callback({ query: mockTransactionQuery } as never));
   });
 
@@ -85,7 +85,7 @@ describe('environment-crud customer setup flow', () => {
     expect(mockTransaction).toHaveBeenCalledTimes(1);
     expect(mockExecute).not.toHaveBeenCalled();
     expect(mockTransactionQuery).toHaveBeenCalledWith(
-      'INSERT INTO environment_memberships (environment_id, user_id, role) VALUES ($1, $2, $3)',
+      expect.stringContaining('INSERT INTO environment_memberships'),
       expect.arrayContaining([expect.any(String), 'user_1', 'owner'])
     );
     expect(mockTransactionQuery).not.toHaveBeenCalledWith(
@@ -106,7 +106,7 @@ describe('environment-crud customer setup flow', () => {
 
     expect(res.status).toBe(201);
     expect(mockTransactionQuery).toHaveBeenCalledWith(
-      'INSERT INTO environment_memberships (environment_id, user_id, role) VALUES ($1, $2, $3)',
+      expect.stringContaining('INSERT INTO environment_memberships'),
       expect.arrayContaining([expect.any(String), 'user_1', 'owner'])
     );
     expect(mockTransactionQuery).not.toHaveBeenCalledWith(
