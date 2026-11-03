@@ -11,6 +11,7 @@ import { proxyToAmapiMcp } from "../mcp-proxy.js";
 import { storeBlob } from "../blobs.js";
 import {
   executeToolForTests,
+  runFlashi,
   validateAmapiToolScope,
   type RuntimeContext,
 } from "../flashagent-runtime.js";
@@ -60,6 +61,18 @@ function makeRuntimeContext(
 }
 
 describe("flashagent-runtime security controls", () => {
+  it.each(["gpt-5.6-luna", "gpt-4.1-mini", "o3"])("uses compatible completion parameters for %s", async (model) => {
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "Ready" } }] }), { status: 200 }));
+    const result = await runFlashi({ systemPrompt: "Test", userMessage: "Hello", contextMessages: [], runtimeCtx: makeRuntimeContext(), apiKeyOverride: "synthetic-test", modelOverride: model });
+    expect(result.reply).toBe("Ready");
+    const body = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(body.model).toBe(model);
+    expect(body.max_completion_tokens).toBe(2000);
+    expect(body).not.toHaveProperty("max_tokens");
+    if (model === "gpt-5.6-luna") expect(body.reasoning_effort).toBe("none");
+    if (model === "gpt-4.1-mini") expect(body.temperature).toBe(0.2);
+    else expect(body).not.toHaveProperty("temperature");
+  });
   beforeEach(() => {
     mockProxyToAmapiMcp.mockReset();
     mockStoreBlob.mockReset();
