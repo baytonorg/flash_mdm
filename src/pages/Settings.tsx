@@ -1169,7 +1169,10 @@ function EnvironmentTab() {
                     <div>
                       <p className="text-sm font-medium text-red-900">Unbind Enterprise</p>
                       <p className="text-xs text-red-700 mt-1">
-                        Unbind this enterprise and remove it from Google. Private apps, policies, and user data will be irreversibly removed. A new bind will be required and will generate a new enterprise ID. This action cannot be undone.
+                        Permanently delete this enterprise and its associated accounts and data from Google, including all AMAPI device records. This can wipe managed devices or remove their work profiles. This action cannot be undone.
+                      </p>
+                      <p className="text-xs text-red-700 mt-1">
+                        The Flash environment, local device records, policies, and assignments are kept. Policies return to draft and existing enrollment token values are cleared. Bind a new enterprise to resume management; the deleted enterprise ID cannot be reused.
                       </p>
                     </div>
                     <button
@@ -1203,7 +1206,7 @@ function EnvironmentTab() {
                               setShowDeleteEnterprise(false);
                               setDeleteConfirmText('');
                               if (activeWorkspace) await fetchEnvironments(activeWorkspace.id);
-                              setFeedback({ success: 'Enterprise unbound and removed from Google.' });
+                              setFeedback({ success: 'Enterprise unbound and removed from Google. Flash environment and local records retained.' });
                             } catch (err) {
                               setFeedback({ error: err instanceof Error ? err.message : 'Failed to unbind enterprise' });
                             }
@@ -1240,7 +1243,10 @@ function EnvironmentTab() {
                   <div>
                     <p className="text-sm font-medium text-red-900">Delete Environment</p>
                     <p className="text-xs text-red-700 mt-1">
-                      Permanently delete this environment and its local data. If it is bound to an enterprise, the Google enterprise may remain as a disassociated enterprise.
+                      Permanently delete this Flash environment and its environment-scoped records, including local devices, policies, apps, and enrollment tokens. Audit history is retained. Workspace accounts and billing subscriptions are kept. API keys and signup-link references must be handled separately before deletion can proceed.
+                    </p>
+                    <p className="text-xs text-red-700 mt-1">
+                      This does not delete the Google enterprise or send device wipe commands. If bound, the enterprise and its devices remain in Google, disconnected from this Flash environment. Use Unbind Enterprise first if you also intend to remove the Google enterprise. Local deletion cannot be undone.
                     </p>
                   </div>
                   <button

@@ -36,7 +36,11 @@
 
 - **PUT /update**: Supports updating `name`, `pubsub_topic`, and `enterprise_features`. When the environment is bound to an AMAPI enterprise, name or pubsub changes are synced upstream via `PATCH` to the enterprise resource. If the AMAPI patch returns updated values, those are stored locally. PubSub topic changes also toggle `enabledNotificationTypes`.
 
-- **DELETE /:id**: Requires `delete` permission. Deletes the environment row (cascading to related data via foreign keys).
+- **DELETE /:id**: Requires `delete` permission. Transactionally detaches environment and device references in audit history, deletes environment Pub/Sub events and queued jobs, then deletes the environment row. Foreign keys cascade to local devices and their reports, policies/versions/derivatives, groups/memberships, apps/deployments, networks, workflows, certificates, enrollment records and other environment-scoped records. Workspace users, workspace membership and billing subscriptions survive. Sessions survive with environment/group context cleared. No Google deletion or device command is sent; the external enterprise and its resources remain and can be discovered for recovery.
+
+  Before deletion, the parent environment is locked and the handler blocks on any environment API-key record or signup link scoped/assigned to the environment or its groups. These protected resources must be handled separately; this endpoint does not delete them. Audit history is retained by nulling environment and device foreign-key references before the cascade. Each optional legacy cleanup statement uses a savepoint so missing tables/columns do not abort the transaction. Other dependency failures return 409 with rollback and a support-oriented message. This is local operational deletion, not complete personal-data erasure or authority for live credential lifecycle actions.
+
+  Validation: `environment-deletion.integration.test.ts` runs the handlers against synthetic records in a named disposable localhost PostgreSQL database with the deployed schema. Enable it with `FLASH_DELETION_TEST_URL`; it never calls Google. Normal unit tests cover the handler with mocks and do not prove database cascades.
 
 ## API Surface
 

@@ -14,7 +14,7 @@
 |------|-------|-------------|
 | `pushAllPoliciesToAmapi` | 496-545 | Iterates all policies in the environment and syncs each to AMAPI via `syncPolicyDerivativesForPolicy`; promotes draft policies to production |
 | `bootstrapDevicesForAttachedEnterprise` | 546-646 | Pages through AMAPI device list and upserts each device into the local `devices` table (capped at 500) |
-| `cleanupEnterpriseReferences` | 653-700 | Shared cleanup for unbind/delete: clears enterprise fields, resets policies to draft, deletes derivatives and assignments, invalidates enrollment tokens, clears device policy sync state |
+| `cleanupEnterpriseReferences` | 670-709 | Shared transactional cleanup: clears enterprise binding fields, resets policies to draft, deletes derivatives, clears remote enrollment token values and device sync markers. Preserves policies, assignments, local devices, groups and the environment. |
 
 ## Internal Interfaces
 
@@ -52,7 +52,9 @@ The handler is POST-only and uses `body.action` and the presence of `enterprise_
 
 2. **Unbind** (`action: 'unbind'`): Runs `cleanupEnterpriseReferences` to remove all local enterprise state without deleting the enterprise from Google.
 
-3. **Delete enterprise** (`action: 'delete_enterprise'`): Calls AMAPI `DELETE` on the enterprise, then runs the same local cleanup as unbind.
+3. **Delete enterprise** (`action: 'delete_enterprise'`): Calls AMAPI `DELETE` on the enterprise, then runs the same local cleanup as unbind. This is the action behind Settings' **Unbind Enterprise** control. Google's [enterprise deletion contract](https://developers.google.com/android/management/reference/rest/v1/enterprises/delete) permanently deletes the enterprise, associated accounts/data and all AMAPI devices. [Device deletion](https://developers.google.com/android/management/reference/rest/v1/enterprises.devices/delete) attempts a wipe; offline devices may not complete it. Do not test against a real enterprise without separately authorised scope.
+
+   Google failures other than 404 leave local state intact. A 404 means the remote resource is already absent and allows local cleanup to finish. Google deletion and the local transaction are not one atomic operation: if local cleanup fails, the handler returns an explicit partial-success error instructing the operator to retry Unbind. That retry completes cleanup even when Google returns 404; repeating after successful cleanup is a no-op success. Neither local device records nor snapshots prove that devices remain managed after this action. Local API-key records, workspace credentials, users and billing subscriptions are not deleted by this cleanup.
 
 4. **Attach existing enterprise** (`existing_enterprise_name` provided): Validates the enterprise name format, checks it is not already linked to another environment, fetches enterprise details from AMAPI, updates the environment record, pushes all policies, syncs sign-in config, and bootstraps devices. Returns the enterprise details and bootstrap stats.
 

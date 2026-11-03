@@ -432,38 +432,59 @@ export default async (request: Request, _context: Context) => {
 
     try {
       await transaction(async (client) => {
+        // Lock the parent before checking credentials so new FK-backed keys
+        // cannot appear between the preflight and the cascade.
+        await client.query('SELECT id FROM environments WHERE id = $1 FOR UPDATE', [action]);
+        const dependencies = await client.query<{ has_keys: boolean; has_signup_links: boolean }>(
+          `SELECT EXISTS (SELECT 1 FROM api_keys WHERE environment_id = $1) AS has_keys,
+                  EXISTS (SELECT 1 FROM signup_links
+                    WHERE (scope_type = 'environment' AND scope_id = $1)
+                       OR auto_assign_environment_ids @> jsonb_build_array($1::text)
+                       OR EXISTS (SELECT 1 FROM groups g WHERE g.environment_id = $1
+                         AND ((signup_links.scope_type = 'group' AND signup_links.scope_id = g.id)
+                           OR signup_links.auto_assign_group_ids @> jsonb_build_array(g.id::text)))) AS has_signup_links`,
+          [action]
+        );
+        if (dependencies.rows[0]?.has_keys || dependencies.rows[0]?.has_signup_links) {
+          throw errorResponse('Environment deletion is blocked by API keys or signup-link references. Review these separately before deleting the environment.', 409);
+        }
         // Legacy tables from early schema versions do not cascade on environment delete.
         // Clear those references explicitly to avoid FK violations for valid deletes.
         const cleanupStatements = [
           'UPDATE audit_log SET environment_id = NULL WHERE environment_id = $1',
+          'UPDATE audit_log SET device_id = NULL WHERE device_id IN (SELECT id FROM devices WHERE environment_id = $1)',
           'DELETE FROM pubsub_events WHERE environment_id = $1',
           'DELETE FROM job_queue WHERE environment_id = $1',
         ];
 
         for (const sql of cleanupStatements) {
+          await client.query('SAVEPOINT environment_cleanup');
           try {
             await client.query(sql, [action]);
           } catch (cleanupErr) {
             // Some older databases may not have every legacy table/column.
             // Missing relation/column should not block environment deletion.
             if (isMissingRelationOrColumnError(cleanupErr)) {
+              await client.query('ROLLBACK TO SAVEPOINT environment_cleanup');
               console.warn('environment-crud delete legacy cleanup skipped:', {
                 environment_id: action,
                 sql,
                 code: getPgCode(cleanupErr),
               });
-              continue;
+            } else {
+              throw cleanupErr;
             }
-            throw cleanupErr;
           }
+          await client.query('RELEASE SAVEPOINT environment_cleanup');
         }
 
         await client.query('DELETE FROM environments WHERE id = $1', [action]);
       });
     } catch (err) {
+      if (err instanceof Response) return err;
       const pgCode = getPgCode(err);
       if (pgCode === '23503') {
-        return errorResponse('Environment delete blocked by dependent records. Retry after pending background activity completes.', 409);
+        return errorResponse('Environment deletion is blocked by related records. No local changes were committed. Contact support to review the dependencies.', 409);
       }
       console.error('environment-crud delete failed:', {
         environment_id: action,
