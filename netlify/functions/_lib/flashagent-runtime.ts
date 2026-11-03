@@ -1049,9 +1049,16 @@ async function callOpenAI(
       const body: Record<string, unknown> = {
         model,
         messages,
-        max_tokens: 2000,
-        temperature: 0.2,
+        max_completion_tokens: 2000,
       };
+      // Reasoning models reject legacy sampling controls. Newer GPT models
+      // require non-reasoning mode for Chat Completions function tools.
+      if (/^gpt-(?:[6-9]|5\.[4-9])(?:[.-]|$)/.test(model)) {
+        body.reasoning_effort = "none";
+      }
+      if (!/^(?:gpt-[5-9](?:[.-]|$)|o\d)/.test(model)) {
+        body.temperature = 0.2;
+      }
       if (tools && tools.length > 0) {
         body.tools = tools;
       }
