@@ -1,5 +1,6 @@
 import type { Context } from '@netlify/functions';
-import { queryOne, execute } from './_lib/db.js';
+import { storeSigninLink } from './_lib/signin-link.js';
+import { queryOne } from './_lib/db.js';
 import { generateToken, hashToken } from './_lib/crypto.js';
 import { sendEmail, magicLinkEmail } from './_lib/resend.js';
 import { logAudit } from './_lib/audit.js';
@@ -55,11 +56,9 @@ export default async (request: Request, context: Context) => {
   const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
   // Store magic link
-  await execute(
-    `INSERT INTO magic_links (token_hash, email, expires_at)
-     VALUES ($1, $2, $3)`,
-    [tokenHash, email, expiresAt]
-  );
+  if (!await storeSigninLink(user.id, email, tokenHash, expiresAt)) {
+    return jsonResponse({ message: 'If an account exists, a magic link has been sent.' });
+  }
 
   // Build URL
   const baseUrl = process.env.URL ?? process.env.DEPLOY_PRIME_URL ?? 'http://localhost:8888';

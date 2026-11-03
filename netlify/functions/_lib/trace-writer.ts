@@ -52,6 +52,8 @@ export class TraceWriter {
   private timer: ReturnType<typeof setInterval>;
   private maintenanceAt = 0;
   private healthAt = 0;
+  private heartbeatGaps = 0;
+  private previousDrainAt: number;
   private window = "";
   private segment = 0;
   private segmentBytes = 0;
@@ -82,6 +84,7 @@ export class TraceWriter {
   constructor(private options: TraceWriterOptions) {
     this.now = options.now ?? (() => new Date());
     this.startedAt = this.now().toISOString();
+    this.previousDrainAt = Date.parse(this.startedAt);
     this.window = traceWindow(this.now());
     this.windowStartedAt = this.startedAt;
     this.timer = setInterval(() => {
@@ -184,6 +187,9 @@ export class TraceWriter {
   private async drain() {
     await this.ensureDirectory();
     const now = this.now();
+    const heartbeatGap = now.getTime() - this.previousDrainAt > 120000;
+    this.previousDrainAt = now.getTime();
+    if (heartbeatGap) this.heartbeatGaps++;
     if (now.getTime() >= this.maintenanceAt) {
       await this.maintain(now);
       this.maintenanceAt = now.getTime() + 10_000;
@@ -273,6 +279,7 @@ export class TraceWriter {
     this.budgetLimited = false;
     if (this.window) await this.persistHealth(true);
     this.window = window;
+    this.heartbeatGaps = 0;
     this.segment = 0;
     this.segmentBytes = 0;
     this.windowBytes = 0;
@@ -309,6 +316,7 @@ export class TraceWriter {
           window_started_at: this.windowStartedAt,
           observed_at: this.now().toISOString(),
           closed,
+          heartbeat_gaps: this.heartbeatGaps,
           low_disk: this.lowDisk,
           ...this.windowCounters,
           queued_bytes: this.queuedBytes,

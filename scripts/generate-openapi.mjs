@@ -418,6 +418,33 @@ function collectCommentCandidatesForRedirect(redirect, functionNames) {
 }
 
 function genericOperation({ method, apiPath, sourceFunction, summary }) {
+  if (apiPath === '/api/activity' && method === 'POST') {
+    return {
+      operationId: 'post_api_activity', tags: ['activity'], summary: 'Submit browser activity',
+      description: 'Same-origin browser collection. API keys are rejected. First send an empty events array to obtain the session binding. Event metadata is client-reported.',
+      security: [{}, { sessionCookie: [] }],
+      'x-flash-auth': { authModel: 'optional-session', apiKeyRejected: true },
+      parameters: [
+        { in: 'header', name: 'X-Requested-With', required: true, schema: { const: 'XMLHttpRequest' } },
+        { in: 'header', name: 'X-Flash-Activity-Binding', description: 'Required for event uploads. Obtain from the bootstrap response.', schema: { type: 'string' } },
+        { in: 'header', name: 'X-Flash-Activity-Client', description: 'Optional per-page quota identifier.', schema: { type: 'string', format: 'uuid' } },
+      ],
+      requestBody: { required: true, content: { 'application/json': { schema: {
+        type: 'object', required: ['events'], properties: {
+          events: { type: 'array', maxItems: 50, items: { type: 'object', required: ['kind', 'route'], properties: { kind: { type: 'string' }, route: { type: 'string', maxLength: 2048 } } } },
+          dropped: { type: 'integer', minimum: 0, maximum: 999999 },
+          unconfirmed: { type: 'integer', minimum: 0, maximum: 999999, description: 'Terminal events whose delivery a previous document could not confirm.' },
+        },
+      } } } },
+      responses: {
+        '204': { description: 'Accepted, collection disabled, or bootstrap completed', headers: { 'X-Flash-Activity-Binding': { description: 'Returned on successful bootstrap when collection is enabled.', schema: { type: 'string' } } } },
+        '400': { description: 'Invalid batch' }, '403': { description: 'Invalid browser request' },
+        '409': { description: 'Session binding mismatch. Discard ambiguous events and bootstrap again.' },
+        '413': { description: 'Batch exceeds 16 KiB' }, '429': { description: 'Collection rate limit' },
+        '503': { description: 'Collection unavailable' },
+      },
+    };
+  }
   const tag = detectTag(apiPath);
   const mutating = ['post', 'put', 'patch', 'delete'].includes(method.toLowerCase());
   const sourceMeta = sourceFunction ? functionMeta.get(sourceFunction) : null;

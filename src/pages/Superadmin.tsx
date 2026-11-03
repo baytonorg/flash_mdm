@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import OperationalTraceCard from '@/components/superadmin/OperationalTraceCard';
+import LogCard from '@/components/superadmin/LogCard';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Building2, Users, Smartphone, Globe, Search, ChevronRight,
@@ -2850,17 +2851,7 @@ export function SuperadminStats() {
             </div>
           </div>
           <OperationalTraceCard />
-          <details className="group rounded-lg border border-gray-200">
-            <summary className="cursor-pointer list-none px-4 py-3 flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-900">pubsub-webhook</p>
-                <p className="text-xs text-gray-500">
-                  Recent webhook events with decoded payload preview (when blob capture exists)
-                </p>
-              </div>
-              <ChevronRight className="w-4 h-4 text-gray-400 transition-transform group-open:rotate-90" />
-            </summary>
-            <div className="border-t border-gray-100 px-4 py-3">
+          <LogCard title="pubsub-webhook" description="Recent webhook events with decoded payload preview (when blob capture exists)">
               {stats.function_logs?.pubsub_webhook?.events?.length ? (
                 <div className="space-y-2 max-h-[34rem] overflow-y-auto">
                   {stats.function_logs.pubsub_webhook.events.map((event) => (
@@ -2916,8 +2907,7 @@ export function SuperadminStats() {
               ) : (
                 <p className="text-sm text-gray-400">No Pub/Sub webhook events found.</p>
               )}
-            </div>
-          </details>
+          </LogCard>
           <details className="group mt-3 rounded-lg border border-gray-200">
             <summary className="cursor-pointer list-none px-4 py-3 flex items-center justify-between">
               <div>

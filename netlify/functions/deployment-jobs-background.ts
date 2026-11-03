@@ -1,3 +1,4 @@
+import { traceEvent } from './_lib/operational-trace.js';
 import type { Context } from '@netlify/functions';
 import { execute, transaction } from './_lib/db.js';
 import { requireInternalCaller } from './_lib/internal-auth.js';
@@ -37,6 +38,7 @@ export default async function handler(request: Request, _context: Context): Prom
 
     if (!job) return Response.json({ status: 'idle' }, { status: 202 });
 
+    traceEvent('job.start', { job_type: 'deployment', job_id: job.id, environment_id: job.environment_id });
     const amapiContext = await getPolicyAmapiContext(job.environment_id);
     if (!amapiContext) {
       await failDeploymentJob(job.id, 'Environment is not bound to an enterprise');
@@ -78,6 +80,7 @@ async function failDeploymentJob(jobId: string, message: string): Promise<void> 
      WHERE id = $1`,
     [jobId, JSON.stringify([{ device_id: 'all', error: message, timestamp: new Date().toISOString() }])]
   );
+  traceEvent('job.transition', { job_type: 'deployment', job_id: jobId, status: 'failed', outcome: 'failure' });
 }
 
 export async function claimDeploymentJob(jobId?: string): Promise<DeploymentJobForBackground | null> {

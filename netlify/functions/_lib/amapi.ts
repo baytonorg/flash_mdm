@@ -1,3 +1,4 @@
+import { traceHttpMethod } from '../../../shared/trace-contract.js';
 import { checkAmapiRateLimit } from './rate-limiter.js';
 import { decrypt } from './crypto.js';
 import { queryOne } from './db.js';
@@ -13,6 +14,7 @@ interface AmapiCallOptions {
   retryMode?: 'safe' | 'never';
 }
 
+const TRACE_RESOURCES = new Set('general devices enterprises policies operations applications enrollmentTokens webTokens signupUrls'.split(' '));
 const TRANSIENT_AMAPI_STATUSES = new Set([502, 503, 504]);
 const SAFE_RETRY_ATTEMPTS = 3;
 const SAFE_RETRY_MAX_DELAY_MS = 5_000;
@@ -101,6 +103,17 @@ export async function amapiCall<T = unknown>(
   workspaceId: string,
   options: AmapiCallOptions
 ): Promise<T> {
+  const dispatch = await prepareAmapiCall<T>(path, workspaceId, options);
+  return dispatch();
+}
+
+// Complete pooled rate-limit and credential queries before a caller takes a
+// transaction lock across dispatch. Credentials stay inside the closure.
+export async function prepareAmapiCall<T = unknown>(
+  path: string,
+  workspaceId: string,
+  options: AmapiCallOptions
+): Promise<(signal?: AbortSignal) => Promise<T>> {
   const { method = 'GET', body, projectId, enterpriseName, resourceType = 'general', resourceId } = options;
   const normalizedMethod = method.toUpperCase();
   const retrySafe = options.retryMode === 'safe'
@@ -132,67 +145,69 @@ export async function amapiCall<T = unknown>(
     body: body ? JSON.stringify(body) : undefined,
   };
 
-  let response: Response | null = null;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const traceStarted = performance.now();
-    try {
-      response = await fetch(url, fetchOptions);
-      traceEvent('provider.amapi', { method: normalizedMethod, resource_type: /^[A-Za-z]{1,48}$/.test(resourceType) ? resourceType : 'general', workspace_id: workspaceId, attempt: attempt + 1, status: response.status, outcome: response.ok ? 'success' : 'failure', duration_ms: Math.round(performance.now() - traceStarted), retry_safe: retrySafe });
-    } catch (err) {
-      traceEvent('provider.amapi', { method: normalizedMethod, workspace_id: workspaceId, attempt: attempt + 1, outcome: 'transport_failure', duration_ms: Math.round(performance.now() - traceStarted), retry_safe: retrySafe, ...traceError(err) });
-      if (retrySafe && attempt + 1 < maxAttempts) {
+  return async (signal) => {
+    let response: Response | null = null;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const traceStarted = performance.now();
+      try {
+        response = await fetch(url, signal ? { ...fetchOptions, signal } : fetchOptions);
+        traceEvent('provider.amapi', { method: traceHttpMethod(normalizedMethod), resource_type: TRACE_RESOURCES.has(resourceType) ? resourceType : 'general', workspace_id: workspaceId, attempt: attempt + 1, status: response.status, outcome: response.ok ? 'success' : 'failure', duration_ms: Math.round(performance.now() - traceStarted), retry_safe: retrySafe });
+      } catch (err) {
+        traceEvent('provider.amapi', { method: traceHttpMethod(normalizedMethod), workspace_id: workspaceId, attempt: attempt + 1, outcome: 'transport_failure', duration_ms: Math.round(performance.now() - traceStarted), retry_safe: retrySafe, ...traceError(err) });
+        if (retrySafe && attempt + 1 < maxAttempts) {
+          await sleepBeforeSafeRetry(attempt);
+          continue;
+        }
+        if (!retrySafe && normalizedMethod !== 'GET' && normalizedMethod !== 'HEAD') {
+          throw new AmapiDeliveryUncertainError(
+            'AMAPI request delivery is uncertain after a transport failure'
+          );
+        }
+        throw new Error(`AMAPI transport error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      if (
+        TRANSIENT_AMAPI_STATUSES.has(response.status)
+        && retrySafe
+        && attempt + 1 < maxAttempts
+      ) {
         await sleepBeforeSafeRetry(attempt);
         continue;
       }
-      if (!retrySafe && normalizedMethod !== 'GET' && normalizedMethod !== 'HEAD') {
-        throw new AmapiDeliveryUncertainError(
-          'AMAPI request delivery is uncertain after a transport failure'
-        );
-      }
-      throw new Error(`AMAPI transport error: ${err instanceof Error ? err.message : String(err)}`);
+
+      break;
     }
+
+    if (!response) throw new Error('AMAPI request failed without a response');
 
     if (
       TRANSIENT_AMAPI_STATUSES.has(response.status)
-      && retrySafe
-      && attempt + 1 < maxAttempts
+      && !retrySafe
+      && normalizedMethod !== 'GET'
+      && normalizedMethod !== 'HEAD'
     ) {
-      await sleepBeforeSafeRetry(attempt);
-      continue;
+      throw new AmapiDeliveryUncertainError(
+        `AMAPI request delivery is uncertain after transient HTTP ${response.status}`,
+        response.status
+      );
     }
 
-    break;
-  }
-
-  if (!response) throw new Error('AMAPI request failed without a response');
-
-  if (
-    TRANSIENT_AMAPI_STATUSES.has(response.status)
-    && !retrySafe
-    && normalizedMethod !== 'GET'
-    && normalizedMethod !== 'HEAD'
-  ) {
-    throw new AmapiDeliveryUncertainError(
-      `AMAPI request delivery is uncertain after transient HTTP ${response.status}`,
-      response.status
-    );
-  }
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    // Try to extract a useful message from the Google API error
-    let message = `AMAPI ${response.status}`;
-    try {
-      const parsed = JSON.parse(errorText);
-      message = parsed.error?.message ?? parsed.error?.status ?? message;
-    } catch {
-      message = errorText || message;
+    if (!response.ok) {
+      const errorText = await response.text();
+      // Try to extract a useful message from the Google API error
+      let message = `AMAPI ${response.status}`;
+      try {
+        const parsed = JSON.parse(errorText);
+        message = parsed.error?.message ?? parsed.error?.status ?? message;
+      } catch {
+        message = errorText || message;
+      }
+      throw new Error(`AMAPI error (${response.status}): ${message}`);
     }
-    throw new Error(`AMAPI error (${response.status}): ${message}`);
-  }
 
-  if (response.status === 204) return {} as T;
-  return response.json() as Promise<T>;
+    if (response.status === 204) return {} as T;
+    return response.json() as Promise<T>;
+  };
 }
 
 async function sleepBeforeSafeRetry(attempt: number): Promise<void> {

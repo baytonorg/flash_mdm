@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/api/client";
+import LogCard from './LogCard';
 interface TraceEvent {
+  [key: string]: unknown;
   time: string;
   event: string;
   request_id?: string;
@@ -23,9 +25,12 @@ interface TraceStatus {
     dropped: number;
     write_errors: number;
     budget_evictions: number;
+    heartbeat_gaps?: number;
   }>;
   events?: TraceEvent[];
   scan_limited?: boolean;
+  invalid_health_records?: number;
+  invalid_lines?: number;
 }
 export default function OperationalTraceCard() {
   const [open, setOpen] = useState(false);
@@ -60,22 +65,24 @@ export default function OperationalTraceCard() {
         n +
         (w.dropped ?? 0) +
         (w.write_errors ?? 0) +
-        (w.budget_evictions ?? 0),
+        (w.budget_evictions ?? 0) +
+        (w.heartbeat_gaps ?? 0),
       0,
     );
+  const invalidHealth = data?.invalid_health_records ?? 0;
+  const invalidLines = events.data?.invalid_lines ?? 0;
+  const viewUnavailable = status.isError || events.isError;
+  const degraded = gaps > 0 || missingComponents.length > 0 || invalidHealth > 0 || invalidLines > 0 || viewUnavailable;
+  const inputClass = 'mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500';
   return (
-    <details
-      className="mb-3 rounded-lg border border-gray-200"
-      onToggle={(e) => setOpen(e.currentTarget.open)}
+    <LogCard
+      className="mb-3"
+      title="Operational trace"
+      description="Activity, outcomes and execution details"
+      onOpenChange={setOpen}
     >
-      <summary className="cursor-pointer px-4 py-3 font-medium text-gray-900">
-        Operational trace{" "}
-        <span className="ml-2 text-xs font-normal text-gray-500">
-          Activity, outcomes and execution details
-        </span>
-      </summary>
       {open && (
-        <div className="border-t border-gray-100 p-4 space-y-4">
+        <div className="space-y-4">
           <p className="text-sm text-gray-600">
             Correlated requests, browser interactions, database work, provider
             calls, audit writes and job outcomes. Passwords, credentials, form
@@ -101,7 +108,7 @@ export default function OperationalTraceCard() {
           )}
           {data?.enabled && (
             <>
-              <div className="grid gap-3 sm:grid-cols-3 text-sm">
+              <div className="grid grid-cols-1 gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm sm:grid-cols-3">
                 <div>
                   <span className="block text-xs text-gray-500">
                     Collection
@@ -109,14 +116,15 @@ export default function OperationalTraceCard() {
                   <strong
                     className={
                       data.collection?.accepting &&
-                      !gaps &&
-                      !missingComponents.length
+                      !degraded
                         ? "text-green-700"
                         : "text-amber-800"
                     }
                   >
                     {data.collection?.accepting
-                      ? gaps || missingComponents.length
+                      ? viewUnavailable
+                        ? "Collecting, view unavailable"
+                        : degraded
                         ? "Collecting with gaps"
                         : "Collecting"
                       : "Degraded"}
@@ -137,7 +145,12 @@ export default function OperationalTraceCard() {
               {!!gaps && (
                 <p role="alert" className="text-sm text-amber-800">
                   This window has dropped events, write errors or budget
-                  evictions. A quiet log does not prove a clean platform.
+                  evictions, or heartbeat gaps. A quiet log does not prove a clean platform.
+                </p>
+              )}
+              {(invalidHealth > 0 || invalidLines > 0) && (
+                <p role="alert" className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  Invalid collection records: {invalidHealth} health record(s), {invalidLines} event line(s). Some evidence could not be read. Download retained data for investigation.
                 </p>
               )}
               {!!missingComponents.length && (
@@ -149,12 +162,12 @@ export default function OperationalTraceCard() {
                   . Check service health before relying on this window.
                 </p>
               )}
-              <div className="flex flex-wrap gap-2 items-end">
-                <label className="text-xs text-gray-600">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                <label className="block text-xs font-medium text-gray-600">
                   Window
                   <select
                     aria-label="Trace window"
-                    className="mt-1 block rounded border p-2 text-sm"
+                    className={inputClass}
                     value={selectedWindow}
                     onChange={(e) => setWindow(e.target.value)}
                   >
@@ -166,25 +179,27 @@ export default function OperationalTraceCard() {
                     ))}
                   </select>
                 </label>
-                <label className="text-xs text-gray-600">
+                <label className="block text-xs font-medium text-gray-600">
                   Actor
                   <input
-                    className="mt-1 block rounded border p-2 text-sm"
+                    className={inputClass}
                     value={actor}
                     onChange={(e) => setActor(e.target.value)}
                     placeholder="Email, ID or actor type"
                   />
                 </label>
-                <label className="text-xs text-gray-600">
+                <label className="block text-xs font-medium text-gray-600">
                   Request ID
                   <input
-                    className="mt-1 block rounded border p-2 text-sm"
+                    className={inputClass}
                     value={requestId}
                     onChange={(e) => setRequestId(e.target.value)}
                   />
                 </label>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
                 <button
-                  className="rounded border px-3 py-2 text-sm"
+                  className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
                   onClick={() => {
                     if (
                       filters.actor === actor &&
@@ -209,7 +224,7 @@ export default function OperationalTraceCard() {
                   (!data.raw_windows ||
                     data.raw_windows.includes(selectedWindow)) && (
                     <a
-                      className="rounded bg-accent px-3 py-2 text-sm text-white"
+                      className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
                       href={`/api/superadmin/operational-trace?window=${selectedWindow}&download=ndjson`}
                     >
                       Download window
@@ -224,36 +239,29 @@ export default function OperationalTraceCard() {
                 Browser interactions are client-reported; background requests
                 are not proof of human engagement.
               </p>
-              <div className="max-h-96 overflow-auto rounded border border-gray-200">
+              <div className="max-h-[34rem] space-y-2 overflow-y-auto">
+                {events.isPending && <p className="text-sm text-gray-400">Loading events...</p>}
                 {(events.data?.events ?? []).map((event, index) => (
                   <details
                     key={`${event.time}:${index}`}
-                    className="border-b border-gray-100 p-2 text-xs"
+                    className="rounded-md border border-gray-200 bg-gray-50"
                   >
-                    <summary className="cursor-pointer flex flex-wrap gap-2">
+                    <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 px-3 py-2 text-xs [&::-webkit-details-marker]:hidden">
                       <span className="text-gray-500">
                         {new Date(event.time).toLocaleString()}
                       </span>
-                      <strong>{event.event}</strong>
+                      <span className="font-mono text-gray-700">{event.event}</span>
                       <span>
                         {event.actor?.email ?? event.actor?.type ?? "unknown"}
                       </span>
-                      <span>{event.route}</span>
+                      <span className="break-all font-mono text-gray-600">{event.route}</span>
                       <span>
                         {String(event.data.status ?? event.data.outcome ?? "")}
                       </span>
                     </summary>
-                    <pre className="mt-2 whitespace-pre-wrap break-all text-gray-600">
-                      {JSON.stringify(
-                        {
-                          request_id: event.request_id,
-                          actor: event.actor,
-                          ...event.data,
-                        },
-                        null,
-                        2,
-                      )}
-                    </pre>
+                    <div className="border-t border-gray-200 bg-white px-3 py-2">
+                      <pre className="max-h-80 overflow-auto rounded bg-gray-900 p-3 text-xs text-gray-100">{JSON.stringify(event, null, 2)}</pre>
+                    </div>
                   </details>
                 ))}
                 {events.data?.events?.length === 0 && (
@@ -266,6 +274,6 @@ export default function OperationalTraceCard() {
           )}
         </div>
       )}
-    </details>
+    </LogCard>
   );
 }

@@ -1,3 +1,4 @@
+import { traceEvent } from './_lib/operational-trace.js';
 import type { Context } from '@netlify/functions';
 import { query, queryOne, execute } from './_lib/db.js';
 import { requireAuth } from './_lib/auth.js';
@@ -250,6 +251,7 @@ export async function processDeploymentJob(
       `UPDATE deployment_jobs SET status = 'failed', error_log = $2::jsonb, completed_at = now(), updated_at = now() WHERE id = $1`,
       [jobId, JSON.stringify([{ device_id: 'all', error: `Derivative sync failed: ${String(err)}`, timestamp: new Date().toISOString() }])]
     );
+    traceEvent('job.transition', { job_id: jobId, job_type: 'deployment', outcome: 'failure', status: 'failed' });
     return;
   }
 
@@ -326,6 +328,7 @@ export async function processDeploymentJob(
        WHERE id = $1`,
       [jobId, completed, failed, skipped, JSON.stringify(errorLog.slice(-100))]
     );
+    traceEvent('job.transition', { job_id: jobId, job_type: 'deployment', status: 'cancelled', completed, failed, skipped });
     return;
   }
 
@@ -338,6 +341,8 @@ export async function processDeploymentJob(
      WHERE id = $1`,
     [jobId, finalStatus, completed, failed, skipped, JSON.stringify(errorLog.slice(-100))]
   );
+  traceEvent('job.transition', { job_id: jobId, job_type: 'deployment', status: finalStatus, completed, failed, skipped,
+    outcome: finalStatus === 'failed' ? 'failure' : failed > 0 ? 'partial_failure' : 'success' });
 }
 
 export async function getDeploymentTargetDeviceIds(policyId: string, environmentId: string): Promise<string[]> {

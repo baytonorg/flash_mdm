@@ -35,14 +35,26 @@ export async function userDeletionPreflight(client: Pick<PoolClient, 'query'>, u
     (SELECT count(*)::int FROM audit_log WHERE user_id = $1) AS audit_entries_retained,
     (SELECT count(*)::int FROM flashagent_chat_messages WHERE user_id = $1) AS personal_chat_messages_deleted
     `, [userId, user.email])).rows[0];
-  const knownDependencies = new Set(['api_keys', 'app_feedback_subscriptions', 'audit_log', 'billing_invoices', 'environment_memberships', 'flashagent_chat_messages', 'flashagent_jobs', 'group_memberships', 'license_grants', 'platform_settings', 'policy_versions', 'sessions', 'signup_links', 'user_invites', 'workspace_billing_settings', 'workspace_memberships']);
-  const dependencies = await client.query(`SELECT n.nspname AS schema, cl.relname AS relation, c.confdeltype FROM pg_constraint c
-    JOIN pg_class cl ON cl.oid = c.conrelid JOIN pg_namespace n ON n.oid = cl.relnamespace
+  // Match each reviewed source column and delete action, not just the table.
+  const knownDependencies = new Set([
+    'api_keys.created_by_user_id:n', 'api_keys.revoked_by_user_id:n',
+    'app_feedback_subscriptions.user_id:c', 'audit_log.user_id:a', 'billing_invoices.created_by:n',
+    'environment_memberships.user_id:c', 'flashagent_chat_messages.user_id:c', 'flashagent_jobs.user_id:c',
+    'group_memberships.user_id:c', 'license_grants.created_by:n', 'platform_settings.updated_by:n',
+    'policy_versions.changed_by:a', 'sessions.user_id:c', 'sessions.impersonated_by:n',
+    'signup_links.created_by:n', 'user_invites.invited_by:a', 'workspace_billing_settings.created_by:n',
+    'workspace_billing_settings.updated_by:n', 'workspace_memberships.user_id:c',
+  ]);
+  const dependencies = await client.query(`SELECT n.nspname AS schema, cl.relname AS relation, c.confdeltype,
+      source.attname AS source_column, target.attname AS target_column
+    FROM pg_constraint c JOIN pg_class cl ON cl.oid = c.conrelid JOIN pg_namespace n ON n.oid = cl.relnamespace
+    LEFT JOIN pg_attribute source ON source.attrelid = c.conrelid AND c.conkey = ARRAY[source.attnum]
+    LEFT JOIN pg_attribute target ON target.attrelid = c.confrelid AND c.confkey = ARRAY[target.attnum]
     WHERE c.contype = 'f' AND c.confrelid = 'users'::regclass`);
   const blockers = memberships.filter(m => m.sole_owner).map(m => `Establish another workspace-wide owner in ${m.name} first`);
   if (actorUserId === userId) blockers.push('You cannot permanently delete your own signed-in account');
   for (const dependency of dependencies.rows) {
-    if (dependency.schema !== 'public' || !knownDependencies.has(dependency.relation)) blockers.push(`User dependency ${dependency.schema}.${dependency.relation} has not been reviewed for offboarding. Review its credential, retention and deletion effects first.`);
+    if (dependency.schema !== 'public' || dependency.target_column !== 'id' || !knownDependencies.has(`${dependency.relation}.${dependency.source_column}:${dependency.confdeltype}`)) blockers.push(`User dependency ${dependency.schema}.${dependency.relation} has not been reviewed for offboarding. Review its credential, retention and deletion effects first.`);
     if (dependency.relation === 'api_keys' && dependency.confdeltype === 'c') blockers.push('API-key creator provenance must be decoupled before account deletion. Independent keys will not be deleted.');
   }
   return { user, memberships, counts, blockers,
@@ -60,7 +72,7 @@ export async function deleteUserAccount(input: { userId: string; actorUserId: st
     // FK locks prevent a concurrent writer from resurrecting a deleted identity.
     const scope = await client.query(`${USER_WORKSPACE_SCOPES} ORDER BY workspace_id`, [input.userId]);
     await lockMembershipWorkspaces(client, scope.rows.map(r => r.workspace_id));
-    const actor = (await client.query('SELECT is_superadmin FROM users WHERE id = $1', [input.actorUserId])).rows[0];
+    const actor = (await client.query('SELECT is_superadmin FROM users WHERE id = $1 FOR SHARE', [input.actorUserId])).rows[0];
     if (!actor?.is_superadmin) throw errorResponse('Current superadmin authority is required for permanent account deletion', 403);
     const user = (await client.query('SELECT id, email FROM users WHERE id = $1 FOR UPDATE', [input.userId])).rows[0];
     if (!user) throw errorResponse('User not found', 404);

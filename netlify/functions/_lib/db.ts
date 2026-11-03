@@ -105,8 +105,11 @@ export async function transaction<T>(
     try {
       await client.query('BEGIN');
       const result = await fn(client);
-      await client.query('COMMIT');
-      traceEvent('db.transaction.committed');
+      const completion = await client.query('COMMIT');
+      // A swallowed statement error leaves PostgreSQL in an aborted transaction.
+      // COMMIT then resolves with the ROLLBACK command tag.
+      if (completion?.command === 'COMMIT') traceEvent('db.transaction.committed');
+      else traceEvent('db.transaction.rolled_back', { outcome: 'failure' });
       return result;
     } catch (err) {
       await client.query('ROLLBACK');
@@ -116,8 +119,25 @@ export async function transaction<T>(
   }));
 }
 
+// A SQL expression may itself contain FROM-like text. Emit only schema-owned table names.
+const TRACE_TABLES = new Set(
+  `api_keys app_deployments app_feedback_delivery_log app_feedback_items app_feedback_subscriptions
+app_scope_configs apps audit_log billing_invoice_items billing_invoices certificates command_operations
+deployment_jobs device_applications device_geofence_state device_locations device_policy_overrides
+device_status_reports devices enrollment_tokens environment_entitlements environment_memberships
+environments flashagent_chat_messages geofences group_closures group_memberships group_policy_overrides
+groups job_queue license_enforcement_actions license_grants license_overage_cases
+license_overage_notifications license_plans licenses magic_links network_deployments platform_settings
+policies policy_assignments policy_component_assignments policy_components policy_derivatives
+policy_versions pubsub_events rate_limit_buckets sessions signin_configurations signin_verifications
+signup_links user_invites users workflow_executions workflows workspace_billing_events
+workspace_billing_notifications workspace_billing_settings workspace_customers
+workspace_licensing_settings workspace_memberships workspace_pricing_catalog workspaces`.split(/\s+/),
+);
+
 async function tracedQuery<T extends { rowCount?: number | null }>(fn: () => Promise<T>, sql: string): Promise<T> {
   const operation = /^\s*(SELECT|INSERT|UPDATE|DELETE|BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE|WITH|ALTER|CREATE|DROP|TRUNCATE)/i.exec(sql)?.[1]?.toUpperCase() ?? 'OTHER';
-  const table = /\b(?:FROM|INTO|UPDATE|TABLE)\s+([a-z_][a-z0-9_]*)/i.exec(sql)?.[1]?.toLowerCase();
-  return traceSpan('db.query', { operation, table }, async () => { const result = await fn(); traceEvent('db.rows', { operation, table, rows: result.rowCount ?? 0 }); return result; });
+  const candidate = /\b(?:FROM|INTO|UPDATE|TABLE)\s+([a-z_][a-z0-9_]*)/i.exec(sql)?.[1]?.toLowerCase();
+  const table = candidate && TRACE_TABLES.has(candidate) ? candidate : undefined;
+  return traceSpan('db.query', { operation, table }, async () => { const result = await fn(); traceEvent('db.rows', { operation, table, rows: result?.rowCount ?? 0 }); return result; });
 }

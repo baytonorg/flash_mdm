@@ -90,6 +90,26 @@ export async function reconcileMembershipSessions(client: PoolClient, workspaceI
       AND NOT EXISTS (SELECT 1 FROM group_memberships gm JOIN group_closures gc ON gc.ancestor_id = gm.group_id WHERE gm.user_id = $1 AND gc.descendant_id = s.active_group_id)`, [userId, workspaceId]);
 }
 
+// Removing a low direct grant can reveal a higher inherited one. Compare the
+// resulting access at each scope, including descendants of assigned groups.
+async function higherScopeRoles(client: PoolClient, workspaceId: string, userId: string, callerRole: string) {
+  const { rows } = await client.query<{ scope: string; role: MembershipRole }>(`
+    WITH env_roles AS (
+      SELECT e.id, COALESCE(em.role, CASE WHEN wm.access_scope = 'workspace' THEN wm.role END) AS role
+      FROM environments e JOIN workspace_memberships wm ON wm.workspace_id = e.workspace_id AND wm.user_id = $2
+      LEFT JOIN environment_memberships em ON em.environment_id = e.id AND em.user_id = wm.user_id
+      WHERE e.workspace_id = $1
+    )
+    SELECT 'environment/' || id AS scope, role FROM env_roles
+    UNION ALL
+    SELECT 'group/' || g.id, COALESCE(grant_role.role, e.role) FROM groups g JOIN env_roles e ON e.id = g.environment_id
+    LEFT JOIN LATERAL (
+      SELECT gm.role FROM group_closures gc JOIN group_memberships gm ON gm.group_id = gc.ancestor_id
+      WHERE gc.descendant_id = g.id AND gm.user_id = $2 ORDER BY gc.depth LIMIT 1
+    ) grant_role ON true`, [workspaceId, userId]);
+  return new Map(rows.filter(r => r.role && !workspaceRoleMeetsMinimum(callerRole, r.role)).map(r => [r.scope, r.role]));
+}
+
 export async function changeMemberships(input: {
   workspaceId: string;
   auth: AuthContext;
@@ -103,7 +123,7 @@ export async function changeMemberships(input: {
     const { workspaceId, auth, callerRole } = input;
     await lockMembershipWorkspaces(client, [workspaceId]);
     const actorUser = auth.authType === 'session'
-      ? (await client.query('SELECT is_superadmin FROM users WHERE id = $1', [auth.user.id])).rows[0]
+      ? (await client.query('SELECT is_superadmin FROM users WHERE id = $1 FOR SHARE', [auth.user.id])).rows[0]
       : null;
     if (auth.authType === 'session' && !actorUser) throw errorResponse('The signed-in account no longer exists', 403);
     const isSuperadmin = actorUser?.is_superadmin === true;
@@ -114,7 +134,7 @@ export async function changeMemberships(input: {
     const workspace = await client.query('SELECT settings FROM workspaces WHERE id = $1', [workspaceId]);
     const matrix = mergePermissionMatrixWithDefaults(workspace.rows[0]?.settings?.rbac?.permission_matrix);
     if (auth.authType === 'api_key') {
-      const key = (await client.query(`SELECT role, scope_type, workspace_id FROM api_keys WHERE id = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())`, [auth.apiKey.id])).rows[0];
+      const key = (await client.query(`SELECT role, scope_type, workspace_id FROM api_keys WHERE id = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > clock_timestamp()) FOR SHARE`, [auth.apiKey.id])).rows[0];
       if (!key || key.scope_type !== 'workspace' || key.workspace_id !== workspaceId || key.role !== callerRole || !workspaceRoleMeetsMinimum(key.role, matrix.workspace.manage_users)) throw errorResponse('API-key access changed or is outside this workspace', 403);
     }
     // Revalidate the actor under the same ownership lock as the writes.
@@ -141,10 +161,17 @@ export async function changeMemberships(input: {
       if (change.userId === auth.user.id && !input.selfService) throw errorResponse('Use the explicit leave or self-demotion action', 400);
       if (callerRole !== 'owner' && !isSuperadmin && ((target.rows[0].role === 'owner' && target.rows[0].access_scope === 'workspace') || change.role === 'owner' || change.assignmentRole === 'owner')) throw errorResponse('Only owners can modify owner grants', 403);
       if (!isSuperadmin && [change.role, change.assignmentRole].some(role => role && !workspaceRoleMeetsMinimum(callerRole, role))) throw errorResponse('Cannot grant a role higher than your own', 403);
+      const finalRole = change.role ?? target.rows[0].role;
+      const expandsWorkspace = change.accessScope === 'workspace' && target.rows[0].access_scope !== 'workspace';
+      if (expandsWorkspace && !isSuperadmin && !workspaceRoleMeetsMinimum(callerRole, finalRole)) {
+        throw errorResponse('Cannot expand a higher role to the whole workspace', 403);
+      }
       if (change.actingEnvironmentId && target.rows[0].access_scope === 'workspace') throw errorResponse('Workspace-inherited access requires a workspace-level change', 403);
+      const checkInheritance = !isSuperadmin && callerRole !== 'owner' && change.operation === 'access';
+      const priorHigher = checkInheritance ? await higherScopeRoles(client, workspaceId, change.userId, callerRole) : null;
       if (change.operation === 'remove') {
         const offers = await client.query(`SELECT i.id FROM user_invites i JOIN users u ON lower(u.email) = lower(i.email)
-          WHERE u.id = $1 AND i.workspace_id = $2 AND i.status = 'pending' AND i.expires_at > now() FOR UPDATE OF i`, [change.userId, workspaceId]);
+          WHERE u.id = $1 AND i.workspace_id = $2 AND i.status = 'pending' AND i.expires_at > clock_timestamp() FOR UPDATE OF i`, [change.userId, workspaceId]);
         if (offers.rows.length && !change.cancelPendingInvites) throw errorResponse('Pending invitations could restore access. Explicitly confirm cancellation before removing this member.', 409);
         if (change.cancelPendingInvites) await client.query(`UPDATE user_invites SET status = 'cancelled' WHERE workspace_id = $1 AND lower(email) = (SELECT lower(email) FROM users WHERE id = $2) AND status = 'pending'`, [workspaceId, change.userId]);
         await removeWorkspaceGrants(client, workspaceId, change.userId);
@@ -156,11 +183,18 @@ export async function changeMemberships(input: {
           const groupIds = [...new Set(change.groupIds ?? [])];
           const priorEnvironments = await client.query('SELECT environment_id, role FROM environment_memberships WHERE user_id = $1', [change.userId]);
           const priorGroups = await client.query('SELECT group_id, role FROM group_memberships WHERE user_id = $1', [change.userId]);
+          // Existing direct roles can survive an edit unchanged. A new grant must
+          // satisfy the actor's ceiling even when its role comes from a default.
+          const addsGrant = envIds.some(id => !priorEnvironments.rows.some(row => row.environment_id === id))
+            || groupIds.some(id => !priorGroups.rows.some(row => row.group_id === id));
+          if (addsGrant && !isSuperadmin && !workspaceRoleMeetsMinimum(callerRole, change.assignmentRole ?? finalRole)) {
+            throw errorResponse('Cannot create a scope grant higher than your own role', 403);
+          }
           const removedEnvironments = priorEnvironments.rows.filter(r => !envIds.includes(r.environment_id) && (!change.actingEnvironmentId || r.environment_id === change.actingEnvironmentId)).map(r => r.environment_id);
           const affectedGroups = await client.query(`SELECT g.id FROM groups g JOIN environments e ON e.id = g.environment_id WHERE e.workspace_id = $1 AND ($2::uuid IS NULL OR g.environment_id = $2)`, [workspaceId, change.actingEnvironmentId ?? null]);
           const removedGroups = priorGroups.rows.filter(r => !groupIds.includes(r.group_id) && affectedGroups.rows.some(g => g.id === r.group_id)).map(r => r.group_id);
           const offers = await client.query(`SELECT i.* FROM user_invites i JOIN users u ON lower(u.email) = lower(i.email)
-            WHERE u.id = $1 AND i.workspace_id = $2 AND i.status = 'pending' AND i.expires_at > now()
+            WHERE u.id = $1 AND i.workspace_id = $2 AND i.status = 'pending' AND i.expires_at > clock_timestamp()
               AND (i.environment_ids ?| $3::text[] OR i.group_ids ?| $4::text[] OR (i.environment_ids IS NULL AND i.environment_id = ANY($5::uuid[])) OR (i.group_ids IS NULL AND i.group_id = ANY($6::uuid[]))) FOR UPDATE OF i`, [change.userId, workspaceId, removedEnvironments, removedGroups, removedEnvironments, removedGroups]);
           if (offers.rows.length && !change.cancelPendingInvites) throw errorResponse('Pending invitations could restore removed scope access. Explicitly confirm cancellation before saving.', 409);
           if (change.actingEnvironmentId) {
@@ -185,6 +219,12 @@ export async function changeMemberships(input: {
           await client.query(`DELETE FROM group_memberships WHERE user_id = $1 AND group_id IN (SELECT g.id FROM groups g JOIN environments e ON e.id = g.environment_id WHERE e.workspace_id = $2 AND ($3::uuid IS NULL OR e.id = $3))`, [change.userId, workspaceId, change.actingEnvironmentId ?? null]);
           for (const id of envIds) await client.query('INSERT INTO environment_memberships (environment_id, user_id, role) VALUES ($1, $2, $3)', [id, change.userId, change.assignmentRole ?? priorEnvironments.rows.find(r => r.environment_id === id)?.role ?? change.role ?? target.rows[0].role]);
           for (const id of groupIds) await client.query('INSERT INTO group_memberships (group_id, user_id, role) VALUES ($1, $2, $3)', [id, change.userId, change.assignmentRole ?? priorGroups.rows.find(r => r.group_id === id)?.role ?? change.role ?? target.rows[0].role]);
+        }
+      }
+      if (priorHigher) {
+        for (const [scope, role] of await higherScopeRoles(client, workspaceId, change.userId, callerRole)) {
+          const prior = priorHigher.get(scope);
+          if (!prior || !workspaceRoleMeetsMinimum(prior, role)) throw errorResponse('This change would reveal a higher inherited role', 403);
         }
       }
       await reconcileMembershipSessions(client, workspaceId, change.userId);

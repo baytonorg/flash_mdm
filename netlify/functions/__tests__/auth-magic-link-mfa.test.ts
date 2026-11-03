@@ -80,14 +80,13 @@ describe('magic-link MFA flow', () => {
     // transaction atomically consumes the magic link
     const mockClient = { query: vi.fn() };
     mockClient.query.mockResolvedValueOnce({
-      rows: [{ id: 'link_1', email: 'user@example.com' }],
+      rows: [{ user_id: 'user_1' }],
       rowCount: 1,
     });
     mockTransaction.mockImplementationOnce(async (fn: (client: typeof mockClient) => Promise<unknown>) => fn(mockClient));
 
     // queryOne calls: find user, check TOTP
     mockQueryOne
-      .mockResolvedValueOnce({ id: 'user_1' } as never)
       .mockResolvedValueOnce({ totp_enabled: true } as never);
 
     const req = new Request('http://localhost/.netlify/functions/auth-magic-link-verify?token=magic123&redirect=%2Finvite%2Fabc');
@@ -113,14 +112,13 @@ describe('magic-link MFA flow', () => {
     // transaction atomically consumes the magic link
     const mockClient = { query: vi.fn() };
     mockClient.query.mockResolvedValueOnce({
-      rows: [{ id: 'link_2', email: 'user@example.com' }],
+      rows: [{ user_id: 'user_1' }],
       rowCount: 1,
     });
     mockTransaction.mockImplementationOnce(async (fn: (client: typeof mockClient) => Promise<unknown>) => fn(mockClient));
 
     // queryOne calls: find user, check TOTP, get workspace
     mockQueryOne
-      .mockResolvedValueOnce({ id: 'user_1' } as never)
       .mockResolvedValueOnce({ totp_enabled: false } as never)
       .mockResolvedValueOnce({ workspace_id: 'ws_1' } as never);
 

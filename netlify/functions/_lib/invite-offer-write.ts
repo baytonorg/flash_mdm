@@ -11,7 +11,7 @@ export async function writeInviteOffer(input:{auth:AuthContext;workspaceId:strin
     const scoped=input.environmentIds.length>0||input.groupIds.length>0;
     if(input.workspaceId)await lockMembershipWorkspaces(client,[input.workspaceId]);
     else await client.query('SELECT pg_advisory_xact_lock(1179404629, hashtext($1))',[input.email]);
-    const superadmin=input.auth.authType==='session'&&(await client.query('SELECT is_superadmin FROM users WHERE id=$1',[input.auth.user.id])).rows[0]?.is_superadmin;
+    const superadmin=input.auth.authType==='session'&&(await client.query('SELECT is_superadmin FROM users WHERE id=$1 FOR SHARE',[input.auth.user.id])).rows[0]?.is_superadmin;
     if(!input.workspaceId) {
       if(!superadmin||scoped||input.inviteType!=='platform_access')throw errorResponse('Platform invitation authority changed',403);
     } else {
@@ -24,7 +24,7 @@ export async function writeInviteOffer(input:{auth:AuthContext;workspaceId:strin
           const matrix=mergePermissionMatrixWithDefaults(workspace?.settings?.rbac?.permission_matrix);
           let role:string|null=null;
           if(input.auth.authType==='api_key') {
-            const key=(await client.query(`SELECT role FROM api_keys WHERE id=$1 AND scope_type='workspace' AND workspace_id=$2 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>now())`,[input.auth.apiKey.id,input.workspaceId])).rows[0];
+            const key=(await client.query(`SELECT role FROM api_keys WHERE id=$1 AND scope_type='workspace' AND workspace_id=$2 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp()) FOR SHARE`,[input.auth.apiKey.id,input.workspaceId])).rows[0];
             role=key?.role??null;
           } else role=(await client.query("SELECT role FROM workspace_memberships WHERE user_id=$1 AND workspace_id=$2 AND access_scope='workspace'",[input.auth.user.id,input.workspaceId])).rows[0]?.role??null;
           if(!role||!workspaceRoleMeetsMinimum(role,matrix.invite.write)||!workspaceRoleMeetsMinimum(role,input.role as 'owner'|'admin'|'member'|'viewer'))throw errorResponse('Workspace invitation authority changed',403);
@@ -40,7 +40,7 @@ export async function writeInviteOffer(input:{auth:AuthContext;workspaceId:strin
       }
       if((await client.query('SELECT 1 FROM workspace_memberships wm JOIN users u ON u.id=wm.user_id WHERE wm.workspace_id=$1 AND lower(u.email)=lower($2)',[input.workspaceId,input.email])).rows.length)throw errorResponse('User is already a member of this workspace',409);
     }
-    const pending=(await client.query(`SELECT id FROM user_invites WHERE workspace_id IS NOT DISTINCT FROM $1::uuid AND lower(email)=lower($2) AND status='pending' AND expires_at>now() ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,[input.workspaceId,input.email])).rows[0];
+    const pending=(await client.query(`SELECT id FROM user_invites WHERE workspace_id IS NOT DISTINCT FROM $1::uuid AND lower(email)=lower($2) AND status='pending' AND expires_at>clock_timestamp() ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,[input.workspaceId,input.email])).rows[0];
     const id=pending?.id??input.inviteId;
     const metadata={invite_type:input.inviteType,...(input.auth.authType==='api_key'?{issuer_api_key_id:input.auth.apiKey.id}:{})};
     const values=[id,input.workspaceId,input.email,input.role,input.tokenHash,input.auth.user.id,input.expiresAtIso,JSON.stringify(input.environmentIds),JSON.stringify(input.groupIds),JSON.stringify(metadata)];
