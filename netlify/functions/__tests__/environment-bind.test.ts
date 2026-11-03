@@ -35,7 +35,7 @@ vi.mock('../signin-config.js', () => ({
 import { query, queryOne, execute, transaction } from '../_lib/db.js';
 import { requireAuth } from '../_lib/auth.js';
 import { requireEnvironmentResourcePermission } from '../_lib/rbac.js';
-import { amapiCall } from '../_lib/amapi.js';
+import { amapiCall, getAmapiErrorHttpStatus } from '../_lib/amapi.js';
 import { logAudit } from '../_lib/audit.js';
 import { syncPolicyDerivativesForPolicy } from '../_lib/policy-derivatives.js';
 import handler from '../environment-bind.ts';
@@ -79,6 +79,41 @@ beforeEach(() => {
 });
 
 describe('environment-bind finalize enterprise create payload', () => {
+  it('finishes local cleanup when a deleted Google enterprise returns 404', async () => {
+    mockQueryOne.mockResolvedValueOnce({ id: 'env_1', workspace_id: 'ws_1', enterprise_name: 'enterprises/old' } as never)
+      .mockResolvedValueOnce({ gcp_project_id: 'project_1' } as never);
+    mockAmapiCall.mockRejectedValueOnce(new Error('AMAPI error (404): absent'));
+    vi.mocked(getAmapiErrorHttpStatus).mockReturnValueOnce(404);
+    const clientQuery = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 });
+    mockTransaction.mockImplementationOnce(async (fn) => fn({ query: clientQuery } as never));
+    const res = await handler(makeRequest({ environment_id: 'env_1', action: 'delete_enterprise' }), {} as never);
+    expect(res.status).toBe(200);
+    expect(clientQuery).toHaveBeenCalled();
+    expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({ action: 'environment.enterprise_deleted' }));
+  });
+
+  it('reports partial remote success when local cleanup fails', async () => {
+    mockQueryOne.mockResolvedValueOnce({ id: 'env_1', workspace_id: 'ws_1', enterprise_name: 'enterprises/old' } as never)
+      .mockResolvedValueOnce({ gcp_project_id: 'project_1' } as never);
+    mockAmapiCall.mockResolvedValueOnce({});
+    mockTransaction.mockRejectedValueOnce(new Error('Synthetic local failure'));
+    const res = await handler(makeRequest({ environment_id: 'env_1', action: 'delete_enterprise' }), {} as never);
+    expect(res.status).toBe(502);
+    expect((await res.json()).error).toContain('Retry Unbind');
+    expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'environment.enterprise_cleanup_failed',
+      details: { previous_enterprise: 'enterprises/old', remote_deleted: true },
+    }));
+  });
+
+  it('does not contact Google when enterprise cleanup already completed', async () => {
+    mockQueryOne.mockResolvedValueOnce({ id: 'env_1', workspace_id: 'ws_1', enterprise_name: null } as never);
+    const res = await handler(makeRequest({ environment_id: 'env_1', action: 'delete_enterprise' }), {} as never);
+    expect(res.status).toBe(200);
+    expect(mockAmapiCall).not.toHaveBeenCalled();
+    expect(mockTransaction).not.toHaveBeenCalled();
+  });
+
   it('preserves connectivity siblings when policies regenerate after binding', async () => {
     mockQueryOne
       .mockResolvedValueOnce({

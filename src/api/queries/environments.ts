@@ -118,8 +118,8 @@ export function useUpdateEnvironment() {
 export function useDeleteEnvironment() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) =>
-      apiClient.delete<DeleteEnvironmentResponse>(`/api/environments/${id}`),
+    mutationFn: ({ id, confirmAccessCleanup }: { id: string; confirmAccessCleanup: boolean }) =>
+      apiClient.delete<DeleteEnvironmentResponse>(`/api/environments/${id}?confirm_access_cleanup=${confirmAccessCleanup}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: environmentKeys.all });
     },
@@ -130,7 +130,7 @@ export function useDeleteEnterprise() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (environment_id: string) =>
-      apiClient.post<{ deleted: boolean; previous_enterprise: string }>(
+      apiClient.post<{ deleted: boolean; previous_enterprise: string | null }>(
         '/api/environments/bind',
         { environment_id, action: 'delete_enterprise' }
       ),

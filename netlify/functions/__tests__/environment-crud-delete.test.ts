@@ -55,16 +55,25 @@ beforeEach(() => {
 });
 
 describe('environment-crud delete hardening', () => {
+  it.each(['has_keys', 'has_signup_links'])('blocks %s without issuing deletion statements', async (dependency) => {
+    mockQueryOne.mockResolvedValueOnce({ workspace_id: '22222222-2222-4222-8222-222222222222' } as never);
+    const client = { query: vi.fn().mockResolvedValue({ rows: [{ [dependency]: true }] }) };
+    mockTransaction.mockImplementationOnce(async (fn) => fn(client as never));
+    const res = await handler(new Request('http://localhost/api/environments/33333333-3333-4333-8333-333333333333', { method: 'DELETE' }), {} as never);
+    expect(res.status).toBe(409);
+    expect(client.query.mock.calls.some(([sql]) => /^(DELETE|UPDATE)/.test(sql))).toBe(false);
+    expect(mockLogAudit).not.toHaveBeenCalled();
+  });
+
   it('skips optional legacy cleanup failures and still deletes environment', async () => {
     mockQueryOne.mockResolvedValueOnce({ workspace_id: '22222222-2222-4222-8222-222222222222' } as never);
 
     const client = {
-      query: vi
-        .fn()
-        .mockRejectedValueOnce({ code: '42P01' })
-        .mockRejectedValueOnce({ code: '42703' })
-        .mockResolvedValueOnce({ rowCount: 0 })
-        .mockResolvedValueOnce({ rowCount: 1 }),
+      query: vi.fn().mockImplementation(async (sql: string) => {
+        if (sql.startsWith('UPDATE audit_log SET details') && sql.includes('deleted_environment_id')) throw { code: '42P01' };
+        if (sql.startsWith('DELETE FROM pubsub_events')) throw { code: '42703' };
+        return { rows: [], rowCount: 1 };
+      }),
     };
     mockTransaction.mockImplementationOnce(async (cb: (tx: typeof client) => Promise<unknown>) => cb(client) as never);
 
@@ -76,8 +85,8 @@ describe('environment-crud delete hardening', () => {
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ message: 'Environment deleted' });
     expect(mockTransaction).toHaveBeenCalledTimes(1);
-    expect(client.query).toHaveBeenCalledTimes(4);
-    expect(vi.mocked(client.query).mock.calls[3]?.[0]).toContain('DELETE FROM environments');
+    expect(client.query).toHaveBeenCalledWith('ROLLBACK TO SAVEPOINT environment_cleanup');
+    expect(client.query).toHaveBeenLastCalledWith('DELETE FROM environments WHERE id = $1', expect.any(Array));
     expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({
       action: 'environment.deleted',
       workspace_id: '22222222-2222-4222-8222-222222222222',
@@ -96,7 +105,7 @@ describe('environment-crud delete hardening', () => {
 
     expect(res.status).toBe(409);
     await expect(res.json()).resolves.toEqual({
-      error: 'Environment delete blocked by dependent records. Retry after pending background activity completes.',
+      error: 'Environment deletion is blocked by related records. No local changes were committed. Contact support to review the dependencies.',
     });
     expect(mockLogAudit).not.toHaveBeenCalled();
   });

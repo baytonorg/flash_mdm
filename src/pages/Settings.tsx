@@ -14,6 +14,7 @@ import { useCreateApiKey, useEnvironmentApiKeys, useRevokeApiKey, useWorkspaceAp
 import PolicyAssignmentSelect from '@/components/policy/PolicyAssignmentSelect';
 import { usePolicyAssignments } from '@/api/queries/policies';
 import { apiClient } from '@/api/client';
+import { collectEnvironmentAuditExport } from '@/api/queries/audit';
 import {
   Building2, Globe, User, Upload, ExternalLink,
   Check, AlertCircle, Loader2, RotateCcw, Trash2, ArrowUpCircle, Key, Copy, Download, X,
@@ -712,6 +713,8 @@ function EnvironmentTab() {
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [showDeleteEnvironment, setShowDeleteEnvironment] = useState(false);
   const [deleteEnvironmentConfirmText, setDeleteEnvironmentConfirmText] = useState('');
+  const [confirmAccessCleanup, setConfirmAccessCleanup] = useState(false);
+  const [exportingAudit, setExportingAudit] = useState(false);
   const permissionMatrix = useMemo(
     () => getEffectiveSettingsPermissionMatrix((activeWorkspace as { settings?: unknown } | null)?.settings),
     [activeWorkspace]
@@ -738,6 +741,14 @@ function EnvironmentTab() {
   const minCreateRoleLabel = `${minCreateRole.charAt(0).toUpperCase()}${minCreateRole.slice(1)}`;
 
   // Sync local state when activeEnvironment changes
+  useEffect(() => {
+    setShowDeleteEnvironment(false);
+    setDeleteEnvironmentConfirmText('');
+    setConfirmAccessCleanup(false);
+    setShowDeleteEnterprise(false);
+    setDeleteConfirmText('');
+  }, [activeEnvironment?.id]);
+
   useEffect(() => {
     setEnvName(activeEnvironment?.name ?? '');
     setPubsubTopic(activeEnvironment?.pubsub_topic ?? '');
@@ -1169,7 +1180,10 @@ function EnvironmentTab() {
                     <div>
                       <p className="text-sm font-medium text-red-900">Unbind Enterprise</p>
                       <p className="text-xs text-red-700 mt-1">
-                        Unbind this enterprise and remove it from Google. Private apps, policies, and user data will be irreversibly removed. A new bind will be required and will generate a new enterprise ID. This action cannot be undone.
+                        Permanently delete this enterprise and its associated accounts and data from Google, including all AMAPI device records. This can wipe managed devices or remove their work profiles. This action cannot be undone.
+                      </p>
+                      <p className="text-xs text-red-700 mt-1">
+                        The Flash environment, local device records, policies, and assignments are kept. Policies return to draft and existing enrollment token values are cleared. Bind a new enterprise to resume management; the deleted enterprise ID cannot be reused.
                       </p>
                     </div>
                     <button
@@ -1203,7 +1217,7 @@ function EnvironmentTab() {
                               setShowDeleteEnterprise(false);
                               setDeleteConfirmText('');
                               if (activeWorkspace) await fetchEnvironments(activeWorkspace.id);
-                              setFeedback({ success: 'Enterprise unbound and removed from Google.' });
+                              setFeedback({ success: 'Enterprise unbound and removed from Google. Flash environment and local records retained.' });
                             } catch (err) {
                               setFeedback({ error: err instanceof Error ? err.message : 'Failed to unbind enterprise' });
                             }
@@ -1240,12 +1254,15 @@ function EnvironmentTab() {
                   <div>
                     <p className="text-sm font-medium text-red-900">Delete Environment</p>
                     <p className="text-xs text-red-700 mt-1">
-                      Permanently delete this environment and its local data. If it is bound to an enterprise, the Google enterprise may remain as a disassociated enterprise.
+                      Permanently delete this Flash environment and its environment-scoped records, including local devices, policies, apps, enrollment tokens, API keys, and dedicated signup links. Shared signup links are kept with this environment's assignments removed. Audit history, workspace accounts, and billing subscriptions are retained.
+                    </p>
+                    <p className="text-xs text-red-700 mt-1">
+                      This does not delete the Google enterprise or send device wipe commands. If bound, the enterprise and its devices remain in Google, disconnected from this Flash environment. Use Unbind Enterprise first if you also intend to remove the Google enterprise. Local deletion cannot be undone.
                     </p>
                   </div>
                   <button
                     type="button"
-                    onClick={() => setShowDeleteEnvironment(true)}
+                    onClick={() => { setConfirmAccessCleanup(false); setShowDeleteEnvironment(true); }}
                     className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 transition-colors shrink-0"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -1254,6 +1271,31 @@ function EnvironmentTab() {
                 </div>
                 {showDeleteEnvironment && (
                   <div className="mt-4 border-t border-red-200 pt-4">
+                    <p className="text-xs text-red-800 mb-2">Download audit history before deletion if you need a copy. The export includes entries you are permitted to read, through the time the download starts. Audit history is also retained in Flash.</p>
+                    <button type="button" disabled={exportingAudit || deleteEnvironment.isPending}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 mb-3 disabled:opacity-50"
+                      onClick={async () => {
+                        if (!activeEnvironment) return;
+                        setExportingAudit(true);
+                        try {
+                          const data = await collectEnvironmentAuditExport(activeEnvironment.id, activeEnvironment.name);
+                          const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+                          const anchor = document.createElement('a');
+                          anchor.href = url;
+                          anchor.download = `flash-audit-${activeEnvironment.id}-${data.exported_at.slice(0, 10)}.json`;
+                          anchor.click();
+                          setTimeout(() => URL.revokeObjectURL(url), 1000);
+                          setFeedback({ success: `Audit export prepared with ${data.total} entries.` });
+                        } catch (err) {
+                          setFeedback({ error: err instanceof Error ? err.message : 'Audit export failed' });
+                        } finally { setExportingAudit(false); }
+                      }}>
+                      <Download className="h-3.5 w-3.5" />{exportingAudit ? 'Preparing audit export...' : 'Download audit log'}
+                    </button>
+                    <label className="flex items-start gap-2 text-xs text-red-800 mb-3">
+                      <input type="checkbox" checked={confirmAccessCleanup} onChange={(e) => setConfirmAccessCleanup(e.target.checked)} />
+                      I also confirm permanent deletion of this environment's API keys and dedicated signup links, and removal of its assignments from shared signup links.
+                    </label>
                     <p className="text-xs text-red-800 mb-2">
                       Type <strong className="font-mono">{activeEnvironment?.name}</strong> to confirm:
                     </p>
@@ -1272,7 +1314,7 @@ function EnvironmentTab() {
                           const deletedId = activeEnvironment.id;
                           const deletedName = activeEnvironment.name;
                           try {
-                            await deleteEnvironment.mutateAsync(deletedId);
+                            await deleteEnvironment.mutateAsync({ id: deletedId, confirmAccessCleanup });
                             setShowDeleteEnvironment(false);
                             setDeleteEnvironmentConfirmText('');
                             await fetchEnvironments(activeWorkspace.id);
@@ -1286,7 +1328,7 @@ function EnvironmentTab() {
                             setFeedback({ error: err instanceof Error ? err.message : 'Failed to delete environment' });
                           }
                         }}
-                        disabled={deleteEnvironmentConfirmText !== activeEnvironment?.name || deleteEnvironment.isPending}
+                        disabled={deleteEnvironmentConfirmText !== activeEnvironment?.name || !confirmAccessCleanup || exportingAudit || deleteEnvironment.isPending}
                         className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 transition-colors disabled:opacity-50"
                       >
                         {deleteEnvironment.isPending ? (

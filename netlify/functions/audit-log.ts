@@ -3,6 +3,7 @@ import { query, queryOne } from './_lib/db.js';
 import { requireAuth } from './_lib/auth.js';
 import { requireEnvironmentResourcePermission } from './_lib/rbac.js';
 import { jsonResponse, errorResponse, getSearchParams } from './_lib/helpers.js';
+import { sanitizeAuditValue } from './_lib/audit.js';
 
 export default async (request: Request, context: Context) => {
   try {
@@ -139,13 +140,15 @@ export default async (request: Request, context: Context) => {
      LEFT JOIN users u ON u.id = a.user_id
      LEFT JOIN api_keys ak ON ak.id = a.api_key_id
      WHERE ${whereClause}
-     ORDER BY a.created_at DESC
+     ORDER BY a.created_at DESC, a.id DESC
      LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
       paginatedParams
     );
 
     return jsonResponse({
-      entries,
+      entries: params.get('export') === 'true'
+        ? entries.map(({ ip_address: _ip, details, ...entry }) => ({ ...entry, details: sanitizeAuditValue(details) }))
+        : entries,
       total,
       page,
       per_page: perPage,

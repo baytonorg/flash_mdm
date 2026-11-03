@@ -151,7 +151,7 @@ export default async (request: Request, _context: Context) => {
     // ── Delete enterprise (AMAPI DELETE + local cleanup) ────────────────
     if (body.action === 'delete_enterprise') {
       if (!env.enterprise_name) {
-        return errorResponse('Environment is not bound to an enterprise', 400);
+        return jsonResponse({ deleted: true, previous_enterprise: null });
       }
 
       const previousEnterprise = env.enterprise_name;
@@ -165,6 +165,7 @@ export default async (request: Request, _context: Context) => {
       }
 
       // 1. Delete enterprise from Google AMAPI
+      let remoteAlreadyAbsent = false;
       try {
         await amapiCall(
           env.enterprise_name,
@@ -179,14 +180,33 @@ export default async (request: Request, _context: Context) => {
         );
       } catch (err) {
         const status = getAmapiErrorHttpStatus(err) ?? 502;
-        return errorResponse(
-          `Failed to delete enterprise from Google: ${err instanceof Error ? err.message : 'Unknown error'}`,
-          Number.isFinite(status) ? status : 502
-        );
+        // A retry after remote success must still complete local cleanup.
+        // Other failures, including uncertain delivery, preserve the binding.
+        if (status !== 404) {
+          return errorResponse(
+            `Failed to delete enterprise from Google: ${err instanceof Error ? err.message : 'Unknown error'}`,
+            Number.isFinite(status) ? status : 502
+          );
+        }
+        remoteAlreadyAbsent = true;
       }
 
       // 2. Run local cleanup (same as unbind)
-      await cleanupEnterpriseReferences(body.environment_id);
+      try {
+        await cleanupEnterpriseReferences(body.environment_id);
+      } catch {
+        await logAudit({
+          workspace_id: env.workspace_id,
+          environment_id: body.environment_id,
+          user_id: auth.user.id,
+          action: 'environment.enterprise_cleanup_failed',
+          resource_type: 'environment',
+          resource_id: body.environment_id,
+          details: { previous_enterprise: previousEnterprise, remote_deleted: true },
+          ip_address: getClientIp(request),
+        });
+        return errorResponse('Google enterprise is deleted, but Flash cleanup failed. Retry Unbind to finish local cleanup.', 502);
+      }
 
       await logAudit({
         workspace_id: env.workspace_id,
@@ -195,7 +215,7 @@ export default async (request: Request, _context: Context) => {
         action: 'environment.enterprise_deleted',
         resource_type: 'environment',
         resource_id: body.environment_id,
-        details: { previous_enterprise: previousEnterprise },
+        details: { previous_enterprise: previousEnterprise, remote_already_absent: remoteAlreadyAbsent },
         ip_address: getClientIp(request),
       });
 
