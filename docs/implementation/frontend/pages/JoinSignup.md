@@ -1,6 +1,6 @@
 # `src/pages/JoinSignup.tsx`
 
-> Public signup page for users joining via a signup link, with scope context display and account creation form.
+> Public signup page for users joining via a signup link, with configured public context and an account creation form.
 
 ## Exports
 
@@ -15,7 +15,6 @@
 | `apiClient` | `@/api/client` | Resolving signup links and registering users |
 | `useAuthStore` | `@/stores/auth` | Checking if user is already authenticated |
 | `ResolvedSignupLink` | `@/api/queries/signupLinks` | TypeScript type for resolved link data |
-| `MIN_PASSWORD_LENGTH`, `MAX_PASSWORD_LENGTH` | `@/constants/auth` | Password validation constraints |
 
 ## Key Logic
 
@@ -25,4 +24,6 @@ The page reads a signup link token from the URL params and resolves it via `GET 
 - **Error/Invalid link**: Error message with a link back to sign-in.
 - **Already signed in**: Message with a link to the dashboard.
 - **Success (post-registration)**: Confirmation message directing the user to check their email.
-- **Registration form**: Collects first name, last name, email, and password. Displays allowed email domains if configured. Submits to `POST /api/auth/register` with the `signup_link_token`. A link to sign in is provided for existing users.
+- **Registration form**: Displays the configured signup-link display name and description, then collects first name, last name, and email. Workspace/environment names, role, assignment details, and allowed email domains remain hidden. Submits to `POST /api/auth/register` with the `signup_link_token`; the registration flow sends a magic sign-in link.
+
+While mounted, the page adds a `robots` meta directive with `noindex, nofollow, noarchive`. Hosting configuration also sends the equivalent `X-Robots-Tag` header for every `/join/*` path so crawlers receive the directive without executing JavaScript.

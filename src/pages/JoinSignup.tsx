@@ -21,6 +21,28 @@ export default function JoinSignup() {
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
+    const existing = document.head.querySelector<HTMLMetaElement>('meta[name="robots"]');
+    const robotsMeta = existing ?? document.createElement('meta');
+    const previousContent = existing?.getAttribute('content') ?? null;
+
+    if (!existing) {
+      robotsMeta.name = 'robots';
+      document.head.appendChild(robotsMeta);
+    }
+    robotsMeta.content = 'noindex, nofollow, noarchive';
+
+    return () => {
+      if (!existing) {
+        robotsMeta.remove();
+      } else if (previousContent === null) {
+        existing.removeAttribute('content');
+      } else {
+        existing.setAttribute('content', previousContent);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     let active = true;
 
     async function resolve() {
@@ -82,6 +104,17 @@ export default function JoinSignup() {
         </div>
 
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 md:p-8 space-y-4">
+          {linkInfo && (linkInfo.display_name || linkInfo.display_description) ? (
+            <div className="space-y-1 border-b border-gray-200 pb-4">
+              {linkInfo.display_name ? (
+                <h2 className="text-lg font-semibold text-gray-900">{linkInfo.display_name}</h2>
+              ) : null}
+              {linkInfo.display_description ? (
+                <p className="whitespace-pre-wrap text-sm text-gray-600">{linkInfo.display_description}</p>
+              ) : null}
+            </div>
+          ) : null}
+
           {loading ? (
             <div className="flex items-center justify-center gap-2 py-8 text-gray-500">
               <Loader2 className="h-5 w-5 animate-spin" />
