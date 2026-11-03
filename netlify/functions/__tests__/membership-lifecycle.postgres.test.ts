@@ -205,6 +205,13 @@ suite('membership lifecycle with PostgreSQL and actual handlers', () => {
     expect((await pool.query('SELECT 1 FROM users WHERE id=$1',[target])).rowCount).toBe(1);
   });
 
+  it('rejects stale superadmin snapshots after waiting for lifecycle authority',async()=>{
+    const stale={authType:'session',user:{id:other,is_superadmin:true}} as AuthContext;
+    await failure(changeMemberships({workspaceId:workspace,auth:stale,callerRole:'owner',ip:'',changes:[{userId:target,operation:'remove'}]}),403);
+    await failure(deleteUserAccount({userId:target,actorUserId:other,ip:'',confirmationEmail:'target@fixture.invalid',endSessionsAndCredentials:true,cancelPendingInvites:true}),403);
+    expect((await pool.query('SELECT 1 FROM users WHERE id=$1',[target])).rowCount).toBe(1);
+  });
+
   it('preflights and deletes an ordinary member while preserving shared data and audit', async () => {
     const preflight=await userDeletionPreflight(pool as never,target);
     expect(preflight.blockers).toEqual([]);

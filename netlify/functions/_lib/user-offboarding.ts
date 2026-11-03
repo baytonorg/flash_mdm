@@ -60,6 +60,8 @@ export async function deleteUserAccount(input: { userId: string; actorUserId: st
     // FK locks prevent a concurrent writer from resurrecting a deleted identity.
     const scope = await client.query(`${USER_WORKSPACE_SCOPES} ORDER BY workspace_id`, [input.userId]);
     await lockMembershipWorkspaces(client, scope.rows.map(r => r.workspace_id));
+    const actor = (await client.query('SELECT is_superadmin FROM users WHERE id = $1', [input.actorUserId])).rows[0];
+    if (!actor?.is_superadmin) throw errorResponse('Current superadmin authority is required for permanent account deletion', 403);
     const user = (await client.query('SELECT id, email FROM users WHERE id = $1 FOR UPDATE', [input.userId])).rows[0];
     if (!user) throw errorResponse('User not found', 404);
     const currentScopes = await client.query(`${USER_WORKSPACE_SCOPES} ORDER BY workspace_id`, [input.userId]);

@@ -49,3 +49,5 @@ Run `npm run test:membership-postgres` for disposable PostgreSQL 17 acceptance. 
 The key matrix covers workspace/environment scopes, all roles, allowed/denied reads and writes, expiry/revocation, platform-admin denial, creator removal/deletion, material preservation and actor attribution. Destructive tests stay in fixtures. Production smoke uses approved existing keys only inside the production container and read requests only. Report any role/scope coverage unavailable in production.
 
 Apply migration 059 before switching to the new application release. It changes no existing key material, scope, role, expiry or revocation state. A code rollback can retain the additive schema/provenance constraint; do not restore the old cascading creator FK or use rollback to restore deleted customer identities casually.
+
+Once creator provenance has detached, any rollback must retain independent-key authentication and principal compatibility. Older creator-dependent authentication cannot serve those keys safely. Prefer a validated corrective release rather than rolling back to that behaviour.

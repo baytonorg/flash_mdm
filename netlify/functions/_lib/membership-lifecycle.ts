@@ -102,6 +102,11 @@ export async function changeMemberships(input: {
   return transaction(async (client) => {
     const { workspaceId, auth, callerRole } = input;
     await lockMembershipWorkspaces(client, [workspaceId]);
+    const actorUser = auth.authType === 'session'
+      ? (await client.query('SELECT is_superadmin FROM users WHERE id = $1', [auth.user.id])).rows[0]
+      : null;
+    if (auth.authType === 'session' && !actorUser) throw errorResponse('The signed-in account no longer exists', 403);
+    const isSuperadmin = actorUser?.is_superadmin === true;
     if (input.requireCurrentWorkspaceOwner) {
       const owner = (await client.query("SELECT 1 FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2 AND role = 'owner' AND access_scope = 'workspace'", [workspaceId, auth.user.id])).rows[0];
       if (!owner) throw errorResponse('Your workspace ownership changed. Refresh before transferring.', 409);
@@ -113,7 +118,7 @@ export async function changeMemberships(input: {
       if (!key || key.scope_type !== 'workspace' || key.workspace_id !== workspaceId || key.role !== callerRole || !workspaceRoleMeetsMinimum(key.role, matrix.workspace.manage_users)) throw errorResponse('API-key access changed or is outside this workspace', 403);
     }
     // Revalidate the actor under the same ownership lock as the writes.
-    if (auth.authType !== 'api_key' && !auth.user.is_superadmin) {
+    if (auth.authType !== 'api_key' && !isSuperadmin) {
       const actor = await client.query('SELECT role, access_scope FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2', [workspaceId, auth.user.id]);
       let effectiveRole = actor.rows[0]?.role;
       const actingEnvironment = input.changes[0]?.actingEnvironmentId;
@@ -134,8 +139,8 @@ export async function changeMemberships(input: {
       const target = await client.query('SELECT role, access_scope FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2', [workspaceId, change.userId]);
       if (!target.rows[0]) throw errorResponse('User is not a member of this workspace', 404);
       if (change.userId === auth.user.id && !input.selfService) throw errorResponse('Use the explicit leave or self-demotion action', 400);
-      if (callerRole !== 'owner' && !auth.user.is_superadmin && ((target.rows[0].role === 'owner' && target.rows[0].access_scope === 'workspace') || change.role === 'owner' || change.assignmentRole === 'owner')) throw errorResponse('Only owners can modify owner grants', 403);
-      if (!auth.user.is_superadmin && [change.role, change.assignmentRole].some(role => role && !workspaceRoleMeetsMinimum(callerRole, role))) throw errorResponse('Cannot grant a role higher than your own', 403);
+      if (callerRole !== 'owner' && !isSuperadmin && ((target.rows[0].role === 'owner' && target.rows[0].access_scope === 'workspace') || change.role === 'owner' || change.assignmentRole === 'owner')) throw errorResponse('Only owners can modify owner grants', 403);
+      if (!isSuperadmin && [change.role, change.assignmentRole].some(role => role && !workspaceRoleMeetsMinimum(callerRole, role))) throw errorResponse('Cannot grant a role higher than your own', 403);
       if (change.actingEnvironmentId && target.rows[0].access_scope === 'workspace') throw errorResponse('Workspace-inherited access requires a workspace-level change', 403);
       if (change.operation === 'remove') {
         const offers = await client.query(`SELECT i.id FROM user_invites i JOIN users u ON lower(u.email) = lower(i.email)
