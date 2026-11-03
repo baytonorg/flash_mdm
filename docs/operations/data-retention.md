@@ -14,19 +14,20 @@ This function runs daily at **03:00 UTC** (`0 3 * * *`). It reads retention conf
 
 | Target | Behaviour |
 |---|---|
-| Expired sessions | Hard-deleted |
-| Expired magic links | Hard-deleted |
-| Expired/pending invites | Marked `expired` |
+| Expired sessions | Count-only observation, records preserved |
+| Expired magic links | Count-only observation, records preserved |
+| Expired/pending invites | Count-only observation, status preserved |
 | Old Pub/Sub events (>30 days) | Archived (status set to `archived`) |
 | Completed/dead/delivery-uncertain job queue entries (>7 days) | Hard-deleted |
 | Stale rate limit buckets (unused >24 hours) | Hard-deleted |
-| Stale pending TOTP setup data | Pending TOTP blob + timestamp cleared when older than 1 day (or legacy rows missing timestamp) |
-| Expired API keys | Revoked (`revoked_at` set) — keys with no expiry are left active |
+| Stale pending TOTP setup data | Count-only observation, encrypted seed and timestamps preserved |
 | Old audit log rows | Hard-deleted per `AUDIT_LOG_RETENTION_DAYS` |
 | Command-operation ledger rows | Submitted, successful, failed, and cancelled rows are hard-deleted per `COMMAND_OPERATION_RETENTION_DAYS`; uncertain, reconciling, and unresolved rows are retained |
 | Old device location records | Hard-deleted per `DEVICE_LOCATION_RETENTION_DAYS` |
 | Old device status reports | Hard-deleted per `DEVICE_STATUS_REPORT_RETENTION_DAYS` |
 | Long-soft-deleted devices | Hard-deleted per `SOFT_DELETED_DEVICE_RETENTION_DAYS`; audit log and workflow execution device references are nullified before deletion |
+
+Credential observations return up to 10,000 candidates per category without selecting credential values. Legacy mutation-count fields remain zero. `observed_*` fields report counts and `observed_*_truncated` is 1 when additional candidates exist, otherwise 0. These observations require operator review and never authorise retirement. Scheduled cleanup does not mutate API keys. Authentication consumption and explicit operator actions are separate paths outside these maintenance guards.
 
 ## Retention-related environment variables
 
@@ -42,20 +43,15 @@ See also:
 
 - `docs/reference/environment-variables.md`
 
-## Enrollment token grace
+## Enrollment token observations
 
-Enrollment token reconciliation uses a grace window to allow delayed enrollment processing to resolve token metadata before hard-deletion:
+Scheduled reconciliation preserves enrollment token rows, credential values, QR data, expiry and backing metadata. Expired, remotely missing and orphaned records require explicit operator follow-up. Automated observations never authorise credential retirement.
 
-- `ENROLLMENT_TOKEN_RETENTION_GRACE_HOURS = 24` (constant, not configurable)
-
-Seen in:
-
-- `netlify/functions/enrollment-sync.ts`
-- `netlify/functions/sync-reconcile-scheduled.ts`
+Each environment reports at most 100 local rows, with a truncation flag, and uses GET requests only. Listings stop after 20 pages or a repeated page token. Incomplete listings fall back to resource GETs for the sampled local tokens. Non-404 failures remain uncertain. Counts may overlap because expiry and remote existence describe different facts. No credential values are selected or logged. Explicit operator deletion routes retain their existing behaviour.
 
 ## Operator guidance
 
 - Retention values are operator-controlled and should reflect your compliance and operational needs.
 - Validate retention behavior in staging before tightening windows.
 - If you need longer audit retention for compliance, increase `AUDIT_LOG_RETENTION_DAYS` and ensure your DB storage and backup policies match.
-- Cleanup failures are logged but do not abort subsequent cleanup steps — check Netlify function logs for `Daily cleanup error` entries.
+- Most cleanup failures abort the remaining steps and return an error. Missing optional command-operation or chat tables are handled separately. Check function logs for `Daily cleanup error` entries.
