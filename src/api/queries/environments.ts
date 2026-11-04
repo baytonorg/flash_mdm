@@ -15,6 +15,7 @@ export interface Environment {
   enterprise_features?: Record<string, unknown> | null;
   bound: boolean;
   created_at: string;
+  last_user_action_at?: string | null;
   updated_at: string;
   [key: string]: unknown;
 }

@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 
 const mocks = vi.hoisted(() => ({
   useQuery: vi.fn(),
+  lastLoginAt: '2026-11-04T09:00:00.000Z' as string | null,
 }));
 
 vi.mock('@tanstack/react-query', async () => {
@@ -40,6 +41,7 @@ vi.mock('@/api/queries/users', () => ({
       {
         id: 'u-scoped',
         email: 'scoped@example.com',
+        last_login_at: mocks.lastLoginAt,
         role: 'viewer',
         access_scope: 'scoped',
         environment_assignments: [{ environment_id: 'env1', environment_name: 'Env 1', role: 'member' }],
@@ -88,6 +90,7 @@ import Users from '@/pages/Users';
 describe('Users environment filtering', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.lastLoginAt = '2026-11-04T09:00:00.000Z';
     mocks.useQuery.mockReturnValue({ data: undefined, isLoading: false });
   });
 
@@ -97,5 +100,13 @@ describe('Users environment filtering', () => {
     expect(screen.getAllByText('scoped@example.com').length).toBeGreaterThan(0);
     expect(screen.queryByText('other@example.com')).not.toBeInTheDocument();
     expect(screen.queryByText('admin@example.com')).not.toBeInTheDocument();
+    expect(screen.getByText('Last login (account)')).toBeInTheDocument();
+    expect(screen.getByTitle(new Date('2026-11-04T09:00:00.000Z').toLocaleString())).toBeInTheDocument();
+  });
+
+  it('distinguishes missing login evidence from membership join time', () => {
+    mocks.lastLoginAt = null;
+    render(<Users />);
+    expect(screen.getByText('No login recorded')).toBeInTheDocument();
   });
 });
