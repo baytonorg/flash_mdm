@@ -74,7 +74,8 @@ describe('environment-crud API key scope listing', () => {
     expect(mockRequireWorkspaceResourcePermission).not.toHaveBeenCalled();
     expect(mockQuery).toHaveBeenCalledWith(expect.stringContaining('AND e.id = $2'), ['ws_1', 'env_1', 'viewer']);
     const sql = String(mockQuery.mock.calls[0][0]);
-    expect(sql).toContain('al.environment_id = e.id AND al.workspace_id = e.workspace_id');
+    expect(sql).toContain('al.environment_id = e.id');
+    expect(sql).toContain('(al.workspace_id = e.workspace_id OR al.workspace_id IS NULL)');
     expect(sql).toContain("al.actor_type = 'user'");
     expect(sql).toContain('al.user_id IS NOT NULL');
     expect(sql).toContain('al.api_key_id IS NULL');

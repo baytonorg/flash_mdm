@@ -29,7 +29,7 @@
 
 - **GET /:id**: Returns a single environment by ID after `read` permission check.
 
-Both read routes include `created_at` and `last_user_action_at`. The latter is the newest retained standard-visibility audit record for the same workspace and environment with a user actor and user ID, excluding API keys. It includes support-session actions where recorded as user actions. It is not a page-view, login, device-sync or complete engagement timestamp; null means no matching retained action. Settings displays this distinction on cards and selected-environment details.
+Both read routes include `created_at` and `last_user_action_at`. The latter is the newest retained standard-visibility audit record for the same environment with a user actor and user ID, excluding API keys. Audit records may omit the optional workspace ID; their environment foreign key establishes ownership. An explicitly conflicting workspace ID is excluded. It includes support-session actions where recorded as user actions. It is not a page-view, login, device-sync or complete engagement timestamp; null means no matching retained action. Settings displays this distinction on cards and selected-environment details.
 
 - **POST /create**: Requires workspace `environment.write` permission. Creates:
   1. The environment row.

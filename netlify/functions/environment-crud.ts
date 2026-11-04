@@ -24,7 +24,8 @@ type PgLikeError = {
 // The existing environment/time index bounds this lookup to one environment.
 // This is retained audit evidence, not a page-view or device-sync timestamp.
 const lastUserActionSql = `(SELECT al.created_at FROM audit_log al
-  WHERE al.environment_id = e.id AND al.workspace_id = e.workspace_id
+  WHERE al.environment_id = e.id
+    AND (al.workspace_id = e.workspace_id OR al.workspace_id IS NULL)
     AND al.actor_type = 'user' AND al.user_id IS NOT NULL
     AND al.api_key_id IS NULL AND al.visibility_scope = 'standard'
   ORDER BY al.created_at DESC LIMIT 1) AS last_user_action_at`;
