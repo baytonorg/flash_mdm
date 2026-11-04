@@ -16,7 +16,7 @@
 | `asRecord` | 31-34 | Safely coerces an unknown value to `Record<string, unknown>` |
 | `syncWorkspacePricingToStripe` | 36-147 | Creates or updates a Stripe Product and Price to match a workspace pricing entry; returns updated metadata with Stripe IDs |
 | `parseRoute` | 149-162 | Parses the URL pathname into a typed route enum and optional `environmentId` |
-| `handlePostManualGrant` | 164-251 | Creates a manual or free entitlement for an environment |
+| `handlePostManualGrant` | 164-251 | Creates a manual or free entitlement for an environment after workspace-level billing administration authorisation |
 | `requireWorkspaceBillingOrEnvironmentPermission` | 253-275 | Two-tier auth: tries workspace billing permission first, falls back to environment-level permission |
 | `requireLicensingEnabled` | 277-285 | Throws 409 if licensing is disabled for the workspace |
 | `getWorkspaceBillingSettings` | 287-295 | Fetches `workspace_billing_settings` row |
@@ -64,7 +64,7 @@ The handler uses a route table (`routeHandlers`) mapping `METHOD:route` strings 
 
 **Checkout flow**: Resolves the effective pricing (customer override > workspace default), ensures a Stripe Price is synced, creates or reuses a Stripe Customer, then creates a Checkout Session in `subscription` mode. Metadata propagated to the subscription enables the webhook handler to match payments back to environments.
 
-**Manual grants**: Directly inserts an `environment_entitlements` row with source `workspace_manual` or `workspace_free`, optionally with no expiry.
+**Manual grants**: Requires workspace read plus `billing.billing_manage` on the target environment's workspace. Environment-scoped access alone is not sufficient. The handler directly inserts an `environment_entitlements` row with source `workspace_manual` or `workspace_free`, optionally with no expiry.
 
 ## API Surface
 
@@ -78,4 +78,4 @@ The handler uses a route table (`routeHandlers`) mapping `METHOD:route` strings 
 | PUT | `/.netlify/functions/workspace-billing/environments/:id` | Session / API key | Update environment billing mapping (customer, pricing, status) |
 | POST | `/.netlify/functions/workspace-billing/checkout` | Session only | Create a Stripe Checkout session |
 | POST | `/.netlify/functions/workspace-billing/portal` | Session / API key | Create a Stripe Billing Portal session |
-| POST | `/.netlify/functions/workspace-billing/grants/manual` | Session / API key | Create a manual or free entitlement grant |
+| POST | `/.netlify/functions/workspace-billing/grants/manual` | Workspace billing admin session or workspace-scoped admin API key | Create a manual or free entitlement grant |

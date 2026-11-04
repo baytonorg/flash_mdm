@@ -527,6 +527,21 @@ describe('workspace-billing', () => {
     );
 
     expect(response.status).toBe(201);
+    expect(mockRequireWorkspaceResourcePermission).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      '123e4567-e89b-12d3-a456-426614174000',
+      'workspace',
+      'read'
+    );
+    expect(mockRequireWorkspaceResourcePermission).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      '123e4567-e89b-12d3-a456-426614174000',
+      'billing',
+      'billing_manage'
+    );
+    expect(mockRequireEnvironmentPermission).not.toHaveBeenCalled();
     expect(
       mockExecute.mock.calls.some(([sql]) =>
         String(sql).includes('INSERT INTO environment_entitlements')
@@ -537,5 +552,202 @@ describe('workspace-billing', () => {
         action: 'workspace_billing.entitlement.manual_granted',
       })
     );
+  });
+
+  it.each([
+    {
+      label: 'environment-scoped session',
+      auth: {
+        authType: 'session' as const,
+        user: {
+          id: 'environment_admin',
+          workspace_id: '123e4567-e89b-12d3-a456-426614174000',
+        },
+      },
+    },
+    {
+      label: 'workspace member session',
+      auth: {
+        authType: 'session' as const,
+        user: {
+          id: 'workspace_member',
+          workspace_id: '123e4567-e89b-12d3-a456-426614174000',
+        },
+      },
+    },
+    {
+      label: 'workspace viewer session',
+      auth: {
+        authType: 'session' as const,
+        user: {
+          id: 'workspace_viewer',
+          workspace_id: '123e4567-e89b-12d3-a456-426614174000',
+        },
+      },
+    },
+    {
+      label: 'environment-scoped API key',
+      auth: {
+        authType: 'api_key' as const,
+        apiKey: {
+          id: 'environment_key',
+          scope_type: 'environment' as const,
+          workspace_id: '123e4567-e89b-12d3-a456-426614174000',
+          environment_id: '223e4567-e89b-12d3-a456-426614174000',
+          role: 'admin',
+          created_by_user_id: null,
+        },
+      },
+    },
+  ])('rejects manual grants from $label without workspace billing permission', async ({ auth }) => {
+    mockRequireAuth.mockResolvedValue(auth);
+    mockQueryOne.mockResolvedValueOnce({
+      id: '223e4567-e89b-12d3-a456-426614174000',
+      name: 'Env',
+      workspace_id: '123e4567-e89b-12d3-a456-426614174000',
+    });
+    mockRequireWorkspaceResourcePermission
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403 }));
+
+    const response = await handler(
+      new Request('http://localhost/api/workspace-billing/grants/manual', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          environment_id: '223e4567-e89b-12d3-a456-426614174000',
+          seat_count: 1_000_000,
+          no_expiry: true,
+          grant_type: 'free',
+        }),
+      }),
+      {} as never
+    );
+
+    expect(response.status).toBe(403);
+    expect(mockRequireEnvironmentPermission).not.toHaveBeenCalled();
+    expect(
+      mockExecute.mock.calls.some(([sql]) =>
+        String(sql).includes('INSERT INTO environment_entitlements')
+      )
+    ).toBe(false);
+    expect(mockLogAudit).not.toHaveBeenCalled();
+  });
+
+  it('authorises manual grants against the target environment workspace, not the caller workspace', async () => {
+    mockRequireAuth.mockResolvedValue({
+      authType: 'session',
+      user: {
+        id: 'cross_workspace_admin',
+        workspace_id: '123e4567-e89b-12d3-a456-426614174000',
+      },
+    });
+    mockQueryOne.mockResolvedValueOnce({
+      id: '223e4567-e89b-12d3-a456-426614174000',
+      name: 'Other workspace environment',
+      workspace_id: '923e4567-e89b-12d3-a456-426614174000',
+    });
+    mockRequireWorkspaceResourcePermission.mockRejectedValueOnce(
+      new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403 })
+    );
+
+    const response = await handler(
+      new Request('http://localhost/api/workspace-billing/grants/manual', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          environment_id: '223e4567-e89b-12d3-a456-426614174000',
+          seat_count: 10,
+          duration_months: 1,
+        }),
+      }),
+      {} as never
+    );
+
+    expect(response.status).toBe(403);
+    expect(mockRequireWorkspaceResourcePermission).toHaveBeenCalledWith(
+      expect.anything(),
+      '923e4567-e89b-12d3-a456-426614174000',
+      'workspace',
+      'read'
+    );
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: 'workspace billing admin session',
+      auth: {
+        authType: 'session' as const,
+        user: {
+          id: 'workspace_admin',
+          workspace_id: '123e4567-e89b-12d3-a456-426614174000',
+          is_superadmin: false,
+        },
+      },
+    },
+    {
+      label: 'superadmin session',
+      auth: {
+        authType: 'session' as const,
+        user: {
+          id: 'superadmin',
+          workspace_id: '123e4567-e89b-12d3-a456-426614174000',
+          is_superadmin: true,
+        },
+      },
+    },
+    {
+      label: 'workspace-scoped billing API key',
+      auth: {
+        authType: 'api_key' as const,
+        apiKey: {
+          id: 'workspace_key',
+          scope_type: 'workspace' as const,
+          workspace_id: '123e4567-e89b-12d3-a456-426614174000',
+          environment_id: null,
+          role: 'admin',
+          created_by_user_id: null,
+        },
+      },
+    },
+  ])('allows manual grants for $label after explicit billing authorisation', async ({ auth }) => {
+    mockRequireAuth.mockResolvedValue(auth);
+    mockRequireWorkspaceResourcePermission.mockResolvedValue(undefined);
+    mockQueryOne.mockResolvedValueOnce({
+      id: '223e4567-e89b-12d3-a456-426614174000',
+      name: 'Env',
+      workspace_id: '123e4567-e89b-12d3-a456-426614174000',
+    });
+    mockExecute.mockResolvedValue({ rowCount: 1 });
+
+    const response = await handler(
+      new Request('http://localhost/api/workspace-billing/grants/manual', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          environment_id: '223e4567-e89b-12d3-a456-426614174000',
+          seat_count: 25,
+          duration_months: 12,
+          grant_type: 'manual',
+        }),
+      }),
+      {} as never
+    );
+
+    expect(response.status).toBe(201);
+    expect(mockRequireWorkspaceResourcePermission).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      '123e4567-e89b-12d3-a456-426614174000',
+      'billing',
+      'billing_manage'
+    );
+    expect(mockRequireEnvironmentPermission).not.toHaveBeenCalled();
+    expect(
+      mockExecute.mock.calls.some(([sql]) =>
+        String(sql).includes('INSERT INTO environment_entitlements')
+      )
+    ).toBe(true);
   });
 });

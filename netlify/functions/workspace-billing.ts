@@ -193,7 +193,8 @@ async function handlePostManualGrant(request: Request, _route: ParsedRoute, auth
   );
   if (!env) return errorResponse('Environment not found', 404);
 
-  await requireWorkspaceBillingOrEnvironmentPermission(auth, env.workspace_id, env.id, 'write');
+  await requireWorkspaceResourcePermission(auth, env.workspace_id, 'workspace', 'read');
+  await requireWorkspaceResourcePermission(auth, env.workspace_id, 'billing', 'billing_manage');
   await requireLicensingEnabled(env.workspace_id);
 
   const source = body.grant_type === 'free' ? 'workspace_free' : 'workspace_manual';
