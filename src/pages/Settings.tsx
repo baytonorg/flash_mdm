@@ -15,6 +15,7 @@ import PolicyAssignmentSelect from '@/components/policy/PolicyAssignmentSelect';
 import { usePolicyAssignments } from '@/api/queries/policies';
 import { apiClient } from '@/api/client';
 import { collectEnvironmentAuditExport } from '@/api/queries/audit';
+import EnvironmentActivity from '@/components/settings/EnvironmentActivity';
 import {
   Building2, Globe, User, Upload, ExternalLink,
   Check, AlertCircle, Loader2, RotateCcw, Trash2, ArrowUpCircle, Key, Copy, Download, X,
@@ -681,13 +682,18 @@ function WorkspaceTab() {
 
 // ---- Environment Tab ----
 
-function EnvironmentTab() {
+export function EnvironmentTab() {
   const { user } = useAuthStore();
   const {
     activeEnvironment, environments, fetchEnvironments,
     activeWorkspace, switchEnvironment,
   } = useContextStore();
   const updateEnvironment = useUpdateEnvironment();
+  // The context store is also used by navigation and can predate recent actions
+  // performed elsewhere in this tab. Refresh when this panel is entered.
+  useEffect(() => {
+    if (activeWorkspace?.id) void fetchEnvironments(activeWorkspace.id);
+  }, [activeWorkspace?.id, fetchEnvironments]);
   const createEnvironment = useCreateEnvironment();
   const bindStep1 = useBindEnvironmentStep1();
   const deleteEnterprise = useDeleteEnterprise();
@@ -893,6 +899,7 @@ function EnvironmentTab() {
                     ? env.enterprise_name.replace('enterprises/', '')
                     : 'Not bound'}
                 </p>
+                <EnvironmentActivity created_at={env.created_at} last_user_action_at={env.last_user_action_at} />
               </div>
               {env.enterprise_name ? (
                 <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
@@ -908,6 +915,9 @@ function EnvironmentTab() {
         </div>
 
         {/* Create new environment */}
+        <p className="mb-4 text-xs text-gray-500">
+          Activity shows the latest retained user audit action, including support sessions. Page views, API keys and background device sync are excluded.
+        </p>
         {showCreate && canCreateEnvironment && (
           <form onSubmit={handleCreate} className="flex items-end gap-2 mb-4">
             <div className="flex-1 max-w-sm">
@@ -938,8 +948,11 @@ function EnvironmentTab() {
         <>
           <div className="border-t border-border pt-6">
             <h3 className="text-sm font-semibold text-gray-900 mb-4">
-              Environment Settings — {activeEnvironment.name}
+              Environment Settings - {activeEnvironment.name}
             </h3>
+            <div className="mb-4">
+              <EnvironmentActivity created_at={activeEnvironment.created_at} last_user_action_at={activeEnvironment.last_user_action_at} />
+            </div>
             <form onSubmit={handleSave} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Environment Name</label>

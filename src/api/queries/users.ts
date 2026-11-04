@@ -23,6 +23,7 @@ export interface WorkspaceUser {
   }>;
   invited_at?: string;
   joined_at?: string;
+  last_login_at?: string | null;
   [key: string]: unknown;
 }
 

@@ -81,6 +81,32 @@ describe.skipIf(!connectionString)('deletion against disposable PostgreSQL with 
     vi.mocked(getAmapiErrorHttpStatus).mockReturnValue(502);
   });
 
+  it('reads the latest user action when its optional workspace is omitted, excluding conflicting scope and non-user evidence', async () => {
+    const f = await fixture();
+    const user = (await f.q('INSERT INTO users (email) VALUES ($1) RETURNING id', [`activity-${f.env}@example.invalid`])).rows[0].id;
+    const otherWs = (await f.q("INSERT INTO workspaces (name) VALUES ('Other workspace') RETURNING id")).rows[0].id;
+    await f.q(`INSERT INTO audit_log (environment_id, workspace_id, user_id, action, created_at, actor_type, visibility_scope) VALUES
+      ($1, $2, $3, 'fixture', '2026-01-01Z', 'user', 'standard'),
+      ($1, NULL, $3, 'fixture', '2026-01-02Z', 'user', 'standard'),
+      ($1, $4, $3, 'fixture', '2026-01-03Z', 'user', 'standard'),
+      ($1, $2, $3, 'fixture', '2026-01-04Z', 'system', 'standard'),
+      ($1, $2, $3, 'fixture', '2026-01-05Z', 'api_key', 'standard'),
+      ($1, $2, $3, 'fixture', '2026-01-06Z', 'user', 'privileged')`, [f.env, f.ws, user, otherWs]);
+    // Negative control: the original strict workspace predicate loses the newer action.
+    const old = await f.q("SELECT max(created_at) AS latest FROM audit_log WHERE environment_id=$1 AND workspace_id=$2 AND user_id IS NOT NULL AND actor_type='user' AND visibility_scope='standard'", [f.env, f.ws]);
+    expect(old.rows[0].latest.toISOString()).toBe('2026-01-01T00:00:00.000Z');
+    const response = await crud(new Request(`http://localhost/api/environments/${f.env}`), {} as never);
+    expect(response.status).toBe(200);
+    expect((await response.json()).environment.last_user_action_at).toBe('2026-01-02T00:00:00.000Z');
+  });
+
+  it('returns null for an environment without a retained user action', async () => {
+    const f = await fixture();
+    const response = await crud(new Request(`http://localhost/api/environments/${f.env}`), {} as never);
+    expect(response.status).toBe(200);
+    expect((await response.json()).environment.last_user_action_at).toBeNull();
+  });
+
   it.each(['unbind', 'delete_enterprise'])('%s preserves local intent and devices, resets remote state', async (action) => {
     const f = await fixture();
     expect((await post(f.env, action)).status).toBe(200);

@@ -22,6 +22,8 @@ interface Environment {
   enterprise_name: string | null;
   enterprise_display_name: string | null;
   pubsub_topic?: string | null;
+  created_at?: string;
+  last_user_action_at?: string | null;
 }
 
 interface Group {

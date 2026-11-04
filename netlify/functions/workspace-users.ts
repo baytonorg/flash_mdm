@@ -573,6 +573,7 @@ type WorkspaceUserRow = {
   role: string;
   access_scope: 'workspace' | 'scoped';
   joined_at: string;
+  last_login_at: string | null;
 };
 
 type WorkspaceMembershipRow = {
@@ -678,7 +679,7 @@ async function listScopedWorkspaceUsers(workspaceId: string, envIds: string[], g
     return await query<WorkspaceUserRow>(
       `SELECT u.id, u.email, u.first_name, u.last_name, wm.role,
               COALESCE(wm.access_scope, 'workspace') as access_scope,
-              wm.created_at as joined_at
+              wm.created_at as joined_at, u.last_login_at
        FROM workspace_memberships wm
        JOIN users u ON u.id = wm.user_id
        WHERE wm.workspace_id = $1
@@ -709,7 +710,7 @@ async function listScopedWorkspaceUsers(workspaceId: string, envIds: string[], g
     return query<WorkspaceUserRow>(
       `SELECT u.id, u.email, u.first_name, u.last_name, wm.role,
               'workspace'::text as access_scope,
-              wm.created_at as joined_at
+              wm.created_at as joined_at, u.last_login_at
        FROM workspace_memberships wm
        JOIN users u ON u.id = wm.user_id
        WHERE wm.workspace_id = $1
@@ -766,7 +767,7 @@ async function listWorkspaceUsers(workspaceId: string, userId?: string | null): 
     return await query<WorkspaceUserRow>(
       `SELECT u.id, u.email, u.first_name, u.last_name, wm.role,
               COALESCE(wm.access_scope, 'workspace') as access_scope,
-              wm.created_at as joined_at
+              wm.created_at as joined_at, u.last_login_at
        FROM workspace_memberships wm
        JOIN users u ON u.id = wm.user_id
        WHERE wm.workspace_id = $1
@@ -780,7 +781,7 @@ async function listWorkspaceUsers(workspaceId: string, userId?: string | null): 
     return query<WorkspaceUserRow>(
       `SELECT u.id, u.email, u.first_name, u.last_name, wm.role,
               'workspace'::text as access_scope,
-              wm.created_at as joined_at
+              wm.created_at as joined_at, u.last_login_at
        FROM workspace_memberships wm
        JOIN users u ON u.id = wm.user_id
        WHERE wm.workspace_id = $1

@@ -21,6 +21,15 @@ type PgLikeError = {
   constraint?: unknown;
 };
 
+// The existing environment/time index bounds this lookup to one environment.
+// This is retained audit evidence, not a page-view or device-sync timestamp.
+const lastUserActionSql = `(SELECT al.created_at FROM audit_log al
+  WHERE al.environment_id = e.id
+    AND (al.workspace_id = e.workspace_id OR al.workspace_id IS NULL)
+    AND al.actor_type = 'user' AND al.user_id IS NOT NULL
+    AND al.api_key_id IS NULL AND al.visibility_scope = 'standard'
+  ORDER BY al.created_at DESC LIMIT 1) AS last_user_action_at`;
+
 function getPgCode(err: unknown): string {
   if (!err || typeof err !== 'object' || !('code' in err)) return '';
   return String((err as PgLikeError).code ?? '');
@@ -64,6 +73,7 @@ export default async (request: Request, _context: Context) => {
       ? await query(
           `SELECT e.id, e.workspace_id, e.name, e.enterprise_name, e.enterprise_display_name,
                   e.pubsub_topic, e.enterprise_features, e.created_at, e.updated_at,
+                  ${lastUserActionSql},
                   $3::text AS user_role
            FROM environments e
            WHERE e.workspace_id = $1
@@ -75,6 +85,7 @@ export default async (request: Request, _context: Context) => {
       ? await query(
           `SELECT e.id, e.workspace_id, e.name, e.enterprise_name, e.enterprise_display_name,
                   e.pubsub_topic, e.enterprise_features, e.created_at, e.updated_at,
+                  ${lastUserActionSql},
                   COALESCE(
                     (
                       SELECT em.role::text
@@ -122,6 +133,7 @@ export default async (request: Request, _context: Context) => {
       : await query(
           `SELECT e.id, e.workspace_id, e.name, e.enterprise_name, e.enterprise_display_name,
                   e.pubsub_topic, e.enterprise_features, e.created_at, e.updated_at,
+                  ${lastUserActionSql},
                   NULL::text AS user_role
            FROM environments e
            WHERE e.workspace_id = $1
@@ -135,9 +147,10 @@ export default async (request: Request, _context: Context) => {
   // GET /api/environments/:id
   if (request.method === 'GET' && action && action !== 'list') {
     const env = await queryOne(
-      `SELECT id, workspace_id, name, enterprise_name, enterprise_display_name,
-              pubsub_topic, enterprise_features, created_at, updated_at
-       FROM environments WHERE id = $1`,
+      `SELECT e.id, e.workspace_id, e.name, e.enterprise_name, e.enterprise_display_name,
+              e.pubsub_topic, e.enterprise_features, e.created_at, e.updated_at,
+              ${lastUserActionSql}
+       FROM environments e WHERE e.id = $1`,
       [action]
     );
     if (!env) return errorResponse('Environment not found', 404);

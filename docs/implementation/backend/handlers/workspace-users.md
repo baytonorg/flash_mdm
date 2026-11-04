@@ -1,5 +1,7 @@
 # `netlify/functions/workspace-users.ts`
 
+User list rows include the existing account-level `last_login_at` timestamp alongside workspace `joined_at`. The Users table labels it `Last login (account)` because sign-in is not attributed to an environment. Existing workspace/scoped list filtering is unchanged. No login IP, authentication method, session or credential data is added.
+
 > Manages workspace membership: list users (with scoped visibility), change workspace role, update access scope and scoped role for environment/group grants, bulk operations, and remove users.
 
 ## Exports

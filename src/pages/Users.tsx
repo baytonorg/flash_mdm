@@ -604,6 +604,15 @@ export default function Users() {
         );
       },
     },
+    {
+      key: 'last_login_at',
+      label: 'Last login (account)',
+      render: (_val, row) => row.last_login_at ? (
+        <span className="text-sm text-gray-500" title={new Date(row.last_login_at).toLocaleString()}>
+          {timeAgo(row.last_login_at)}
+        </span>
+      ) : <span className="text-sm text-gray-400">No login recorded</span>,
+    },
     ...(canManageUsers ? [
       {
         key: 'actions',
