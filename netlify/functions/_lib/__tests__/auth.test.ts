@@ -124,6 +124,40 @@ describe('validateSession', () => {
 });
 
 describe('requireAuth CSRF enforcement', () => {
+  it('blocks manual grants during read-only support impersonation', async () => {
+    mockQueryOne.mockResolvedValueOnce(makeSessionRow({
+      impersonated_by: 'support_user',
+      impersonator_session_id: 'support_session',
+      impersonated_by_email: 'support@example.com',
+      impersonation_mode: 'read_only',
+      support_reason: 'Investigating billing display',
+      support_ticket_ref: 'SUP-123',
+      customer_notice_acknowledged_at: new Date().toISOString(),
+    }));
+
+    const req = new Request('http://localhost/api/workspace-billing/grants/manual', {
+      method: 'POST',
+      headers: {
+        cookie: 'flash_session=plain-session',
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: '{}',
+    });
+
+    try {
+      await requireAuth(req);
+      expect.fail('should throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(Response);
+      const res = err as Response;
+      expect(res.status).toBe(403);
+      await expect(res.json()).resolves.toEqual({
+        error: 'Read-only support session: mutating actions are blocked during impersonation.',
+      });
+    }
+  });
+
   it('rejects mutating requests without X-Requested-With header', async () => {
     mockQueryOne.mockResolvedValueOnce(makeSessionRow());
 
