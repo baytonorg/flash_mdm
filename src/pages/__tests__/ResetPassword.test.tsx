@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 
 vi.mock('@/api/client', () => ({
   apiClient: {
@@ -13,11 +13,16 @@ import { apiClient } from '@/api/client';
 
 const mockedPost = vi.mocked(apiClient.post);
 
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location">{`${location.pathname}${location.search}`}</div>;
+}
+
 function renderResetPassword(initialEntry: string) {
   return render(
     <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
-        <Route path="/reset-password" element={<ResetPassword />} />
+        <Route path="/reset-password" element={<><ResetPassword /><LocationProbe /></>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -44,6 +49,59 @@ describe('ResetPassword', () => {
     });
   });
 
+  it('captures the reset token and immediately removes it from the URL while preserving other parameters', async () => {
+    renderResetPassword('/reset-password?token=reset-token&campaign=operator');
+
+    expect(screen.getByRole('heading', { name: /choose a new password/i })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId('location')).toHaveTextContent('/reset-password?campaign=operator');
+    });
+    expect(mockedPost).not.toHaveBeenCalled();
+  });
+
+  it('removes every duplicate token parameter even when the first value is empty', async () => {
+    renderResetPassword('/reset-password?token=&token=synthetic-bearer&campaign=operator');
+
+    expect(screen.getByRole('heading', { name: /reset your password/i })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId('location')).toHaveTextContent('/reset-password?campaign=operator');
+    });
+    expect(mockedPost).not.toHaveBeenCalled();
+  });
+
+  it('clears the captured token after a successful reset and keeps a terminal confirmation view', async () => {
+    mockedPost.mockResolvedValueOnce({
+      message: 'Password reset successful. Please sign in again.',
+    });
+
+    renderResetPassword('/reset-password?token=reset-token');
+    const passwordInputs = screen.getAllByLabelText(/password/i);
+    fireEvent.change(passwordInputs[0], { target: { value: 'Password123!' } });
+    fireEvent.change(passwordInputs[1], { target: { value: 'Password123!' } });
+    fireEvent.click(screen.getByRole('button', { name: /^reset password$/i }));
+
+    expect(await screen.findByRole('heading', { name: /password reset complete/i })).toBeInTheDocument();
+    expect(screen.getByText(/password reset successful/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^reset password$/i })).not.toBeInTheDocument();
+  });
+
+  it('clears a terminal invalid token and returns to the safe reset-request flow', async () => {
+    mockedPost.mockRejectedValueOnce(Object.assign(new Error('Invalid or expired reset link'), {
+      status: 400,
+      data: { error: 'Invalid or expired reset link' },
+    }));
+
+    renderResetPassword('/reset-password?token=invalid-token');
+    const passwordInputs = screen.getAllByLabelText(/password/i);
+    fireEvent.change(passwordInputs[0], { target: { value: 'Password123!' } });
+    fireEvent.change(passwordInputs[1], { target: { value: 'Password123!' } });
+    fireEvent.click(screen.getByRole('button', { name: /^reset password$/i }));
+
+    expect(await screen.findByText(/invalid or expired reset link/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /send reset link/i })).toBeInTheDocument();
+    expect(screen.getByTestId('location')).toHaveTextContent('/reset-password');
+  });
+
   it('continues TOTP-protected reset via MFA handshake and completion endpoint', async () => {
     mockedPost
       .mockRejectedValueOnce({
@@ -56,6 +114,10 @@ describe('ResetPassword', () => {
       });
 
     renderResetPassword('/reset-password?token=reset-token');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location')).toHaveTextContent('/reset-password');
+    });
 
     const passwordInputs = screen.getAllByLabelText(/password/i);
     fireEvent.change(passwordInputs[0], { target: { value: 'Password123!' } });

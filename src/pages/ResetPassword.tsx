@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { apiClient } from '@/api/client';
 import { MIN_PASSWORD_LENGTH, MAX_PASSWORD_LENGTH } from '@/constants/auth';
@@ -24,8 +24,8 @@ function getApiErrorStatus(err: unknown): number | null {
 }
 
 export default function ResetPassword() {
-  const [searchParams] = useSearchParams();
-  const resetToken = searchParams.get('token')?.trim() ?? '';
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [resetToken, setResetToken] = useState(() => searchParams.get('token')?.trim() ?? '');
 
   const [email, setEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -35,17 +35,28 @@ export default function ResetPassword() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [resetComplete, setResetComplete] = useState(false);
 
-  const mode: 'request' | 'reset' | 'mfa' = mfaPendingToken
+  useEffect(() => {
+    if (!searchParams.has('token')) return;
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('token');
+    setSearchParams(nextParams, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  const mode: 'request' | 'reset' | 'mfa' | 'complete' = mfaPendingToken
     ? 'mfa'
-    : resetToken
-      ? 'reset'
-      : 'request';
+    : resetComplete
+      ? 'complete'
+      : resetToken
+        ? 'reset'
+        : 'request';
 
   const handleRequestReset = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setSuccessMessage('');
+    setResetComplete(false);
     setIsSubmitting(true);
     try {
       const result = await apiClient.post<{ message: string }>('/api/auth/password-reset-start', { email });
@@ -78,6 +89,8 @@ export default function ResetPassword() {
         new_password: newPassword,
       });
       setSuccessMessage(result.message || 'Password reset successful. Please sign in again.');
+      setResetToken('');
+      setResetComplete(true);
     } catch (err: unknown) {
       const status = getApiErrorStatus(err);
       const data = getApiErrorData(err);
@@ -89,11 +102,15 @@ export default function ResetPassword() {
           : null;
 
       if (pendingToken) {
+        setResetToken('');
         setMfaPendingToken(pendingToken);
         setTotpCode('');
         return;
       }
 
+      if (status === 400 && data?.error === 'Invalid or expired reset link') {
+        setResetToken('');
+      }
       setError(err instanceof Error ? err.message : 'Failed to reset password');
     } finally {
       setIsSubmitting(false);
@@ -114,6 +131,8 @@ export default function ResetPassword() {
       });
       setSuccessMessage(result.message || 'Password reset successful. Please sign in again.');
       setMfaPendingToken(null);
+      setResetToken('');
+      setResetComplete(true);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'MFA verification failed');
     } finally {
@@ -165,6 +184,22 @@ export default function ResetPassword() {
           </form>
         )}
 
+        <p className="text-center text-sm text-gray-500">
+          Back to <Link to="/login" className="text-accent hover:underline">Sign in</Link>
+        </p>
+      </div>
+    );
+  }
+
+  if (mode === 'complete') {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-xl font-semibold">Password reset complete</h2>
+          <p className="text-sm text-gray-600 mt-1">
+            {successMessage || 'Password reset successful. Please sign in again.'}
+          </p>
+        </div>
         <p className="text-center text-sm text-gray-500">
           Back to <Link to="/login" className="text-accent hover:underline">Sign in</Link>
         </p>
