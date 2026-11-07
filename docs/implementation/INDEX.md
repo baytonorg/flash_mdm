@@ -236,7 +236,7 @@ For deeper information on architecture, deployment, security, operations, and de
 | [pubsub-webhook.md](backend/handlers/pubsub-webhook.md) | Google Cloud Pub/Sub push handler receiving device events and enqueuing background jobs |
 | [sync-process-background.md](backend/handlers/sync-process-background.md) | Background job processor for PubSub events and bulk device commands via AMAPI |
 | [sync-reconcile-scheduled.md](backend/handlers/sync-reconcile-scheduled.md) | Scheduled reconciliation (every 15 min) syncing local device/token records against AMAPI |
-| [cleanup-scheduled.md](backend/handlers/cleanup-scheduled.md) | Daily cleanup purging expired sessions, magic links, invites, old audit logs, stale jobs |
+| [cleanup-scheduled.md](backend/handlers/cleanup-scheduled.md) | Daily retention that observes and preserves credential candidates while cleaning bounded non-credential operational data |
 | [migrate.md](backend/handlers/migrate.md) | Smart database migration runner applying pending SQL migrations idempotently via `_migrations` table |
 
 ---
