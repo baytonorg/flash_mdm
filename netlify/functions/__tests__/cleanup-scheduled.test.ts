@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 
 vi.mock('../_lib/db.js', () => ({
   execute: vi.fn(),
@@ -15,6 +17,7 @@ import handler from '../cleanup-scheduled.ts';
 const mockQueryOne = vi.mocked(queryOne);
 const mockExecute = vi.mocked(execute);
 const DELETE_BATCH_SIZE = 10_000;
+const repoRoot = process.cwd();
 
 describe('cleanup-scheduled retention jobs', () => {
   const originalEnv = { ...process.env };
@@ -97,6 +100,27 @@ describe('cleanup-scheduled retention jobs', () => {
     expect(stats.deleted_jobs).toBe(1);
     expect(stats.deleted_audit_log_rows).toBe(1);
     expect(stats.deleted_soft_deleted_devices).toBe(1);
+  });
+
+  it('keeps generated cleanup documentation aligned with credential preservation', () => {
+    const handlerDoc = readFileSync(
+      path.join(repoRoot, 'docs/implementation/backend/handlers/cleanup-scheduled.md'),
+      'utf8'
+    );
+    const implementationIndex = readFileSync(
+      path.join(repoRoot, 'docs/implementation/INDEX.md'),
+      'utf8'
+    );
+
+    expect(handlerDoc).toContain('Expired sessions** - count-only observation; records are preserved.');
+    expect(handlerDoc).toContain('Expired magic links** - count-only observation; records are preserved.');
+    expect(handlerDoc).toContain('Expired pending invites** - count-only observation; status is preserved.');
+    expect(handlerDoc).toContain('Stale pending TOTP setup data** - count-only observation');
+    expect(handlerDoc).toContain('../../../operations/data-retention.md');
+    expect(handlerDoc).not.toMatch(/(?:hard-delete|purge) expired (?:sessions|magic links)/i);
+    expect(handlerDoc).not.toMatch(/mark pending invites as [`']?expired/i);
+    expect(implementationIndex).toContain('observes and preserves credential candidates');
+    expect(implementationIndex).not.toMatch(/cleanup purging expired sessions, magic links, invites/i);
   });
 
   it('batches large deletes in loops until a partial batch is reached', async () => {
