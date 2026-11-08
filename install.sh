@@ -669,6 +669,7 @@ import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { traceHttp, installOperationalConsoleCapture, closeOperationalTrace } from './netlify/functions/_lib/operational-trace.js';
 import operationalTrace from './netlify/functions/operational-trace.js';
+import apiNotFound from './netlify/functions/api-not-found.js';
 installOperationalConsoleCapture();
 
 // ── Handler imports ─────────────────────────────────────────────────────────
@@ -985,6 +986,17 @@ app.all('/.netlify/functions/deployment-jobs-background', h(deploymentJobsBackgr
 app.all('/.netlify/functions/sync-process-background', h(syncProcessBackground));
 app.all('/.netlify/functions/workflow-evaluate-background', h(workflowEvaluateBackground));
 
+// Preserve the published Swagger documentation inside the API namespace.
+// serveStatic handles only GET and HEAD, so other methods continue to the JSON
+// namespace fallback below.
+app.use('/api/docs', serveStatic({ root: './dist' }));
+app.use('/api/docs/*', serveStatic({ root: './dist' }));
+
+// The API namespace must never fall through to the HTML application shell.
+// Keep this after every supported API route and before all static handling.
+app.all('/api', h(apiNotFound));
+app.all('/api/*', h(apiNotFound));
+
 // ── Static assets & SPA fallback ────────────────────────────────────────────
 // Public onboarding URLs can carry bearer authority and are not discoverable
 // content. Normalise case and trailing slashes for defence in depth, then apply
@@ -1160,9 +1172,10 @@ else
   sudo tee /etc/caddy/Caddyfile > /dev/null <<CADDYEOF
 ${DOMAIN} {
     @noindex_onboarding path_regexp noindex_onboarding (?i)^/(?:join|invite)(?:/.*)?$|^/(?:login|register)/?$
+    @api_namespace path /api /api/*
     header @noindex_onboarding X-Robots-Tag "noindex, nofollow, noarchive"
 
-    ${AUTO_DEPLOY_CADDY_HANDLE}handle /api/* {
+    ${AUTO_DEPLOY_CADDY_HANDLE}handle @api_namespace {
         reverse_proxy localhost:3000
     }
 

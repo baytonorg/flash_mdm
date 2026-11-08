@@ -50,6 +50,20 @@ function parseNetlifyRedirects() {
     );
 }
 
+function parseAllNetlifyRedirects() {
+  const toml = readText('netlify.toml');
+  const blocks = [...toml.matchAll(/\[\[redirects\]\]([\s\S]*?)(?=\n\[\[|$)/g)].map((match) => match[1]);
+  return blocks
+    .map((block) => ({
+      from: block.match(/from\s*=\s*"([^"]+)"/)?.[1],
+      to: block.match(/to\s*=\s*"([^"]+)"/)?.[1],
+      status: block.match(/status\s*=\s*(\d+)/)?.[1],
+    }))
+    .filter((redirect): redirect is { from: string; to: string; status: string } =>
+      Boolean(redirect.from && redirect.to && redirect.status)
+    );
+}
+
 function handlerFromFunctionTarget(target: string): string | null {
   return target.match(/^\/\.netlify\/functions\/([^/:]+)/)?.[1] ?? null;
 }
@@ -159,6 +173,41 @@ describe('VPS server parity', () => {
 
     expect(staticAssets).toBeGreaterThan(-1);
     expect(spaFallback).toBeGreaterThan(staticAssets);
+  });
+
+  it('rejects unknown API requests before static and SPA fallbacks on both hosts', () => {
+    const installer = readText('install.sh');
+    const apiDocsRoot = server.indexOf("app.use('/api/docs', serveStatic({ root: './dist' }));");
+    const apiDocsAssets = server.indexOf("app.use('/api/docs/*', serveStatic({ root: './dist' }));");
+    const apiRootFallback = server.indexOf("app.all('/api', h(apiNotFound));");
+    const apiFallback = server.indexOf("app.all('/api/*', h(apiNotFound));");
+    const staticAssets = server.indexOf("app.use('/*', serveStatic({ root: './dist' }));");
+    const spaFallback = server.indexOf("app.get('*', serveStatic({ root: './dist', path: '/index.html' }));");
+
+    expect(imports.get('apiNotFound')).toBe('api-not-found');
+    expect(apiDocsRoot).toBeGreaterThan(-1);
+    expect(apiDocsAssets).toBeGreaterThan(apiDocsRoot);
+    expect(apiRootFallback).toBeGreaterThan(apiDocsAssets);
+    expect(apiRootFallback).toBeGreaterThan(-1);
+    expect(apiFallback).toBeGreaterThan(apiRootFallback);
+    expect(apiFallback).toBeGreaterThan(-1);
+    expect(staticAssets).toBeGreaterThan(apiFallback);
+    expect(spaFallback).toBeGreaterThan(staticAssets);
+    expect(installer).toContain('@api_namespace path /api /api/*');
+    expect(installer).toContain('handle @api_namespace {');
+
+    const allRedirects = parseAllNetlifyRedirects();
+    const netlifyApiRootFallback = allRedirects.findIndex((redirect) =>
+      redirect.from === '/api' && redirect.to === '/.netlify/functions/api-not-found'
+    );
+    const netlifyApiFallback = allRedirects.findIndex((redirect) =>
+      redirect.from === '/api/*' && redirect.to === '/.netlify/functions/api-not-found'
+    );
+    const netlifySpaFallback = allRedirects.findIndex((redirect) => redirect.from === '/*');
+    expect(netlifyApiRootFallback).toBeGreaterThan(-1);
+    expect(netlifyApiFallback).toBeGreaterThan(netlifyApiRootFallback);
+    expect(netlifyApiFallback).toBeGreaterThan(-1);
+    expect(netlifySpaFallback).toBeGreaterThan(netlifyApiFallback);
   });
 
   it('keeps bearer and authentication onboarding pages out of search indexes across hosting paths', () => {
