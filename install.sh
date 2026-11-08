@@ -986,11 +986,16 @@ app.all('/.netlify/functions/sync-process-background', h(syncProcessBackground))
 app.all('/.netlify/functions/workflow-evaluate-background', h(workflowEvaluateBackground));
 
 // ── Static assets & SPA fallback ────────────────────────────────────────────
-// Signup-link URLs are public entry points, not discoverable content. Apply the
-// crawler directive at the HTTP layer even when JavaScript is not executed.
-app.use('/join/*', async (c, next) => {
+// Public onboarding URLs can carry bearer authority and are not discoverable
+// content. Normalise case and trailing slashes for defence in depth, then apply
+// the crawler directive even when JavaScript is not executed.
+app.use('/*', async (c, next) => {
   await next();
-  c.header('X-Robots-Tag', 'noindex, nofollow, noarchive');
+  const requestPath = c.req.path.toLowerCase().replace(/\/+$/, '');
+  if (requestPath === '/register' || requestPath === '/login'
+      || requestPath.startsWith('/join/') || requestPath.startsWith('/invite/')) {
+    c.header('X-Robots-Tag', 'noindex, nofollow, noarchive');
+  }
 });
 
 // Serve every Vite public asset before the client-side route fallback. Limiting
@@ -1154,7 +1159,8 @@ else
 
   sudo tee /etc/caddy/Caddyfile > /dev/null <<CADDYEOF
 ${DOMAIN} {
-    header /join/* X-Robots-Tag "noindex, nofollow, noarchive"
+    @noindex_onboarding path_regexp noindex_onboarding (?i)^/(?:join|invite)(?:/.*)?$|^/(?:login|register)/?$
+    header @noindex_onboarding X-Robots-Tag "noindex, nofollow, noarchive"
 
     ${AUTO_DEPLOY_CADDY_HANDLE}handle /api/* {
         reverse_proxy localhost:3000

@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router';
 import { apiClient } from '@/api/client';
 import { useAuthStore } from '@/stores/auth';
 import { MIN_PASSWORD_LENGTH, MAX_PASSWORD_LENGTH } from '@/constants/auth';
+import { useNoIndexRobots } from '@/lib/robots';
 
 type InviteInfo = {
   email: string;
@@ -14,6 +15,7 @@ type InviteInfo = {
 };
 
 export default function InviteAccept() {
+  useNoIndexRobots();
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
   const { user, isLoading: authLoading, logout } = useAuthStore();

@@ -48,6 +48,19 @@ describe('Register', () => {
     mockedGet.mockResolvedValue({ invite_only_registration: false });
   });
 
+  it('marks registration as non-indexable and restores prior document state', () => {
+    const existing = document.createElement('meta');
+    existing.name = 'robots';
+    existing.content = 'index, follow';
+    document.head.appendChild(existing);
+
+    const { unmount } = renderRegister('/register');
+    expect(existing).toHaveAttribute('content', 'noindex, nofollow, noarchive');
+    unmount();
+    expect(existing).toHaveAttribute('content', 'index, follow');
+    existing.remove();
+  });
+
   it('sanitizes external redirect params before sending register redirect_path', async () => {
     mockedPost.mockResolvedValueOnce({ message: 'ok' });
 

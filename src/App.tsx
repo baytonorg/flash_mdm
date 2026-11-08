@@ -66,8 +66,8 @@ export default function App() {
     <Routes>
       {/* Guest routes */}
       <Route element={<GuestRoute><GuestLayout /></GuestRoute>}>
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
+        <Route caseSensitive path="/login" element={<Login />} />
+        <Route caseSensitive path="/register" element={<Register />} />
       </Route>
 
       {/* Public password reset (must be reachable before/after auth) */}
@@ -76,11 +76,11 @@ export default function App() {
       </Route>
 
       {/* Invite acceptance (must be reachable before/after auth) */}
-      <Route path="/invite/:token" element={<InviteAccept />} />
+      <Route caseSensitive path="/invite/:token" element={<InviteAccept />} />
 
       {/* Public join signup (must be reachable before/after auth) */}
-      <Route path="/join/w/:token" element={<JoinSignup />} />
-      <Route path="/join/e/:token" element={<JoinSignup />} />
+      <Route caseSensitive path="/join/w/:token" element={<JoinSignup />} />
+      <Route caseSensitive path="/join/e/:token" element={<JoinSignup />} />
 
       {/* Public sign-in enrollment (rendered in Chrome Custom Tab on device) */}
       <Route path="/signin/enroll" element={<SigninEnroll />} />

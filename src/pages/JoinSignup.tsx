@@ -4,8 +4,10 @@ import { apiClient } from '@/api/client';
 import { useAuthStore } from '@/stores/auth';
 import type { ResolvedSignupLink } from '@/api/queries/signupLinks';
 import { Loader2 } from 'lucide-react';
+import { useNoIndexRobots } from '@/lib/robots';
 
 export default function JoinSignup() {
+  useNoIndexRobots();
   const { token } = useParams<{ token: string }>();
   const { user, isLoading: authLoading } = useAuthStore();
 
@@ -19,28 +21,6 @@ export default function JoinSignup() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
-
-  useEffect(() => {
-    const existing = document.head.querySelector<HTMLMetaElement>('meta[name="robots"]');
-    const robotsMeta = existing ?? document.createElement('meta');
-    const previousContent = existing?.getAttribute('content') ?? null;
-
-    if (!existing) {
-      robotsMeta.name = 'robots';
-      document.head.appendChild(robotsMeta);
-    }
-    robotsMeta.content = 'noindex, nofollow, noarchive';
-
-    return () => {
-      if (!existing) {
-        robotsMeta.remove();
-      } else if (previousContent === null) {
-        existing.removeAttribute('content');
-      } else {
-        existing.setAttribute('content', previousContent);
-      }
-    };
-  }, []);
 
   useEffect(() => {
     let active = true;

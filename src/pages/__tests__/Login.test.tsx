@@ -56,6 +56,16 @@ describe('Login', () => {
     mockedGet.mockResolvedValue({ invite_only_registration: false });
   });
 
+  it('marks sign-in routes as non-indexable while mounted', () => {
+    const { unmount } = renderLogin('/login?redirect=%2Finvite%2Fsynthetic');
+    expect(document.head.querySelector('meta[name="robots"]')).toHaveAttribute(
+      'content',
+      'noindex, nofollow, noarchive',
+    );
+    unmount();
+    expect(document.head.querySelector('meta[name="robots"]')).not.toBeInTheDocument();
+  });
+
   it('associates stable names and labels with every sign-in field', async () => {
     const { unmount } = renderLogin('/login');
 

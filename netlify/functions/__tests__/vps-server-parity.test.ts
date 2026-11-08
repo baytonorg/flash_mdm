@@ -161,16 +161,25 @@ describe('VPS server parity', () => {
     expect(spaFallback).toBeGreaterThan(staticAssets);
   });
 
-  it('keeps signup-link pages out of search indexes across hosting paths', () => {
+  it('keeps bearer and authentication onboarding pages out of search indexes across hosting paths', () => {
     const installer = readText('install.sh');
     const netlify = readText('netlify.toml');
 
-    expect(server).toContain("app.use('/join/*'");
+    expect(server).toContain("c.req.path.toLowerCase().replace(/\\/+$/, '')");
+    expect(server).toContain("requestPath.startsWith('/join/')");
+    expect(server).toContain("requestPath.startsWith('/invite/')");
     expect(server).toContain("c.header('X-Robots-Tag', 'noindex, nofollow, noarchive')");
-    expect(installer).toContain('header /join/* X-Robots-Tag "noindex, nofollow, noarchive"');
-    expect(netlify).toMatch(
-      /\[\[headers\]\]\s+for = "\/join\/\*"\s+\[headers\.values\]\s+X-Robots-Tag = "noindex, nofollow, noarchive"/
-    );
+    expect(installer).toContain('@noindex_onboarding path_regexp noindex_onboarding (?i)^/(?:join|invite)');
+    for (const path of ['/join/*', '/invite/*', '/register*', '/login*']) {
+      const escapedPath = path.replace(/[/*]/g, (character) => `\\${character}`);
+      expect(netlify).toMatch(new RegExp(
+        `\\[\\[headers\\]\\]\\s+for = "${escapedPath}"\\s+\\[headers\\.values\\]\\s+X-Robots-Tag = "noindex, nofollow, noarchive"`
+      ));
+    }
+    const app = readText('src/App.tsx');
+    for (const path of ['/login', '/register', '/invite/:token', '/join/w/:token', '/join/e/:token']) {
+      expect(app).toContain(`caseSensitive path="${path}"`);
+    }
   });
 
   it('generates an autonomous worker and a restartable VPS service', () => {
