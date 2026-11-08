@@ -348,6 +348,7 @@ export default async (request: Request, _context: Context) => {
           ? resolvedSignupLink.scope_id
           : undefined,
         user_id: userId,
+        actor_type: 'user',
         action: 'auth.register.signup_link',
         resource_type: 'user',
         resource_id: userId,

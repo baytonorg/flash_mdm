@@ -36,6 +36,7 @@ import verifyMagic from '../auth-magic-link-verify.js';
 import loginHandler from '../auth-login.js';
 import bindingHandler from '../environment-bind.js';
 import { prepareAmapiCall } from '../_lib/amapi.js';
+import { runWithAuditAuthContext } from '../_lib/request-auth-context.js';
 
 vi.mock('../_lib/resend.js', async original => ({ ...await original<typeof import('../_lib/resend.js')>(), sendEmail: vi.fn() }));
 vi.mock('../_lib/amapi.js', async original => ({ ...await original<typeof import('../_lib/amapi.js')>(), prepareAmapiCall: vi.fn() }));
@@ -577,13 +578,18 @@ suite('membership lifecycle with PostgreSQL and actual handlers', () => {
     await pool.query('TRUNCATE rate_limit_buckets');
     await pool.query("INSERT INTO signup_links(scope_type,scope_id,token_hash,allowed_domains) VALUES('workspace',$1,$2,ARRAY['fixture.invalid'])",[workspace,hashToken('fixture-registration')]);
     expect((await registerFixture('wrong@denied.invalid',{signup_link_token:'fixture-registration',password})).status).toBe(403);
-    expect((await registerFixture(email,{signup_link_token:'fixture-registration',password})).status).toBe(201);
+    const registration=await runWithAuditAuthContext({
+      authType:'api_key',
+      user:{id:null,email:'api-key@fixture.invalid'},
+      apiKey:{id:crypto.randomUUID(),name:'Unrelated fixture key',scope_type:'workspace',scope_id:workspace,workspace_id:workspace,environment_id:null,role:'owner',created_by_user_id:owner},
+    },()=>registerFixture(email,{signup_link_token:'fixture-registration',password}));
+    expect(registration.status).toBe(201);
     const login=await loginHandler(new Request('http://localhost/api/auth/login',{method:'POST',headers:{'content-type':'application/json','x-requested-with':'XMLHttpRequest'},body:JSON.stringify({email,password})}),{} as never);
     expect(login.status).toBe(401);
     expect((await pool.query('SELECT 1 FROM magic_links WHERE used_at IS NULL AND email=$1',[email])).rowCount).toBe(1);
-    expect((await pool.query(`SELECT a.action,a.workspace_id,a.details->>'signup_link_id' AS signup_link_id
+    expect((await pool.query(`SELECT a.action,a.workspace_id,a.actor_type,a.api_key_id,a.details->>'signup_link_id' AS signup_link_id
       FROM audit_log a JOIN users u ON u.id=a.user_id WHERE u.email=$1`,[email])).rows).toEqual([{
-      action:'auth.register.signup_link',workspace_id:workspace,signup_link_id:expect.any(String),
+      action:'auth.register.signup_link',workspace_id:workspace,actor_type:'user',api_key_id:null,signup_link_id:expect.any(String),
     }]);
   });
 
