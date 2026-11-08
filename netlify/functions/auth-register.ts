@@ -14,6 +14,7 @@ import { setSessionCookie, SESSION_MAX_AGE_MILLISECONDS } from './_lib/auth.js';
 import { MIN_PASSWORD_LENGTH, MAX_PASSWORD_LENGTH } from './_lib/password-policy.js';
 import { getInviteTypeFromPermissions as getInviteTypeFromPermissionsShared } from './workspace-invite.js';
 import { storeSigninLink } from './_lib/signin-link.js';
+import { logAudit } from './_lib/audit.js';
 
 interface RegisterBody {
   email: string;
@@ -183,11 +184,13 @@ export default async (request: Request, _context: Context) => {
     const recheck = await client.query<{ count: string }>('SELECT COUNT(*) as count FROM users');
     const confirmedFirstUser = parseInt(recheck.rows[0]?.count ?? '0', 10) === 0;
     if (isFirstUser !== confirmedFirstUser) throw errorResponse('Registration state changed. Please retry.', 409);
+    let signupWorkspaceId: string | null = null;
     if (resolvedSignupLink) {
       const current = (await client.query(`SELECT * FROM signup_links WHERE id = $1 AND enabled = true AND ${resolvedBySlug ? 'slug' : 'token_hash'} = $2 FOR SHARE`, [resolvedSignupLink.id, resolvedBySlug ? signupLinkToken!.toLowerCase() : hashToken(signupLinkToken!)])).rows[0];
       if (!current || Object.entries(resolvedSignupLink).some(([key, value]) => JSON.stringify(current[key]) !== JSON.stringify(value))) throw errorResponse('Signup link changed. Reload the link and try again.', 409);
       const scope = current.scope_type === 'workspace' ? current.scope_id : (await client.query('SELECT workspace_id FROM environments WHERE id = $1', [current.scope_id])).rows[0]?.workspace_id;
       if (!scope) throw errorResponse('Signup scope no longer exists', 409);
+      signupWorkspaceId = scope;
       await lockMembershipWorkspaces(client, [scope]);
     }
 
@@ -339,26 +342,24 @@ export default async (request: Request, _context: Context) => {
         }
       }
 
-      // Audit
-      await client.query(
-        `INSERT INTO audit_log (workspace_id, user_id, action, resource_type, resource_id, details, ip_address)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [
-          resolvedSignupLink.scope_type === 'workspace' ? resolvedSignupLink.scope_id : null,
-          userId,
-          'auth.register',
-          'user',
-          userId,
-          JSON.stringify({
-            is_superadmin: confirmedFirstUser,
-            signup_link_id: resolvedSignupLink.id,
-            scope_type: resolvedSignupLink.scope_type,
-            scope_id: resolvedSignupLink.scope_id,
-            allow_environment_creation: resolvedSignupLink.allow_environment_creation,
-          }),
-          getClientIp(request),
-        ]
-      );
+      await logAudit({
+        workspace_id: signupWorkspaceId ?? undefined,
+        environment_id: resolvedSignupLink.scope_type === 'environment'
+          ? resolvedSignupLink.scope_id
+          : undefined,
+        user_id: userId,
+        action: 'auth.register.signup_link',
+        resource_type: 'user',
+        resource_id: userId,
+        details: {
+          is_superadmin: confirmedFirstUser,
+          signup_link_id: resolvedSignupLink.id,
+          scope_type: resolvedSignupLink.scope_type,
+          scope_id: resolvedSignupLink.scope_id,
+          allow_environment_creation: resolvedSignupLink.allow_environment_creation,
+        },
+        ip_address: getClientIp(request),
+      }, client);
       return {userId};
     }
 

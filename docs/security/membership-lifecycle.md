@@ -18,7 +18,7 @@ Session-only actions support leaving a workspace and transferring ownership to a
 
 Acceptance locks and consumes the offer once, validates the authenticated email and current issuer authority, and revalidates target scopes. Conflicting existing grants return a reviewable conflict rather than being silently overwritten. Signup-link registration shares the reference lock used by signup-link writes and environment deletion, and rechecks the link before committing.
 
-First-environment setup is scoped to the authorising workspace and consumed transactionally. Concurrent attempts cannot create two first environments, and deleting the environment does not restore the entitlement. Legacy setup flags need matching retained signup authorisation; missing evidence needs operator review. No existing accounts or grants are normalised by the migration.
+First-environment setup is scoped to the authorising workspace and consumed transactionally. Concurrent attempts cannot create two first environments, and deleting the environment does not restore the entitlement. New signup-link registrations use the canonical `auth.register.signup_link` audit action. Legacy setup flags may use a retained generic `auth.register` row only when its details identify signup-link registration and environment creation for the same workspace; missing or conflicting evidence needs operator review. No existing accounts or grants are normalised automatically.
 
 ## API keys and provenance
 
