@@ -29,6 +29,21 @@
     X-Robots-Tag = "noindex, nofollow, noarchive"
 
 [[headers]]
+  for = "/invite/*"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow, noarchive"
+
+[[headers]]
+  for = "/register*"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow, noarchive"
+
+[[headers]]
+  for = "/login*"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow, noarchive"
+
+[[headers]]
   for = "/policies"
   [headers.values]
     Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-eval' https://apis.google.com https://www.gstatic.com https://ssl.gstatic.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: https:; connect-src 'self' https://accounts.google.com https://oauth2.googleapis.com https://androidmanagement.googleapis.com; media-src 'self' blob:; worker-src 'self' blob:; frame-src https://play.google.com https://accounts.google.com https://enterprise.google.com; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self' https://accounts.google.com;"

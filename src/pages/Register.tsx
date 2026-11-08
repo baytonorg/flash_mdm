@@ -3,10 +3,12 @@ import { Link, useSearchParams } from 'react-router';
 import { apiClient } from '@/api/client';
 import { MIN_PASSWORD_LENGTH, MAX_PASSWORD_LENGTH } from '@/constants/auth';
 import { redirectBrowserToInApp, sanitizeInAppRedirect } from '@/lib/redirect';
+import { useNoIndexRobots } from '@/lib/robots';
 
 type InviteType = 'workspace_access' | 'platform_access';
 
 export default function Register() {
+  useNoIndexRobots();
   const [form, setForm] = useState({ email: '', first_name: '', last_name: '', password: '', workspace_name: '' });
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);

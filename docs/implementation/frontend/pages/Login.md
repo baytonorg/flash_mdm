@@ -26,3 +26,5 @@ The page implements a multi-mode login flow controlled by a `mode` state variabl
 - **totp**: Six-digit authenticator code input. Supports both password-initiated MFA and magic-link-initiated MFA (via `mfa_pending` URL param that triggers `completeMagicLinkMfa`).
 
 On mount, the page fetches `/api/auth/config` to check if registration is invite-only, conditionally showing either a registration link or an informational message. A `redirect` query parameter is preserved through all flows via `sanitizeInAppRedirect` and used after successful authentication.
+
+Sign-in pages apply `noindex, nofollow, noarchive` in client metadata and hosting headers. This also protects invitation onboarding when the invitation bearer is carried in the `redirect` query parameter. The route is case-sensitive so its client routing contract matches case-sensitive hosted header rules.

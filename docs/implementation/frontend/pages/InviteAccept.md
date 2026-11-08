@@ -26,3 +26,5 @@ The page reads an invite token from the URL params and fetches invite details (`
 - **Workspace invite (no user)**: Renders an inline registration form (first name, last name, password) that calls `POST /api/auth/register` with the invite's email and a `redirect_path` back to this page. If the API sets a session cookie, the page reloads; otherwise, a fallback message directs the user to sign in.
 
 Error states, loading indicators, and expired/invalid invite handling are all covered.
+
+While mounted, the page applies a shared, reference-counted `robots` meta directive with `noindex, nofollow, noarchive`. Netlify and VPS hosting configuration apply the equivalent HTTP header to `/invite/*`, `/login`, and `/register` so invitation bearer carriers remain non-indexable without JavaScript. Sensitive client routes are case-sensitive to match hosted header rules; the VPS runtime also normalises case and trailing slashes as defence in depth.

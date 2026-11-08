@@ -25,3 +25,5 @@ When the URL contains a `redirect` query param starting with `/invite/`, the pag
 The registration form collects first name, last name, email, password, and optionally workspace name. On submit, it calls `/api/auth/register` with the form data and redirect path. If the response includes `session_set: true`, the page performs a full browser redirect (to pick up the session cookie). Otherwise, it shows a success message directing the user to check their email for a sign-in link.
 
 Password validation enforces minimum and maximum length constraints from the `@/constants/auth` module.
+
+Registration pages apply `noindex, nofollow, noarchive` in both shared, reference-counted client metadata and hosting headers. This covers ordinary registration and invitation onboarding carried in the `redirect` query parameter. The client route is case-sensitive to match hosted header rules.

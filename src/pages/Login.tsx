@@ -3,8 +3,10 @@ import { useAuthStore } from '@/stores/auth';
 import { useNavigate, Link, useSearchParams } from 'react-router';
 import { apiClient } from '@/api/client';
 import { sanitizeInAppRedirect } from '@/lib/redirect';
+import { useNoIndexRobots } from '@/lib/robots';
 
 export default function Login() {
+  useNoIndexRobots();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [totpCode, setTotpCode] = useState('');
