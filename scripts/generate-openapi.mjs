@@ -23,7 +23,11 @@ function parseRedirects(toml) {
     const from = block.match(/^\s*from\s*=\s*"([^"]+)"/m)?.[1];
     const to = block.match(/^\s*to\s*=\s*"([^"]+)"/m)?.[1];
     return { from, to };
-  }).filter((r) => r.from?.startsWith('/api/') && r.to?.includes('/.netlify/functions/'));
+  }).filter((r) =>
+    r.from?.startsWith('/api/')
+    && r.to?.includes('/.netlify/functions/')
+    && !r.to.endsWith('/api-not-found')
+  );
 }
 
 function extractFunctionNames(toPath) {

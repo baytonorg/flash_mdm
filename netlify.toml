@@ -587,6 +587,18 @@
   to = "/.netlify/functions/operational-trace"
   status = 200
 
+# Reject unknown API routes before the SPA fallback. This must remain after all
+# supported API redirects so valid routes retain their existing handlers.
+[[redirects]]
+  from = "/api"
+  to = "/.netlify/functions/api-not-found"
+  status = 200
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api-not-found"
+  status = 200
+
 # SPA fallback
 [[redirects]]
   from = "/*"
