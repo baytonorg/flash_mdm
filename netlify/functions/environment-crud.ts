@@ -178,7 +178,9 @@ export default async (request: Request, _context: Context) => {
               wm.access_scope,
               (COALESCE(u.metadata->>'needs_environment_setup', 'false') = 'true'
                 AND COALESCE(u.metadata->>'environment_setup_workspace_id', (
-                  SELECT a.workspace_id::text FROM audit_log a WHERE a.user_id = u.id AND a.action = 'auth.register.signup_link'
+                  SELECT a.workspace_id::text FROM audit_log a WHERE a.user_id = u.id
+                    AND (a.action = 'auth.register.signup_link'
+                      OR (a.action = 'auth.register' AND a.details ? 'signup_link_id'))
                     AND a.details->>'allow_environment_creation' = 'true' ORDER BY a.created_at DESC LIMIT 1
                 )) = $1::uuid::text
                 AND NOT EXISTS (SELECT 1 FROM audit_log a WHERE a.user_id = u.id AND a.workspace_id = $1
@@ -239,7 +241,9 @@ export default async (request: Request, _context: Context) => {
           WHERE u.id = $1 AND wm.workspace_id = $2 AND wm.access_scope = 'scoped'
             AND u.metadata->>'needs_environment_setup' = 'true'
             AND COALESCE(u.metadata->>'environment_setup_workspace_id', (
-              SELECT a.workspace_id::text FROM audit_log a WHERE a.user_id = u.id AND a.action = 'auth.register.signup_link'
+              SELECT a.workspace_id::text FROM audit_log a WHERE a.user_id = u.id
+                AND (a.action = 'auth.register.signup_link'
+                  OR (a.action = 'auth.register' AND a.details ? 'signup_link_id'))
                 AND a.details->>'allow_environment_creation' = 'true' ORDER BY a.created_at DESC LIMIT 1)) = $2::uuid::text
             AND NOT EXISTS (SELECT 1 FROM environment_memberships em JOIN environments e ON e.id = em.environment_id WHERE em.user_id = u.id AND e.workspace_id = $2)
             AND NOT EXISTS (SELECT 1 FROM audit_log a WHERE a.user_id = u.id AND a.workspace_id = $2 AND a.action = 'environment.created' AND a.details->>'onboarding_setup_create' = 'true')

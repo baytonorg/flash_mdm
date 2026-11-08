@@ -36,6 +36,7 @@ import verifyMagic from '../auth-magic-link-verify.js';
 import loginHandler from '../auth-login.js';
 import bindingHandler from '../environment-bind.js';
 import { prepareAmapiCall } from '../_lib/amapi.js';
+import { runWithAuditAuthContext } from '../_lib/request-auth-context.js';
 
 vi.mock('../_lib/resend.js', async original => ({ ...await original<typeof import('../_lib/resend.js')>(), sendEmail: vi.fn() }));
 vi.mock('../_lib/amapi.js', async original => ({ ...await original<typeof import('../_lib/amapi.js')>(), prepareAmapiCall: vi.fn() }));
@@ -577,10 +578,36 @@ suite('membership lifecycle with PostgreSQL and actual handlers', () => {
     await pool.query('TRUNCATE rate_limit_buckets');
     await pool.query("INSERT INTO signup_links(scope_type,scope_id,token_hash,allowed_domains) VALUES('workspace',$1,$2,ARRAY['fixture.invalid'])",[workspace,hashToken('fixture-registration')]);
     expect((await registerFixture('wrong@denied.invalid',{signup_link_token:'fixture-registration',password})).status).toBe(403);
-    expect((await registerFixture(email,{signup_link_token:'fixture-registration',password})).status).toBe(201);
+    const registration=await runWithAuditAuthContext({
+      authType:'api_key',
+      user:{id:null,email:'api-key@fixture.invalid'},
+      apiKey:{id:crypto.randomUUID(),name:'Unrelated fixture key',scope_type:'workspace',scope_id:workspace,workspace_id:workspace,environment_id:null,role:'owner',created_by_user_id:owner},
+    },()=>registerFixture(email,{signup_link_token:'fixture-registration',password}));
+    expect(registration.status).toBe(201);
     const login=await loginHandler(new Request('http://localhost/api/auth/login',{method:'POST',headers:{'content-type':'application/json','x-requested-with':'XMLHttpRequest'},body:JSON.stringify({email,password})}),{} as never);
     expect(login.status).toBe(401);
     expect((await pool.query('SELECT 1 FROM magic_links WHERE used_at IS NULL AND email=$1',[email])).rowCount).toBe(1);
+    expect((await pool.query(`SELECT a.action,a.workspace_id,a.actor_type,a.api_key_id,a.details->>'signup_link_id' AS signup_link_id
+      FROM audit_log a JOIN users u ON u.id=a.user_id WHERE u.email=$1`,[email])).rows).toEqual([{
+      action:'auth.register.signup_link',workspace_id:workspace,actor_type:'user',api_key_id:null,signup_link_id:expect.any(String),
+    }]);
+  });
+
+  it('accepts exact-workspace legacy signup audit evidence but rejects unbound setup flags',async()=>{
+    await pool.query('DELETE FROM environment_memberships WHERE user_id=$1',[target]);
+    await pool.query('DELETE FROM group_memberships WHERE user_id=$1',[target]);
+    await pool.query(`UPDATE users SET metadata=jsonb_build_object('needs_environment_setup',true) WHERE id=$1`,[target]);
+    const evidence=(await pool.query(`INSERT INTO audit_log(workspace_id,user_id,action,details)
+      VALUES(NULL,$1,'auth.register',$2) RETURNING id`,[target,{signup_link_id:crypto.randomUUID(),allow_environment_creation:true}])).rows[0].id;
+    const session='fixture-legacy-setup-session';
+    await pool.query("INSERT INTO sessions(user_id,token_hash,expires_at) VALUES($1,$2,now()+interval '1 day')",[target,hashToken(session)]);
+    const create=()=>environmentHandler(new Request('http://localhost/api/environments/create',{method:'POST',headers:{cookie:'flash_session='+session,'x-requested-with':'XMLHttpRequest','content-type':'application/json'},body:JSON.stringify({workspace_id:workspace,name:'Recovered setup fixture'})}),{} as never);
+    expect((await create()).status).toBe(403);
+    expect((await pool.query("SELECT 1 FROM environments WHERE name='Recovered setup fixture'")).rowCount).toBe(0);
+    await pool.query('UPDATE audit_log SET workspace_id=$1 WHERE id=$2',[workspace,evidence]);
+    expect((await create()).status).toBe(201);
+    expect((await pool.query("SELECT role FROM environment_memberships em JOIN environments e ON e.id=em.environment_id WHERE em.user_id=$1 AND e.name='Recovered setup fixture'",[target])).rows[0].role).toBe('owner');
+    expect((await pool.query("SELECT metadata->>'needs_environment_setup' AS pending FROM users WHERE id=$1",[target])).rows[0].pending).toBe('false');
   });
 
   it('consumes only the exact live platform offer before creating its new workspace',async()=>{

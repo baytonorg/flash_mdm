@@ -43,7 +43,7 @@
 9. **Transaction** (with advisory lock `pg_advisory_xact_lock(42)` to prevent first-user race conditions):
    - Creates the user row.
    - **Workspace invite onboarding**: accepts the invite, creates workspace/environment/group memberships per invite permissions.
-   - **Signup link**: creates workspace membership (workspace-scoped or environment-scoped), auto-assigns environments and groups per link configuration, optionally flags user for environment setup.
+   - **Signup link**: creates workspace membership (workspace-scoped or environment-scoped), auto-assigns environments and groups per link configuration, optionally flags user for environment setup, and writes the canonical `auth.register.signup_link` audit event in the same transaction.
    - **Self-signup**: creates a workspace, default environment, root group with closure table entry, and full admin memberships.
 10. **Post-transaction**:
     - For workspace invite onboarding: creates a session directly (no magic link) and returns with `Set-Cookie`.

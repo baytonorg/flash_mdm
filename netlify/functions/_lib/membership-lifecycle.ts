@@ -68,7 +68,9 @@ export async function removeWorkspaceGrants(client: PoolClient, workspaceId: str
   await client.query('DELETE FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2', [workspaceId, userId]);
   await client.query(`UPDATE users u SET metadata = COALESCE(metadata, '{}'::jsonb) || '{"needs_environment_setup":false}'::jsonb
     WHERE u.id = $2 AND COALESCE(metadata->>'environment_setup_workspace_id', (
-      SELECT a.workspace_id::text FROM audit_log a WHERE a.user_id = u.id AND a.action = 'auth.register.signup_link'
+      SELECT a.workspace_id::text FROM audit_log a WHERE a.user_id = u.id
+        AND (a.action = 'auth.register.signup_link'
+          OR (a.action = 'auth.register' AND a.details ? 'signup_link_id'))
         AND a.details->>'allow_environment_creation' = 'true' ORDER BY a.created_at DESC LIMIT 1)) = $1::uuid::text`, [workspaceId, userId]);
 }
 
