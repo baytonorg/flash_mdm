@@ -62,6 +62,7 @@ export default async function handler(request: Request, _context: Context): Prom
 
     return Response.json({ status: 'processed', job_id: job.id });
   } catch (err) {
+    if (err instanceof Response) return err;
     if (isDatabaseInfrastructureError(err)) {
       return databaseUnavailableResponse();
     }

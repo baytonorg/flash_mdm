@@ -668,6 +668,7 @@ import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { traceHttp, installOperationalConsoleCapture, closeOperationalTrace } from './netlify/functions/_lib/operational-trace.js';
+import { requireInternalCaller } from './netlify/functions/_lib/internal-auth.js';
 import operationalTrace from './netlify/functions/operational-trace.js';
 import apiNotFound from './netlify/functions/api-not-found.js';
 installOperationalConsoleCapture();
@@ -788,6 +789,14 @@ const h = (handler: any) => async (c: any) => {
     });
   }
 };
+
+// VPS cron routes share the public HTTP listener, so authenticate them before
+// entering the Netlify-compatible scheduled handlers. Native Netlify schedules
+// invoke those handlers directly and retain the platform's scheduler boundary.
+const hInternal = (handler: any) => h(async (request: Request, context: any) => {
+  requireInternalCaller(request);
+  return handler(request, context);
+});
 
 const app = new Hono();
 app.use('/*', async (c, next) => {
@@ -975,11 +984,11 @@ app.all('/api/flashagent/download', h(flashagentDownload));
 app.all('/api/flashagent/workspace-settings', h(flashagentWorkspaceSettings));
 
 // ── Scheduled (cron endpoints) ──────────────────────────────────────────────
-app.all('/api/cleanup-scheduled', h(cleanupScheduled));
-app.all('/api/geofence-check-scheduled', h(geofenceCheckScheduled));
-app.all('/api/licensing-reconcile-scheduled', h(licensingReconcileScheduled));
-app.all('/api/sync-reconcile-scheduled', h(syncReconcileScheduled));
-app.all('/api/workflow-cron-scheduled', h(workflowCronScheduled));
+app.all('/api/cleanup-scheduled', hInternal(cleanupScheduled));
+app.all('/api/geofence-check-scheduled', hInternal(geofenceCheckScheduled));
+app.all('/api/licensing-reconcile-scheduled', hInternal(licensingReconcileScheduled));
+app.all('/api/sync-reconcile-scheduled', hInternal(syncReconcileScheduled));
+app.all('/api/workflow-cron-scheduled', hInternal(workflowCronScheduled));
 
 // ── Netlify-compatible internal function paths ─────────────────────────────
 app.all('/.netlify/functions/deployment-jobs-background', h(deploymentJobsBackground));

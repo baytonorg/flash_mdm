@@ -2122,6 +2122,7 @@ export default async (request: Request, _context: Context) => {
     }
     return Response.json({ status: 'processed', jobs: totalProcessed, batches: batchNum });
   } catch (err) {
+    if (err instanceof Response) return err;
     if (isDatabaseInfrastructureError(err)) {
       return databaseUnavailableResponse();
     }

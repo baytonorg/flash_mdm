@@ -120,25 +120,21 @@ function makeRequest(body: Record<string, unknown> = {}) {
 describe('workflow-evaluate-background — security', () => {
   it('rejects requests without valid internal secret', async () => {
     mockRequireInternalCaller.mockImplementation(() => {
-      throw new Error('Unauthorized: not an internal caller');
+      throw Response.json({ error: 'Unauthorized: not an internal caller' }, { status: 401 });
     });
-
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const req = makeRequest({
       workflow_id: 'wf1',
       device_id: 'dev1',
       trigger_data: {},
     });
-    await handler(req, {} as never);
+    const response = await handler(req, {} as never);
 
     expect(mockRequireInternalCaller).toHaveBeenCalledWith(req);
-
-    // The handler catches the error and logs it — no workflow queries should happen
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: 'Unauthorized: not an internal caller' });
     expect(mockQueryOne).not.toHaveBeenCalled();
     expect(mockExecute).not.toHaveBeenCalled();
-
-    consoleSpy.mockRestore();
   });
 
   it('rejects device/workflow environment mismatch', async () => {

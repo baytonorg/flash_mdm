@@ -34,6 +34,9 @@ vi.mock('../deployment-jobs.ts', () => ({
 
 import handler from '../deployment-jobs-background.ts';
 import { markDatabaseError } from '../_lib/db-errors.js';
+import { requireInternalCaller } from '../_lib/internal-auth.js';
+
+const mockRequireInternalCaller = vi.mocked(requireInternalCaller);
 
 const claimedJob = {
   id: 'job_1',
@@ -57,6 +60,7 @@ beforeEach(() => {
   mockGetPolicyAmapiContext.mockReset();
   mockGetDeploymentTargetDeviceIds.mockReset();
   mockProcessDeploymentJob.mockReset();
+  mockRequireInternalCaller.mockReset();
   mockExecute.mockResolvedValue({ rowCount: 1 });
   mockGetPolicyAmapiContext.mockResolvedValue({
     workspace_id: 'ws_1',
@@ -68,6 +72,19 @@ beforeEach(() => {
 });
 
 describe('deployment background worker lifecycle', () => {
+  it('preserves internal authentication rejections', async () => {
+    mockRequireInternalCaller.mockImplementation(() => {
+      throw Response.json({ error: 'Unauthorized: not an internal caller' }, { status: 401 });
+    });
+
+    const response = await handler(request(), {} as never);
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: 'Unauthorized: not an internal caller' });
+    expect(mockTransaction).not.toHaveBeenCalled();
+    expect(mockProcessDeploymentJob).not.toHaveBeenCalled();
+  });
+
   it('returns a degraded 503 when PostgreSQL is unavailable before a claim', async () => {
     mockTransaction.mockRejectedValue(markDatabaseError(Object.assign(new Error('connect failed'), {
       code: 'ECONNREFUSED',

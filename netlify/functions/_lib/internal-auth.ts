@@ -21,6 +21,12 @@ export function requireInternalCaller(request: Request): void {
   const internalSecret = request.headers.get('x-internal-secret');
 
   if (!configuredSecret) {
+    // A production VPS must fail closed even for loopback traffic. The local
+    // exception below exists only for developer runtimes where a secret is not
+    // normally provisioned.
+    if (process.env.FLASH_RUNTIME?.toLowerCase() === 'vps') {
+      throw unauthorized('Unauthorized: INTERNAL_FUNCTION_SECRET is not configured');
+    }
     const requestHost = (() => {
       try {
         return new URL(request.url).hostname.toLowerCase();

@@ -161,14 +161,13 @@ describe('VPS scheduled runner', () => {
     mkdirSync(bin);
     writeFileSync(join(bin, 'flock'), '#!/bin/sh\nexit 0\n');
     writeFileSync(join(bin, 'logger'), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$FLASH_TEST_LOG"\n');
-    writeFileSync(join(bin, 'curl'), `#!/bin/sh
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "--output" ]; then shift; output="$1"; fi
-  shift
-done
-printf '%s' '{"error":"failed"}' > "$output"
+    writeFileSync(join(bin, 'node'), `#!/bin/sh
+if [ "$1" = "-" ]; then
+  exec ${JSON.stringify(process.execPath)} "$@"
+fi
+printf '%s' '{"error":"failed"}' > "$3"
 `);
-    for (const command of ['flock', 'logger', 'curl']) chmodSync(join(bin, command), 0o755);
+    for (const command of ['flock', 'logger', 'node']) chmodSync(join(bin, command), 0o755);
 
     const result = spawnSync('bash', [scheduledRunner, 'cleanup-scheduled'], {
       encoding: 'utf8',
