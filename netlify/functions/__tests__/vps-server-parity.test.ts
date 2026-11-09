@@ -77,7 +77,7 @@ function parseServerImports(server: string): Map<string, string> {
 
 function parseServerRoutes(server: string, imports: Map<string, string>): Map<string, string> {
   return new Map(
-    [...server.matchAll(/app\.all\('([^']+)'\s*,\s*h\(([A-Za-z_$][\w$]*)\)\);/g)]
+    [...server.matchAll(/app\.all\('([^']+)'\s*,\s*(?:h|hInternal)\(([A-Za-z_$][\w$]*)\)\);/g)]
       .map((match) => {
         const fn = imports.get(match[2]);
         if (!fn) throw new Error(`Route ${match[1]} references unknown handler ${match[2]}`);
@@ -135,6 +135,20 @@ describe('VPS server parity', () => {
       ['/api/licensing-reconcile-scheduled', 'licensing-reconcile-scheduled'],
       ['/api/cleanup-scheduled', 'cleanup-scheduled'],
     ]);
+  });
+
+  it('protects every VPS cron route with internal caller authentication', () => {
+    const runner = readText('scripts/run-vps-scheduled.sh');
+    const validator = readText('scripts/validate-vps-flash.sh');
+    expect(server).toContain("import { requireInternalCaller } from './netlify/functions/_lib/internal-auth.js'");
+    expect(server).toContain('const hInternal = (handler: any) => h(async (request: Request, context: any) => {');
+    expect(server).toContain('requireInternalCaller(request);');
+    for (const endpoint of parseCronEndpoints()) {
+      expect(server).toContain(`app.all('${endpoint}', hInternal(`);
+      expect(validator).toContain(endpoint.slice('/api/'.length));
+    }
+    expect(runner).toContain('invoke-vps-scheduled.mjs');
+    expect(validator).toContain('grep -Fq invoke-vps-scheduled.mjs');
   });
 
   it('runs scheduled device reconciliation through the shared Netlify handler', () => {
@@ -305,7 +319,7 @@ describe('VPS server parity', () => {
   it('retains cron failures and prevents overlapping scheduled runs', () => {
     const runner = readText('scripts/run-vps-scheduled.sh');
     expect(runner).toContain('flock -n');
-    expect(runner).toContain('curl --fail');
+    expect(runner).toContain('invoke-vps-scheduled.mjs');
     expect(runner).toContain('logger -t flashmdm-cron');
     expect(runner).not.toContain('/dev/null 2>&1');
   });

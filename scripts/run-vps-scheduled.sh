@@ -12,6 +12,7 @@ esac
 
 lock_dir="${FLASH_CRON_LOCK_DIR:-/tmp/flashmdm-cron}"
 timeout_seconds="${FLASH_CRON_TIMEOUT_SECONDS:-240}"
+script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 mkdir -p "$lock_dir"
 
 exec 9>"$lock_dir/$endpoint.lock"
@@ -23,10 +24,8 @@ fi
 response_file=$(mktemp "$lock_dir/$endpoint.response.XXXXXX")
 trap 'rm -f "$response_file"' EXIT
 
-if ! curl --fail --show-error --silent \
-  --max-time "$timeout_seconds" \
-  --output "$response_file" \
-  "http://localhost:3000/api/$endpoint"; then
+if ! node "$script_dir/invoke-vps-scheduled.mjs" \
+  "$endpoint" "$response_file" "$timeout_seconds"; then
   logger -t flashmdm-cron -- "$endpoint failed or timed out after ${timeout_seconds}s"
   exit 1
 fi

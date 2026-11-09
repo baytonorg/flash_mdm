@@ -630,6 +630,7 @@ export default async (request: Request, _context: Context) => {
       return Response.json({ status: 'failed', execution_id: executionId });
     }
   } catch (err) {
+    if (err instanceof Response) return err;
     console.error('Workflow evaluation error:', err);
     return Response.json({ status: 'failed' });
   }

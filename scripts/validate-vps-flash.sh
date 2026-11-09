@@ -73,6 +73,20 @@ check "cron is enabled for scheduled maintenance functions" \
 check "workflow cron is either explicitly enabled or explicitly paused" \
   "${SSH[@]}" "sudo lxc exec '$APP_CONTAINER' -- bash -lc 'crontab -u jason -l | grep -Eq \"^([^#].*run-vps-scheduled.sh workflow-cron-scheduled|# paused .*workflow-cron-scheduled)\"'"
 
+for scheduled_route in \
+  cleanup-scheduled \
+  geofence-check-scheduled \
+  licensing-reconcile-scheduled \
+  sync-reconcile-scheduled \
+  workflow-cron-scheduled
+do
+  check "VPS scheduled route $scheduled_route uses internal authentication" \
+    "${SSH[@]}" "sudo lxc exec '$APP_CONTAINER' -- grep -Fq \"app.all('/api/$scheduled_route', hInternal(\" '$APP_DIR/current/server.ts'"
+done
+
+check "VPS scheduled runner loads the protected invocation helper" \
+  "${SSH[@]}" "sudo lxc exec '$APP_CONTAINER' -- grep -Fq invoke-vps-scheduled.mjs '$APP_DIR/current/scripts/run-vps-scheduled.sh'"
+
 check "VPS URL is configured" \
   "${SSH[@]}" "sudo lxc exec '$APP_CONTAINER' -- bash -lc 'cd \"$APP_DIR\" && grep -q \"^URL=\\\"$PUBLIC_URL\\\"\" .env'"
 

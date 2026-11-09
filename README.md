@@ -414,7 +414,17 @@ Five handlers run on a schedule on Netlify. On a VPS, trigger them with **cron**
 | `sync-reconcile-scheduled` | Every 15 minutes | Syncs device state with AMAPI |
 | `workflow-cron-scheduled` | Every 5 minutes | Runs pending workflow automations |
 
-Example crontab entry: `*/15 * * * * curl -s http://localhost:3000/api/sync-reconcile-scheduled`
+Use the installed `scripts/run-vps-scheduled.sh` runner rather than calling a
+scheduled endpoint directly. The runner preserves overlap and failure handling
+and authenticates from the protected application environment without placing
+the internal secret in process arguments or logs. For example:
+
+```cron
+*/15 * * * * FLASH_CRON_LOCK_DIR=/opt/flash-mdm/data/cron /bin/bash /opt/flash-mdm/current/scripts/run-vps-scheduled.sh sync-reconcile-scheduled
+```
+
+The `/api/*-scheduled` routes share the VPS web listener and reject requests
+that do not carry valid internal authentication.
 
 #### 7. Handle background functions
 

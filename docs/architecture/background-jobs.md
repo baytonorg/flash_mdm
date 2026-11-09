@@ -33,9 +33,12 @@ Scheduled functions (cron) execute on a schedule and typically:
 
 ### Internal-only triggers
 
-Some background endpoints should only be callable internally.
+Background endpoints and VPS cron routes must only be callable internally.
 
 As-built, Flash MDM uses a shared secret (`INTERNAL_FUNCTION_SECRET`) to authenticate internal callers.
+The VPS cron runner reads that value only from the protected runtime environment
+and sends it in memory. Do not invoke scheduled routes with an unauthenticated
+`curl` command or put the secret in a command line, crontab or log.
 
 ## 2) Key background/scheduled jobs (as-built)
 

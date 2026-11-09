@@ -6,6 +6,7 @@ describe('requireInternalCaller', () => {
   const originalSecret = process.env.INTERNAL_FUNCTION_SECRET;
   const originalNodeEnv = process.env.NODE_ENV;
   const originalNetlifyDev = process.env.NETLIFY_DEV;
+  const originalFlashRuntime = process.env.FLASH_RUNTIME;
 
   afterEach(() => {
     if (originalSecret === undefined) {
@@ -22,6 +23,11 @@ describe('requireInternalCaller', () => {
       delete process.env.NETLIFY_DEV;
     } else {
       process.env.NETLIFY_DEV = originalNetlifyDev;
+    }
+    if (originalFlashRuntime === undefined) {
+      delete process.env.FLASH_RUNTIME;
+    } else {
+      process.env.FLASH_RUNTIME = originalFlashRuntime;
     }
     vi.restoreAllMocks();
   });
@@ -56,6 +62,15 @@ describe('requireInternalCaller', () => {
       const response = err as Response;
       expect(response.status).toBe(401);
     }
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for VPS loopback requests when the secret is not configured', () => {
+    delete process.env.INTERNAL_FUNCTION_SECRET;
+    process.env.FLASH_RUNTIME = 'vps';
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(() => requireInternalCaller(new Request('http://localhost'))).toThrow(Response);
     expect(warnSpy).not.toHaveBeenCalled();
   });
 

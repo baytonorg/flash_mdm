@@ -655,14 +655,13 @@ describe('sync-process-background job queue processing', () => {
 
   it('propagates error when requireInternalCaller rejects unauthorized requests', async () => {
     mockRequireInternalCaller.mockImplementation(() => {
-      throw new Error('Unauthorized internal call');
+      throw Response.json({ error: 'Unauthorized internal call' }, { status: 401 });
     });
 
-    // The handler catches errors at the top level with console.error,
-    // so it should not throw but will not process any jobs.
-    await handler(makeRequest(), {} as never);
+    const response = await handler(makeRequest(), {} as never);
 
-    // Transaction should never have been called because the auth check failed first
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: 'Unauthorized internal call' });
     expect(mockTransaction).not.toHaveBeenCalled();
   });
 
