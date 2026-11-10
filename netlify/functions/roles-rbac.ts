@@ -9,9 +9,7 @@ import {
   type PermissionMatrix,
 } from './_lib/rbac.js';
 import {
-  clearEnvironmentRbacSettings,
   cloneDefaultPermissionMatrix,
-  clearWorkspaceRbacSettings,
   getEnvironmentRbacOverridesFromFeatures,
   getRbacMatrixMeta,
   getWorkspaceRbacOverridesFromSettings,
@@ -23,6 +21,7 @@ import {
 import { errorResponse, getClientIp, getSearchParams, jsonResponse, parseJsonBody } from './_lib/helpers.js';
 import { logAudit } from './_lib/audit.js';
 import { getWorkspaceLicensingSettings } from './_lib/licensing.js';
+import { ENVIRONMENT_RBAC_CLEAR_SQL, ENVIRONMENT_RBAC_SAVE_SQL } from './_lib/environment-features.js';
 
 interface UpdateRbacMatrixBody {
   workspace_id?: string;
@@ -120,7 +119,7 @@ export default async function handler(request: Request, _context: Context) {
         }
 
         // Resolve environment-level override
-        const envSavedMatrix = getEnvironmentRbacOverridesFromFeatures(env.enterprise_features);
+        const envSavedMatrix = getEnvironmentRbacOverridesFromFeatures(env.enterprise_features, effectiveMatrix);
         const envEffective = envSavedMatrix ? mergePermissionMatrixWithDefaults(envSavedMatrix) : effectiveWithFeatureGates;
         const envEffectiveWithFeatureGates = licensingVisible ? envEffective : filterOutBillingResource(envEffective);
 
@@ -163,6 +162,15 @@ export default async function handler(request: Request, _context: Context) {
       if (body.matrix === undefined) return errorResponse('matrix is required');
       const environmentId = body.environment_id?.trim();
 
+      // Older tabs do not know assignment authority. Refuse an omission rather
+      // than silently reducing an existing Owner threshold to the new default.
+      if (body.matrix && typeof body.matrix === 'object' && !Array.isArray(body.matrix)) {
+        const policy = (body.matrix as Record<string, unknown>).policy;
+        if (policy && typeof policy === 'object' && !Array.isArray(policy) && !('assign' in policy)) {
+          return errorResponse('Policy assignment permissions have changed. Refresh this page before saving RBAC settings.', 409);
+        }
+      }
+
       // --- Environment-level RBAC override ---
       if (environmentId) {
         const env = await queryOne<{ id: string; enterprise_features: unknown; workspace_id: string }>(
@@ -199,8 +207,8 @@ export default async function handler(request: Request, _context: Context) {
         );
 
         await execute(
-          'UPDATE environments SET enterprise_features = $1::jsonb, updated_at = now() WHERE id = $2',
-          [JSON.stringify(nextFeatures), environmentId]
+          ENVIRONMENT_RBAC_SAVE_SQL,
+          [JSON.stringify(nextFeatures.rbac), environmentId]
         );
         clearEnvironmentPermissionMatrixCache();
 
@@ -259,8 +267,8 @@ export default async function handler(request: Request, _context: Context) {
       );
 
       await execute(
-        'UPDATE workspaces SET settings = $1::jsonb, updated_at = now() WHERE id = $2',
-        [JSON.stringify(nextSettings), workspaceId]
+        "UPDATE workspaces SET settings = jsonb_set(COALESCE(settings, '{}'::jsonb), '{rbac}', $1::jsonb), updated_at = now() WHERE id = $2",
+        [JSON.stringify(nextSettings.rbac), workspaceId]
       );
       clearWorkspacePermissionMatrixCache();
 
@@ -302,10 +310,9 @@ export default async function handler(request: Request, _context: Context) {
 
         await requireEnvironmentRole(auth, environmentId, 'owner');
 
-        const nextFeatures = clearEnvironmentRbacSettings(env.enterprise_features);
         await execute(
-          'UPDATE environments SET enterprise_features = $1::jsonb, updated_at = now() WHERE id = $2',
-          [JSON.stringify(nextFeatures), environmentId]
+          ENVIRONMENT_RBAC_CLEAR_SQL,
+          [environmentId]
         );
         clearEnvironmentPermissionMatrixCache();
 
@@ -350,10 +357,9 @@ export default async function handler(request: Request, _context: Context) {
       );
       if (!current) return errorResponse('Workspace not found', 404);
 
-      const nextSettings = clearWorkspaceRbacSettings(current.settings);
       await execute(
-        'UPDATE workspaces SET settings = $1::jsonb, updated_at = now() WHERE id = $2',
-        [JSON.stringify(nextSettings), workspaceId]
+        "UPDATE workspaces SET settings = COALESCE(settings, '{}'::jsonb) #- '{rbac,permission_matrix}' #- '{rbac,updated_at}' #- '{rbac,updated_by_user_id}', updated_at = now() WHERE id = $1",
+        [workspaceId]
       );
       clearWorkspacePermissionMatrixCache();
 

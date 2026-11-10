@@ -393,6 +393,7 @@ function findCommentHint(sourceFunction, method, apiPath) {
 
 function maybeAddPathOperation(pathsObj, { apiPath, method, sourceFunction, summary }) {
   const canonicalPath = canonicalizePathPlaceholders(apiPath);
+  if (['/api/policies/assign', '/api/policies/unassign', '/api/policies/locks'].includes(canonicalPath) && method !== 'POST') return;
   const methodKey = method.toLowerCase();
   if (!pathsObj[canonicalPath]) pathsObj[canonicalPath] = {};
   const existing = pathsObj[canonicalPath][methodKey];
@@ -422,6 +423,37 @@ function collectCommentCandidatesForRedirect(redirect, functionNames) {
 }
 
 function genericOperation({ method, apiPath, sourceFunction, summary }) {
+  if (method === 'POST' && ['/api/policies/assign', '/api/policies/unassign', '/api/policies/locks'].includes(apiPath)) {
+    const locks = apiPath.endsWith('/locks');
+    const assign = apiPath.endsWith('/assign');
+    return {
+      operationId: `post_${apiPath.slice(1).replaceAll('/', '_')}`, tags: ['policies'],
+      summary: locks ? 'Update locks on the observed direct assignment' : assign ? 'Assign a policy at an authorised scope' : 'Remove a direct assignment and restore inheritance',
+      description: locks
+        ? 'Requires current environment or scoped group Admin authority. Lock edits cannot change the assigned policy. Read assignment_version from GET /api/policies/assignments; a stale editor must refresh on 409.'
+        : 'Requires current policy.assign authority (Admin minimum, or Owner if configured) for the environment or target group subtree. Root devices require environment-wide authority. Local commit does not alone establish managed-device convergence; inspect amapi_sync. Persistent workflow delegation and remote ordering are separate contracts.',
+      security: [{ sessionCookie: [] }, { bearerAuth: [] }],
+      'x-flash-auth': { authModel: 'session-or-api-key', policyAssignmentMinimum: locks ? 'admin' : 'policy.assign (admin floor)' },
+      requestBody: { required: true, content: { 'application/json': { schema: {
+        type: 'object', required: ['scope_type', 'scope_id', ...(assign || locks ? ['policy_id'] : []), ...(locks ? ['expected_version', 'locked', 'locked_sections'] : [])],
+        properties: {
+          scope_type: { type: 'string', enum: ['environment', 'group', 'device'] },
+          scope_id: { type: 'string', format: 'uuid' },
+          ...(assign || locks ? { policy_id: { type: 'string', format: 'uuid' } } : {}),
+          ...(locks ? { expected_version: { type: 'string', pattern: '^[a-f0-9]{32}$' }, locked: { type: 'boolean' }, locked_sections: { type: 'array', items: { type: 'string' } } } : {}),
+        },
+        description: assign ? 'Lock fields are rejected with 409. Use the dedicated locks endpoint after reading the assignment version.' : undefined,
+      } } } },
+      responses: {
+        '200': { description: locks ? 'Locks committed locally; inspect amapi_sync for propagation outcome' : 'Local assignment intent committed; inspect amapi_sync for propagation outcome' },
+        '400': { description: 'Invalid scope or input' }, '401': { description: 'Authentication required' },
+        '403': { description: 'Insufficient current authority' },
+        '404': { description: 'Target or policy unavailable; absent and foreign policy identifiers are indistinguishable' },
+        '409': { description: 'Stale assignment, changed scope, or legacy lock request. Refresh before retrying.' },
+        '500': { description: 'Operation failed' },
+      },
+    };
+  }
   if (apiPath === '/api/activity' && method === 'POST') {
     return {
       operationId: 'post_api_activity', tags: ['activity'], summary: 'Submit browser activity',

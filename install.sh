@@ -857,6 +857,7 @@ app.all('/api/devices/*', h(deviceGet));
 
 // ── Policies (specific before catch-all) ────────────────────────────────────
 app.all('/api/policies/assign', h(policyAssign));
+app.all('/api/policies/locks', h(policyAssign));
 app.all('/api/policies/unassign', h(policyAssign));
 app.all('/api/policies/assignments', h(policyAssign));
 app.all('/api/policies/effective', h(policyAssign));

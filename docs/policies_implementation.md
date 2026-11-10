@@ -531,6 +531,24 @@ superadmin > owner (100) > admin (75) > member (50) > viewer (25)
 | Group | Environment admin, or group admin within their subtree |
 | Device | Environment admin, or group admin of the device's group |
 
+Assignment and restoring inheritance use the distinct `policy.assign` permission.
+Its default and enforced minimum are Admin. Owners can require Owner instead.
+Policy editing (`policy.write`) and group editing (`group.write`) retain their
+existing thresholds. Environment-wide authority and scoped group authority are
+evaluated independently; a lower group membership does not remove valid
+environment-wide assignment authority. Devices without a group require
+environment-wide authority.
+
+Migration 060 adds this setting only to existing overrides that lack it. It
+conservatively preserves stricter legacy policy-write and workspace group-write
+requirements. Because one assignment threshold replaces two former permission
+branches, an old custom override may now require Owner where only one branch
+previously did. The effective value is visible in Roles as **Assign**, and an
+owner can explicitly choose Admin or Owner. Environment overrides remain full
+replacements, while environments without overrides continue to inherit workspace
+settings. Older browser tabs must refresh before saving a matrix without Assign;
+they receive a clear refresh-required response rather than resetting the value.
+
 ### Lock modification
 
 | Role | Can set/remove locks? |

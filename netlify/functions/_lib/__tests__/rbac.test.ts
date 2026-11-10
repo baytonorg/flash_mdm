@@ -388,6 +388,8 @@ describe('requireEnvironmentResourcePermission with environment overrides', () =
         },
       },
     } as never);
+    // Legacy environment assignment compatibility also reads workspace matrix.
+    mockQueryOne.mockResolvedValueOnce({ settings: {} } as never);
     // requireEnvironmentRole: direct env membership
     mockQueryOne.mockResolvedValueOnce({ role: 'admin' } as never);
 

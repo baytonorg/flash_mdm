@@ -3,6 +3,7 @@ import {
   RBAC_ROLE_VALUES,
   getPermissionMatrixMinimumRoleFloor,
   workspaceRoleMeetsMinimum,
+  mergePermissionMatrixWithDefaults as mergeMatrix,
   type PermissionMatrix,
   type WorkspaceRole,
 } from './rbac.js';
@@ -19,6 +20,7 @@ const ACTION_ORDER = [
   'read',
   'read_privileged',
   'write',
+  'assign',
   'delete',
   'command',
   'command_destructive',
@@ -43,25 +45,16 @@ export function cloneDefaultPermissionMatrix(): PermissionMatrix {
   return JSON.parse(JSON.stringify(DEFAULT_PERMISSION_MATRIX)) as PermissionMatrix;
 }
 
-export function mergePermissionMatrixWithDefaults(value: unknown): PermissionMatrix {
-  const merged = cloneDefaultPermissionMatrix();
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return merged;
+export function mergePermissionMatrixWithDefaults(value: unknown, workspaceMatrix?: PermissionMatrix): PermissionMatrix {
+  return mergeMatrix(value, workspaceMatrix);
+}
 
-  for (const [resource, actions] of Object.entries(value as JsonObject)) {
-    if (!(resource in merged) || !actions || typeof actions !== 'object' || Array.isArray(actions)) continue;
-    for (const [action, minRole] of Object.entries(actions as JsonObject)) {
-      if (!(action in merged[resource])) continue;
-      if (typeof minRole !== 'string') continue;
-      if (!RBAC_ROLE_VALUES.includes(minRole as WorkspaceRole)) continue;
-      const requestedRole = minRole as WorkspaceRole;
-      const floorRole = getPermissionMatrixMinimumRoleFloor(resource, action);
-      merged[resource][action] = floorRole && !workspaceRoleMeetsMinimum(requestedRole, floorRole)
-        ? floorRole
-        : requestedRole;
-    }
-  }
-
-  return merged;
+/** Raw permission matrices, not settings/features containers. */
+export function resolvePolicyAssignmentMinimum(workspaceRaw: unknown, environmentRaw?: unknown): WorkspaceRole {
+  const workspace = mergeMatrix(workspaceRaw);
+  return environmentRaw && typeof environmentRaw === 'object' && !Array.isArray(environmentRaw)
+    ? mergeMatrix(environmentRaw, workspace).policy.assign
+    : workspace.policy.assign;
 }
 
 export function validateAndCanonicalizePermissionMatrix(value: unknown): PermissionMatrix {
@@ -143,13 +136,13 @@ export function setWorkspaceRbacSettings(
 
 // --- Environment-level RBAC overrides (stored in environments.enterprise_features) ---
 
-export function getEnvironmentRbacOverridesFromFeatures(enterpriseFeatures: unknown): PermissionMatrix | null {
+export function getEnvironmentRbacOverridesFromFeatures(enterpriseFeatures: unknown, workspaceMatrix?: PermissionMatrix): PermissionMatrix | null {
   if (!enterpriseFeatures || typeof enterpriseFeatures !== 'object' || Array.isArray(enterpriseFeatures)) return null;
   const rbac = (enterpriseFeatures as JsonObject).rbac;
   if (!rbac || typeof rbac !== 'object' || Array.isArray(rbac)) return null;
   const matrix = (rbac as JsonObject).permission_matrix;
   if (!matrix || typeof matrix !== 'object' || Array.isArray(matrix)) return null;
-  return mergePermissionMatrixWithDefaults(matrix);
+  return mergePermissionMatrixWithDefaults(matrix, workspaceMatrix);
 }
 
 export function setEnvironmentRbacSettings(

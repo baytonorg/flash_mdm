@@ -46,6 +46,7 @@ const MATRIX_ACTIVE_PERMISSIONS = new Set<string>([
   'device:delete',
   'policy:read',
   'policy:write',
+  'policy:assign',
   'policy:delete',
   'certificate:read',
   'certificate:write',
@@ -97,7 +98,7 @@ function statusBadgeClasses(status: 'Active' | 'Defined'): string {
 }
 
 function getRoleLedActionSets(actions: string[]) {
-  const standardPriority = ['read', 'write', 'delete'];
+  const standardPriority = ['read', 'write', 'assign', 'delete'];
   const standard = standardPriority.filter((a) => actions.includes(a));
   const advanced = actions.filter((a) => !standardPriority.includes(a));
   return { standard, advanced };
@@ -173,6 +174,7 @@ export default function Roles() {
 
   const handleCellChange = (resource: string, action: string, role: WorkspaceRole) => {
     if (!effectiveCanManage) return;
+    if (resource === 'policy' && action === 'assign' && ROLE_LEVEL[role] < ROLE_LEVEL.admin) return;
     setFeedback({});
     setDraftMatrix((current) => {
       if (!current) return current;
@@ -188,6 +190,7 @@ export default function Roles() {
 
   const handleRoleActionToggle = (resource: string, action: string, role: WorkspaceRole, nextAllowed: boolean) => {
     if (!effectiveCanManage) return;
+    if (resource === 'policy' && action === 'assign' && ROLE_LEVEL[role] < ROLE_LEVEL.admin) return;
     setFeedback({});
     setDraftMatrix((current) => {
       if (!current || !current[resource] || !current[resource][action]) return current;
@@ -484,7 +487,7 @@ export default function Roles() {
                                       <input
                                         type="checkbox"
                                         checked={checked}
-                                        disabled={!effectiveCanManage || ownerLocked}
+                                        disabled={!effectiveCanManage || ownerLocked || (resource === 'policy' && action === 'assign' && ROLE_LEVEL[role] < ROLE_LEVEL.admin)}
                                         onChange={(e) => handleRoleActionToggle(resource, action, role, e.target.checked)}
                                         className="mt-0.5"
                                       />
@@ -496,6 +499,7 @@ export default function Roles() {
                                         <span className="mt-0.5 block text-xs text-gray-500">
                                           Min role: <span className="font-medium text-gray-700 capitalize">{threshold}</span>
                                           {action === 'write' ? ' (create/update)' : ''}
+                                          {action === 'assign' ? ' (assign and restore inheritance; Admin minimum)' : ''}
                                         </span>
                                         {ownerLocked && (
                                           <span className="mt-0.5 block text-[11px] text-gray-500">Owner cannot be disabled.</span>
@@ -601,7 +605,7 @@ export default function Roles() {
                                 className={`w-full sm:w-44 rounded-lg border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent/20 ${isChanged ? 'border-amber-300' : 'border-border'}`}
                               >
                                 {roles.map((role) => (
-                                  <option key={role} value={role}>
+                                  <option key={role} value={role} disabled={resource === 'policy' && action === 'assign' && ROLE_LEVEL[role] < ROLE_LEVEL.admin}>
                                     {titleCase(role)}
                                   </option>
                                 ))}

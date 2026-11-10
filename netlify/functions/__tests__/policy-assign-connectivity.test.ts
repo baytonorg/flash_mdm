@@ -8,6 +8,9 @@ vi.mock('../_lib/db.js', () => ({
 }));
 
 vi.mock('../_lib/auth.js', () => ({ requireAuth: vi.fn() }));
+// This suite covers derivative payload preservation only. The composed
+// permission helper is exercised against PostgreSQL in policy-assignment.postgres.
+vi.mock('../_lib/policy-assignment-authority.js', () => ({ requirePolicyAssignmentAuthority: vi.fn().mockResolvedValue({ environmentId: 'env_1' }), requireUnexpiredAssignmentPrincipal:vi.fn(), withPolicyAssignmentDeniedAudit: (_auth:unknown,_scope:unknown,_operation:unknown,fn:()=>Promise<unknown>)=>fn() }));
 vi.mock('../_lib/rbac.js', () => ({
   requireEnvironmentAccessScopeForResourcePermission: vi.fn(),
   requireEnvironmentResourcePermission: vi.fn(),
@@ -54,6 +57,7 @@ const mockDeleteDerivativeWhenUnused = vi.mocked(deletePolicyDerivativeWhenUnuse
 describe('policy assignment connectivity preservation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockQueryOne.mockReset();
     mockRequireAuth.mockResolvedValue({ user: { id: 'user_1' } } as never);
     mockRequireEnvironmentPermission.mockResolvedValue(undefined as never);
     mockCanModifyLocks.mockResolvedValue({ allowed: true } as never);
@@ -70,14 +74,17 @@ describe('policy assignment connectivity preservation', () => {
       checked_devices: 1,
     });
     mockTransaction.mockImplementation(async (fn) => fn({
-      query: vi.fn().mockResolvedValue({ rows: [], rowCount: 1 }),
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('SELECT id FROM policies')) return {rows:[{id:'88888888-8888-4888-8888-888888888888'}],rowCount:1};
+        if (sql.includes('SELECT policy_id FROM policy_assignments')) return {rows:[{policy_id:'old_policy'}],rowCount:1};
+        if (sql.includes('SELECT amapi_name FROM policy_derivatives')) {const row=await queryOne(sql);return {rows:row?[row]:[],rowCount:1};}
+        return {rows:[],rowCount:1};
+      }),
     } as never));
   });
 
   it('passes authored connectivity siblings to derivative generation without stale APN state', async () => {
     mockQueryOne
-      .mockResolvedValueOnce({ id: 'policy_1', name: 'Policy', environment_id: 'env_1' } as never)
-      .mockResolvedValueOnce({ id: 'env_1' } as never)
       .mockResolvedValueOnce({
         config: {
           applications: [{ packageName: 'com.example.app' }],
@@ -95,7 +102,7 @@ describe('policy assignment connectivity preservation', () => {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        policy_id: 'policy_1',
+        policy_id: '88888888-8888-4888-8888-888888888888',
         scope_type: 'environment',
         scope_id: 'env_1',
       }),
@@ -115,9 +122,6 @@ describe('policy assignment connectivity preservation', () => {
 
   it('preserves connectivity siblings when unassignment reapplies the effective policy', async () => {
     mockQueryOne
-      .mockResolvedValueOnce({ id: 'env_1' } as never)
-      .mockResolvedValueOnce({ policy_id: 'old_policy' } as never)
-      .mockResolvedValueOnce(null as never)
       .mockResolvedValueOnce(null as never)
       .mockResolvedValueOnce({ group_id: null, policy_id: 'new_policy' } as never)
       .mockResolvedValueOnce(null as never)
@@ -135,6 +139,8 @@ describe('policy assignment connectivity preservation', () => {
       } as never);
     mockTransaction.mockImplementation(async (fn) => fn({
       query: vi.fn(async (sql: string) => {
+        if (sql.includes('SELECT policy_id FROM policy_assignments')) return {rows:[{policy_id:'old_policy'}],rowCount:1};
+        if (sql.includes('SELECT amapi_name FROM policy_derivatives')) return {rows:[],rowCount:0};
         if (sql.includes('SELECT id, amapi_name FROM devices')) {
           return {
             rows: [{ id: 'device_1', amapi_name: 'enterprises/e1/devices/d1' }],
@@ -171,8 +177,6 @@ describe('policy assignment connectivity preservation', () => {
 
   it('deletes the local derivative row only after safe remote cleanup succeeds', async () => {
     mockQueryOne
-      .mockResolvedValueOnce({ environment_id: 'env_1' } as never)
-      .mockResolvedValueOnce({ policy_id: 'old_policy' } as never)
       .mockResolvedValueOnce({ amapi_name: 'enterprises/e1/policies/old-device' } as never)
       .mockResolvedValueOnce(null as never)
       .mockResolvedValueOnce({ group_id: null, policy_id: 'new_policy' } as never)
@@ -180,6 +184,8 @@ describe('policy assignment connectivity preservation', () => {
       .mockResolvedValueOnce({ config: { cameraDisabled: false } } as never);
     mockTransaction.mockImplementation(async (fn) => fn({
       query: vi.fn(async (sql: string) => {
+        if (sql.includes('SELECT policy_id FROM policy_assignments')) return {rows:[{policy_id:'old_policy'}],rowCount:1};
+        if (sql.includes('SELECT amapi_name FROM policy_derivatives')) {const row=await queryOne(sql);return {rows:row?[row]:[],rowCount:1};}
         if (sql.includes('SELECT id, amapi_name FROM devices')) {
           return {
             rows: [{ id: 'device_1', amapi_name: 'enterprises/e1/devices/d1' }],
@@ -217,17 +223,19 @@ describe('policy assignment connectivity preservation', () => {
       checked_devices: 0,
     });
     mockQueryOne
-      .mockResolvedValueOnce({ environment_id: 'env_1' } as never)
-      .mockResolvedValueOnce({ policy_id: 'old_policy' } as never)
       .mockResolvedValueOnce({ amapi_name: 'enterprises/e1/policies/old-device' } as never)
       .mockResolvedValueOnce(null as never)
       .mockResolvedValueOnce({ group_id: null, policy_id: 'new_policy' } as never)
       .mockResolvedValueOnce(null as never)
       .mockResolvedValueOnce({ config: {} } as never);
     mockTransaction.mockImplementation(async (fn) => fn({
-      query: vi.fn(async (sql: string) => sql.includes('SELECT id, amapi_name FROM devices')
-        ? { rows: [{ id: 'device_1', amapi_name: 'enterprises/e1/devices/d1' }], rowCount: 1 }
-        : { rows: [], rowCount: 1 }),
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('SELECT policy_id FROM policy_assignments')) return {rows:[{policy_id:'old_policy'}],rowCount:1};
+        if (sql.includes('SELECT amapi_name FROM policy_derivatives')) {const row=await queryOne(sql);return {rows:row?[row]:[],rowCount:1};}
+        return sql.includes('SELECT id, amapi_name FROM devices')
+          ? { rows: [{ id: 'device_1', amapi_name: 'enterprises/e1/devices/d1' }], rowCount: 1 }
+          : { rows: [], rowCount: 1 };
+      }),
     } as never));
     mockAssignPolicyToDevice.mockResolvedValue({} as never);
 

@@ -171,6 +171,7 @@ export function useBulkPolicyAction() {
 // --- Policy Assignment Interfaces ---
 
 export interface PolicyAssignment {
+  assignment_version: string;
   id: string;
   policy_id: string;
   policy_name: string;
@@ -245,8 +246,9 @@ export function useSetPolicyLocks() {
       scope_id: string;
       locked: boolean;
       locked_sections: string[];
+      expected_version: string;
     }) =>
-      apiClient.post<{ message: string }>('/api/policies/assign', body),
+      apiClient.post<{ message: string }>('/api/policies/locks', body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['policies'] });
       queryClient.invalidateQueries({ queryKey: ['policies', 'assignments'] });

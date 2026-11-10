@@ -50,6 +50,15 @@ export default function PolicyAssignmentSelect({
       // Error state is displayed via mutation.isError below
     }
   };
+  const handleAssignHere = async () => {
+    if(!currentPolicyId)return;
+    try {
+      await assignMutation.mutateAsync({policy_id:currentPolicyId,scope_type:scopeType,scope_id:scopeId});
+      onAssigned?.();
+    } catch {
+      // Keep the existing assignment and show the server's mutation error.
+    }
+  };
 
   if (policiesLoading) {
     return <Loader2 className="w-4 h-4 animate-spin text-gray-400" />;
@@ -84,9 +93,14 @@ export default function PolicyAssignmentSelect({
         )}
       </div>
       {currentSource && currentSource !== scopeType && currentSource !== 'device_legacy' && (
-        <p className="text-xs text-amber-600">
-          Currently inherited from {currentSource}. Assigning here will override.
-        </p>
+        <div className="flex items-center gap-2">
+          <p className="text-xs text-amber-600">Currently inherited from {currentSource}. Assigning here will override.</p>
+          {currentPolicyId && <button type="button" disabled={isPending}
+            className="text-xs font-medium text-accent hover:underline disabled:opacity-50"
+            onClick={handleAssignHere}>
+            Assign here
+          </button>}
+        </div>
       )}
       {currentSource === 'device_legacy' && scopeType === 'device' && (
         <p className="text-xs text-gray-500">
@@ -94,7 +108,7 @@ export default function PolicyAssignmentSelect({
         </p>
       )}
       {(assignMutation.isError || unassignMutation.isError) && (
-        <p className="text-xs text-red-600">Failed to update policy assignment.</p>
+        <p role="alert" className="text-xs text-red-600">{(assignMutation.error ?? unassignMutation.error)?.message ?? 'Failed to update policy assignment.'}</p>
       )}
     </div>
   );

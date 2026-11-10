@@ -8,6 +8,7 @@ import { logAudit } from './audit.js';
 import { enqueueDevicePolicyReconcile } from './device-policy-reconcile.js';
 import { withSignupLinkReferenceLock } from './signup-link-reference-lock.js';
 import { scopeAuthority } from './scope-authority.js';
+import { requirePolicyAssignmentAuthority, requireUnexpiredAssignmentPrincipal, withPolicyAssignmentDeniedAudit } from './policy-assignment-authority.js';
 
 async function groupContext(client: PoolClient, auth: AuthContext, groupId: string, action:'write'|'delete') {
   const hint=(await client.query('SELECT e.workspace_id FROM groups g JOIN environments e ON e.id=g.environment_id WHERE g.id=$1',[groupId])).rows[0];
@@ -44,8 +45,9 @@ async function requireConsistentSubtree(client:PoolClient,groupId:string) {
 }
 
 export async function updateGroupLifecycle(input:{auth:AuthContext;groupId:string;parentId?:string|null;name?:string;description?:string;clearDirectAssignments?:boolean;ip:string}) {
-  return transaction(async client=>{
+  const mutate=()=>transaction(async client=>{
     const group=await groupContext(client,input.auth,input.groupId,'write');
+    if(input.clearDirectAssignments)await requirePolicyAssignmentAuthority(client,input.auth,{scope_type:'group',scope_id:input.groupId});
     await requireConsistentSubtree(client,input.groupId);
     const parentChanged=input.parentId!==undefined&&input.parentId!==group.parent_group_id;
     if(parentChanged&&input.parentId) {
@@ -59,6 +61,7 @@ export async function updateGroupLifecycle(input:{auth:AuthContext;groupId:strin
       if(!scope.role||!workspaceRoleMeetsMinimum(scope.role,scope.matrix.group.write))throw errorResponse('Moving to the environment root requires environment-wide management authority',403);
     }
     const affected=(await client.query(`SELECT d.id FROM devices d JOIN group_closures gc ON gc.descendant_id=d.group_id WHERE gc.ancestor_id=$1 AND d.deleted_at IS NULL`,[input.groupId])).rows.map(r=>r.id);
+    if(input.clearDirectAssignments)await requireUnexpiredAssignmentPrincipal(client,input.auth);
     await client.query(`UPDATE groups SET name=COALESCE($2,name),description=COALESCE($3,description),parent_group_id=CASE WHEN $4 THEN $5::uuid ELSE parent_group_id END,updated_at=now() WHERE id=$1`,[input.groupId,input.name??null,input.description??null,parentChanged,input.parentId??null]);
     if(parentChanged) {
       await client.query(`DELETE FROM group_closures gc USING group_closures old_anc,group_closures sub WHERE old_anc.descendant_id=$1 AND old_anc.ancestor_id<>$1 AND sub.ancestor_id=$1 AND gc.ancestor_id=old_anc.ancestor_id AND gc.descendant_id=sub.descendant_id`,[input.groupId]);
@@ -71,6 +74,7 @@ export async function updateGroupLifecycle(input:{auth:AuthContext;groupId:strin
     await audit(client,input.auth,input.groupId,group.environment_id,'group.updated',{parent_changed:parentChanged,previous_parent_group_id:group.parent_group_id,new_parent_group_id:input.parentId??null,clear_direct_assignments:input.clearDirectAssignments===true,policy_reconciliation_queued:queued},input.ip);
     return {affected_devices:queued};
   });
+  return input.clearDirectAssignments ? withPolicyAssignmentDeniedAudit(input.auth,'group','clear_direct_assignments',mutate) : mutate();
 }
 
 export async function deleteGroupLifecycle(input:{auth:AuthContext;groupId:string;ip:string}) {
