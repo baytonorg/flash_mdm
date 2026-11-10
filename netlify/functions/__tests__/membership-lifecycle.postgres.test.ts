@@ -751,17 +751,23 @@ suite('membership lifecycle with PostgreSQL and actual handlers', () => {
     await failure(transaction(c=>applyInviteOffer(c,'fixture-mixed-issuer',target,'target@fixture.invalid')),409);
   });
   it('runs candidate migrations without activating a server and fails closed on migration errors', async () => {
+    // Reapplying 059 deliberately fails on its existing lifecycle triggers.
+    // Keep this historical negative control stable when newer, idempotent
+    // migrations are appended to the candidate manifest.
+    const lifecycleMigration = MIGRATIONS.find(migration => migration.name === '059_membership_lifecycle');
+    expect(lifecycleMigration).toBeDefined();
     const run=()=>spawnSync(process.execPath,['--import','tsx','scripts/run-migrations.ts'],{encoding:'utf8',env:{...process.env,DATABASE_URL:url+'?sslmode=disable',NODE_ENV:'development',MIGRATION_SECRET:'fixture-migration-only',DOTENV_CONFIG_QUIET:'true'}});
     const clean=run();
     expect(clean.status).toBe(0);
     expect(clean.stdout).toContain('0 applied');
-    await pool.query('DELETE FROM _migrations WHERE name=$1',[MIGRATIONS.at(-1)!.name]);
+    await pool.query('DELETE FROM _migrations WHERE name=$1',[lifecycleMigration!.name]);
     try {
       const failed=run();
       expect(failed.status).not.toBe(0);
       expect(failed.stderr).toContain('release was not activated');
       expect(failed.stdout+failed.stderr).not.toContain('fixture-migration-only');
+      expect((await pool.query('SELECT 1 FROM _migrations WHERE name=$1',[lifecycleMigration!.name])).rowCount).toBe(0);
       expect((await pool.query("SELECT confdeltype FROM pg_constraint WHERE conname='api_keys_created_by_user_id_fkey'")).rows[0].confdeltype).toBe('n');
-    } finally { await pool.query('INSERT INTO _migrations (name) VALUES ($1)',[MIGRATIONS.at(-1)!.name]); }
+    } finally { await pool.query('INSERT INTO _migrations (name) VALUES ($1)',[lifecycleMigration!.name]); }
   });
 });
