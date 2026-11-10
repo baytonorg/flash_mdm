@@ -94,7 +94,7 @@ export default function PolicyAssignmentSelect({
         </p>
       )}
       {(assignMutation.isError || unassignMutation.isError) && (
-        <p className="text-xs text-red-600">Failed to update policy assignment.</p>
+        <p role="alert" className="text-xs text-red-600">{(assignMutation.error ?? unassignMutation.error)?.message ?? 'Failed to update policy assignment.'}</p>
       )}
     </div>
   );

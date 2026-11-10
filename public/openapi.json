@@ -7970,7 +7970,7 @@
           "policies"
         ],
         "summary": "POST /api/policies/assign",
-        "description": "Implemented by Netlify function `policy-assign`.\nRequirement: Auth: authenticated request required (session or API key, route-dependent)\nRequirement: Environment resource permissions checked: policy:write, policy:read\nRequirement: Group permissions checked: write, read\nRequirement: Common required JSON body fields: policy_id, scope_type, scope_id",
+        "description": "Implemented by Netlify function `policy-assign`.\nRequirement: Auth: authenticated request required (session or API key, route-dependent)\nRequirement: Environment resource permissions checked: policy:read\nRequirement: Group permissions checked: read\nRequirement: Common required JSON body fields: policy_id, scope_type, scope_id",
         "parameters": [],
         "x-flash-auth": {
           "authModel": "auth",
@@ -7979,11 +7979,9 @@
           "environmentRoles": [],
           "workspacePerms": [],
           "envResourcePerms": [
-            "policy:write",
             "policy:read"
           ],
           "groupPerms": [
-            "write",
             "read"
           ]
         },
@@ -8061,7 +8059,7 @@
           "policies"
         ],
         "summary": "GET /api/policies/assignments",
-        "description": "Implemented by Netlify function `policy-assign`.\nRequirement: Auth: authenticated request required (session or API key, route-dependent)\nRequirement: Environment resource permissions checked: policy:write, policy:read\nRequirement: Group permissions checked: write, read\nRequirement: Common required query params: environment_id",
+        "description": "Implemented by Netlify function `policy-assign`.\nRequirement: Auth: authenticated request required (session or API key, route-dependent)\nRequirement: Environment resource permissions checked: policy:read\nRequirement: Group permissions checked: read\nRequirement: Common required query params: environment_id",
         "parameters": [
           {
             "name": "environment_id",
@@ -8080,11 +8078,9 @@
           "environmentRoles": [],
           "workspacePerms": [],
           "envResourcePerms": [
-            "policy:write",
             "policy:read"
           ],
           "groupPerms": [
-            "write",
             "read"
           ]
         },
@@ -8440,7 +8436,7 @@
           "policies"
         ],
         "summary": "GET /api/policies/effective",
-        "description": "Implemented by Netlify function `policy-assign`.\nRequirement: Auth: authenticated request required (session or API key, route-dependent)\nRequirement: Environment resource permissions checked: policy:write, policy:read\nRequirement: Group permissions checked: write, read\nRequirement: Common required query params: device_id",
+        "description": "Implemented by Netlify function `policy-assign`.\nRequirement: Auth: authenticated request required (session or API key, route-dependent)\nRequirement: Environment resource permissions checked: policy:read\nRequirement: Group permissions checked: read\nRequirement: Common required query params: device_id",
         "parameters": [
           {
             "name": "device_id",
@@ -8459,11 +8455,9 @@
           "environmentRoles": [],
           "workspacePerms": [],
           "envResourcePerms": [
-            "policy:write",
             "policy:read"
           ],
           "groupPerms": [
-            "write",
             "read"
           ]
         },
@@ -8621,6 +8615,119 @@
           ],
           "queryParamAlternatives": false,
           "bodyRequiredFields": []
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/api/policies/locks": {
+      "post": {
+        "operationId": "post_api_policies_locks",
+        "tags": [
+          "policies"
+        ],
+        "summary": "POST /api/policies/locks",
+        "description": "Implemented by Netlify function `policy-assign`.\nRequirement: Auth: authenticated request required (session or API key, route-dependent)\nRequirement: Environment resource permissions checked: policy:read\nRequirement: Group permissions checked: read",
+        "parameters": [],
+        "x-flash-auth": {
+          "authModel": "auth",
+          "apiKeyRejected": false,
+          "workspaceRoles": [],
+          "environmentRoles": [],
+          "workspacePerms": [],
+          "envResourcePerms": [
+            "policy:read"
+          ],
+          "groupPerms": [
+            "read"
+          ]
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      },
+      "get": {
+        "operationId": "get_api_policies_locks",
+        "tags": [
+          "policies"
+        ],
+        "summary": "GET /api/policies/locks",
+        "description": "Implemented by Netlify function `policy-assign`.\nRequirement: Auth: authenticated request required (session or API key, route-dependent)\nRequirement: Environment resource permissions checked: policy:read\nRequirement: Group permissions checked: read",
+        "parameters": [],
+        "x-flash-auth": {
+          "authModel": "auth",
+          "apiKeyRejected": false,
+          "workspaceRoles": [],
+          "environmentRoles": [],
+          "workspacePerms": [],
+          "envResourcePerms": [
+            "policy:read"
+          ],
+          "groupPerms": [
+            "read"
+          ]
         },
         "responses": {
           "200": {
@@ -8933,7 +9040,7 @@
           "policies"
         ],
         "summary": "POST /api/policies/unassign",
-        "description": "Implemented by Netlify function `policy-assign`.\nRequirement: Auth: authenticated request required (session or API key, route-dependent)\nRequirement: Environment resource permissions checked: policy:write, policy:read\nRequirement: Group permissions checked: write, read\nRequirement: Common required JSON body fields: scope_type, scope_id",
+        "description": "Implemented by Netlify function `policy-assign`.\nRequirement: Auth: authenticated request required (session or API key, route-dependent)\nRequirement: Environment resource permissions checked: policy:read\nRequirement: Group permissions checked: read\nRequirement: Common required JSON body fields: scope_type, scope_id",
         "parameters": [],
         "x-flash-auth": {
           "authModel": "auth",
@@ -8942,11 +9049,9 @@
           "environmentRoles": [],
           "workspacePerms": [],
           "envResourcePerms": [
-            "policy:write",
             "policy:read"
           ],
           "groupPerms": [
-            "write",
             "read"
           ]
         },

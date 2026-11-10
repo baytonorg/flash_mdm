@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "test:policy-assignment-postgres": "bash scripts/test-policy-assignment-postgres.sh",
     "monaco:copy": "node scripts/copy-monaco-assets.mjs",
     "predev": "npm run monaco:copy",
     "dev": "vite",

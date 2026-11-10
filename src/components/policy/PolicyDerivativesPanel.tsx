@@ -190,8 +190,8 @@ export default function PolicyDerivativesPanel({ policyId, policyName }: { polic
     try {
       await unassignMutation.mutateAsync({ scope_type: 'group', scope_id: groupId });
       setAssignFeedback({ success: `Unassigned from ${groupName}.` });
-    } catch {
-      setAssignFeedback({ error: `Failed to unassign from ${groupName}.` });
+    } catch (error) {
+      setAssignFeedback({ error: error instanceof Error ? error.message : `Failed to unassign from ${groupName}.` });
     }
   };
 

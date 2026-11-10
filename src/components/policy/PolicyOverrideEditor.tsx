@@ -544,6 +544,7 @@ export default function PolicyOverrideEditor({
               policyId={policyId}
               scopeType={scopeType}
               scopeId={scopeId}
+              assignmentVersion={currentAssignment?.assignment_version}
               currentLocked={currentAssignment?.locked ?? false}
               currentLockedSections={currentAssignment?.locked_sections ?? []}
               inheritedLockState={lockState}

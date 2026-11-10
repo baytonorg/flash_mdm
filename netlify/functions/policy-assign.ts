@@ -1,12 +1,13 @@
 import type { Context } from '@netlify/functions';
 import { query, queryOne, execute, transaction } from './_lib/db.js';
-import { requireAuth } from './_lib/auth.js';
+import { requireAuth, type AuthContext } from './_lib/auth.js';
+import type { PoolClient } from 'pg';
 import {
   requireEnvironmentAccessScopeForResourcePermission,
   requireEnvironmentResourcePermission,
   requireGroupPermission,
 } from './_lib/rbac.js';
-import { canModifyLocks } from './_lib/policy-locks.js';
+import { requirePolicyAssignmentAuthority } from './_lib/policy-assignment-authority.js';
 import { logAudit } from './_lib/audit.js';
 import {
   assignPolicyToDeviceWithDerivative,
@@ -19,35 +20,20 @@ import { deletePolicyDerivativeWhenUnused } from './_lib/policy-derivative-clean
 import { jsonResponse, errorResponse, parseJsonBody, getClientIp, getSearchParams } from './_lib/helpers.js';
 import { preparePolicyBaseForDerivativeGeneration } from './_lib/policy-merge.js';
 
-/**
- * Derive the environment_id from a scope target.
- */
-async function deriveEnvironmentId(
-  scopeType: string,
-  scopeId: string
-): Promise<string | null> {
-  if (scopeType === 'environment') {
-    const env = await queryOne<{ id: string }>(
-      'SELECT id FROM environments WHERE id = $1',
-      [scopeId]
-    );
-    return env?.id ?? null;
+async function assignmentTransaction<T>(auth: AuthContext, request: Request, scopeType: string, operation: string, fn: (client: PoolClient) => Promise<T>) {
+  try { return await transaction(fn); }
+  catch (error) {
+    if (error instanceof Response && error.status === 403) {
+      // The mutation has rolled back. Keep denied evidence without a foreign
+      // policy/target identifier, payload, credential or impersonated actor guess.
+      await logAudit({ user_id: auth.user.id, action: 'policy.assignment_denied',
+        actor_type: auth.authType === 'api_key' ? 'api_key' : 'user',
+        api_key_id: auth.authType === 'api_key' ? auth.apiKey.id : undefined,
+        resource_type: 'policy_assignment', details: { scope_type: scopeType, operation, reason: 'insufficient_current_authority', support: !!auth.user.impersonation?.active },
+        ip_address: getClientIp(request) });
+    }
+    throw error;
   }
-  if (scopeType === 'group') {
-    const group = await queryOne<{ environment_id: string }>(
-      'SELECT environment_id FROM groups WHERE id = $1',
-      [scopeId]
-    );
-    return group?.environment_id ?? null;
-  }
-  if (scopeType === 'device') {
-    const device = await queryOne<{ environment_id: string }>(
-      'SELECT environment_id FROM devices WHERE id = $1 AND deleted_at IS NULL',
-      [scopeId]
-    );
-    return device?.environment_id ?? null;
-  }
-  return null;
 }
 
 /**
@@ -131,6 +117,44 @@ export default async (request: Request, context: Context) => {
     const segments = url.pathname.replace('/api/policies/', '').split('/').filter(Boolean);
     const action = segments[0];
 
+  // Lock editing cannot change assignment intent. Compare the version the UI
+  // displayed so a stale panel cannot relock a replaced or recreated assignment.
+  if (request.method === 'POST' && action === 'locks') {
+    const body = await parseJsonBody<{ policy_id: string; scope_type: 'environment' | 'group' | 'device'; scope_id: string; expected_version: string; locked: boolean; locked_sections: string[] }>(request);
+    if (!body.policy_id || !body.scope_id || !['environment', 'group', 'device'].includes(body.scope_type)
+      || typeof body.expected_version !== 'string' || !/^[a-f0-9]{32}$/.test(body.expected_version)
+      || typeof body.locked !== 'boolean' || !Array.isArray(body.locked_sections) || body.locked_sections.some(s => typeof s !== 'string')) return errorResponse('A current assignment, lock values and version are required. Refresh and try again.');
+    const envId = await assignmentTransaction(auth, request, body.scope_type, 'locks', async client => {
+      const authority = await requirePolicyAssignmentAuthority(client, auth, body, 'locks');
+      const current = (await client.query('SELECT policy_id, md5(row_to_json(pa)::text) AS assignment_version FROM policy_assignments pa WHERE scope_type=$1 AND scope_id=$2 FOR UPDATE', [body.scope_type, body.scope_id])).rows[0];
+      if (!current || current.policy_id !== body.policy_id || current.assignment_version !== body.expected_version) throw errorResponse('The assignment changed. Refresh before updating its locks.', 409);
+      await client.query(`UPDATE policy_assignments SET locked=$3, locked_sections=$4, locked_by=$5,
+        locked_at=CASE WHEN $3 OR cardinality($4::text[])>0 THEN now() ELSE NULL END, created_at=clock_timestamp()
+        WHERE scope_type=$1 AND scope_id=$2`, [body.scope_type, body.scope_id, body.locked, body.locked_sections, auth.user.id]);
+      await logAudit({ environment_id: authority.environmentId, user_id: auth.user.id, action: 'policy.locks_updated', resource_type: 'policy_assignment', resource_id: body.scope_id, details: { scope_type: body.scope_type }, ip_address: getClientIp(request) },client);
+      return authority.environmentId;
+    });
+    // Locks participate in effective composition. Preserve the previous lock
+    // save propagation without routing the request through reassignment.
+    let amapiSync: Record<string, unknown> = { skipped: true, reason: 'No AMAPI context' };
+    try {
+      const amapiContext = await getPolicyAmapiContext(envId);
+      if (amapiContext) {
+        const row = await queryOne<{ config: Record<string, unknown> | string | null }>('SELECT config FROM policies WHERE id=$1 AND environment_id=$2', [body.policy_id, envId]);
+        const baseConfig = preparePolicyBaseForDerivativeGeneration(typeof row?.config === 'string' ? JSON.parse(row.config) : row?.config ?? {});
+        await syncPolicyDerivativesForPolicy({policyId:body.policy_id,environmentId:envId,baseConfig,amapiContext});
+        const devices = await listAffectedDevicesForPolicyContext(body.policy_id,envId,body.scope_type,body.scope_id);
+        const failures: string[] = [];
+        for (const device of devices) {
+          try { await assignPolicyToDeviceWithDerivative({policyId:body.policy_id,environmentId:envId,deviceId:device.id,deviceAmapiName:device.amapi_name,amapiContext,baseConfig}); }
+          catch { failures.push(device.id); }
+        }
+        amapiSync = {synced:failures.length===0,devices_synced:devices.length-failures.length,device_failures:failures};
+      }
+    } catch { amapiSync = {synced:false,error:'Policy locks saved locally; device synchronisation needs retry'}; }
+    return jsonResponse({ message: amapiSync.synced === false ? 'Policy locks saved locally but device sync is incomplete' : 'Policy locks updated', amapi_sync:amapiSync });
+  }
+
   // POST /api/policies/assign
   if (request.method === 'POST' && action === 'assign') {
     const body = await parseJsonBody<{
@@ -144,89 +168,32 @@ export default async (request: Request, context: Context) => {
     if (!body.policy_id || !body.scope_type || !body.scope_id) {
       return errorResponse('policy_id, scope_type, and scope_id are required');
     }
+    if(typeof body.policy_id!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.policy_id))return errorResponse('A valid policy identifier is required',400);
+    if((body.locked!==undefined&&typeof body.locked!=='boolean')||(body.locked_sections!==undefined&&(!Array.isArray(body.locked_sections)||body.locked_sections.some(section=>typeof section!=='string'))))return errorResponse('Invalid policy lock values',400);
 
     if (!['environment', 'group', 'device'].includes(body.scope_type)) {
       return errorResponse('scope_type must be environment, group, or device');
     }
 
-    // Validate policy exists
-    const policy = await queryOne<{ id: string; name: string; environment_id: string }>(
-      'SELECT id, name, environment_id FROM policies WHERE id = $1',
-      [body.policy_id]
-    );
-    if (!policy) return errorResponse('Policy not found', 404);
-
-    // Validate scope target exists and derive environment_id
-    const envId = await deriveEnvironmentId(body.scope_type, body.scope_id);
-    if (!envId) return errorResponse('Scope target not found', 404);
-
-    // RBAC check — env admins can assign at any scope, group admins within their subtree
-    if (body.scope_type === 'group') {
-      try {
-        await requireEnvironmentResourcePermission(auth, envId, 'policy', 'write');
-      } catch {
-        // Fall back to group-level admin check
-        await requireGroupPermission(auth, body.scope_id, 'write');
-      }
-    } else if (body.scope_type === 'device') {
-      try {
-        await requireEnvironmentResourcePermission(auth, envId, 'policy', 'write');
-      } catch {
-        // Fall back — get device's group and check group permission
-        const device = await queryOne<{ group_id: string | null }>(
-          'SELECT group_id FROM devices WHERE id = $1 AND deleted_at IS NULL',
-          [body.scope_id]
-        );
-        if (device?.group_id) {
-          await requireGroupPermission(auth, device.group_id, 'write');
-        } else {
-          await requireEnvironmentResourcePermission(auth, envId, 'policy', 'write');
-        }
-      }
-    } else {
-      // Environment-level assignment requires env admin
-      await requireEnvironmentResourcePermission(auth, envId, 'policy', 'write');
-    }
-
-    // Prevent cross-environment assignment
-    if (policy.environment_id !== envId) {
-      return errorResponse('Policy does not belong to this environment', 400);
-    }
-
-    // RBAC: Determine if user can modify locks at this scope
-    let locked = body.locked ?? false;
-    let lockedSections = body.locked_sections ?? [];
-    const wantsToSetLocks = locked || lockedSections.length > 0;
-    const hasLockPermission = (await canModifyLocks(auth, body.scope_type, body.scope_id, envId)).allowed;
-
-    if (wantsToSetLocks && !hasLockPermission) {
-      return errorResponse('Insufficient permissions to set locks. Only environment admins or group admins at this scope can set locks.', 403);
-    }
-
-    // If user doesn't have lock permission and existing assignment has locks,
-    // preserve the existing lock state (allows policy reassignment without clearing locks)
-    if (!hasLockPermission) {
-      const existingAssignment = await queryOne<{ locked: boolean; locked_sections: string[] | null }>(
-        'SELECT locked, locked_sections FROM policy_assignments WHERE scope_type = $1 AND scope_id = $2',
-        [body.scope_type, body.scope_id]
-      );
-      if (existingAssignment) {
-        locked = existingAssignment.locked;
-        lockedSections = existingAssignment.locked_sections ?? [];
-      }
-    }
-    await transaction(async (client) => {
+    const envId = await assignmentTransaction(auth, request, body.scope_type, 'assign', async (client) => {
+      const { environmentId } = await requirePolicyAssignmentAuthority(client, auth, body);
+      const policy = (await client.query('SELECT id FROM policies WHERE id=$1 AND environment_id=$2 FOR SHARE', [body.policy_id, environmentId])).rows[0];
+      if (!policy) throw errorResponse('Policy not found', 404);
+      // Omission means preserve. Reassignment must not attribute existing locks
+      // to a different actor or silently clear them.
+      const changesLocks = body.locked !== undefined || body.locked_sections !== undefined;
+      if (changesLocks) await requirePolicyAssignmentAuthority(client, auth, body, 'locks');
       await client.query(
         `INSERT INTO policy_assignments (policy_id, scope_type, scope_id, locked, locked_sections, locked_by, locked_at)
          VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $4 OR array_length($5::text[], 1) > 0 THEN now() ELSE NULL END)
          ON CONFLICT (scope_type, scope_id) DO UPDATE
            SET policy_id = EXCLUDED.policy_id,
-               locked = EXCLUDED.locked,
-               locked_sections = EXCLUDED.locked_sections,
-               locked_by = EXCLUDED.locked_by,
-               locked_at = EXCLUDED.locked_at,
+               locked = CASE WHEN $7 THEN EXCLUDED.locked ELSE policy_assignments.locked END,
+               locked_sections = CASE WHEN $7 THEN EXCLUDED.locked_sections ELSE policy_assignments.locked_sections END,
+               locked_by = CASE WHEN $7 THEN EXCLUDED.locked_by ELSE policy_assignments.locked_by END,
+               locked_at = CASE WHEN $7 THEN EXCLUDED.locked_at ELSE policy_assignments.locked_at END,
                created_at = now()`,
-        [body.policy_id, body.scope_type, body.scope_id, locked, lockedSections, auth.user.id]
+        [body.policy_id, body.scope_type, body.scope_id, body.locked ?? false, body.locked_sections ?? [], auth.user.id, changesLocks]
       );
 
       // If scope_type is device, also update devices.policy_id
@@ -236,16 +203,8 @@ export default async (request: Request, context: Context) => {
           [body.policy_id, body.scope_id]
         );
       }
-    });
-
-    await logAudit({
-      environment_id: envId,
-      user_id: auth.user.id,
-      action: 'policy.assigned',
-      resource_type: 'policy',
-      resource_id: body.policy_id,
-      details: { scope_type: body.scope_type, scope_id: body.scope_id },
-      ip_address: getClientIp(request),
+      await logAudit({environment_id:environmentId,user_id:auth.user.id,action:'policy.assigned',resource_type:'policy',resource_id:body.policy_id,details:{scope_type:body.scope_type,scope_id:body.scope_id},ip_address:getClientIp(request)},client);
+      return environmentId;
     });
 
     // ── AMAPI derivative sync for all scope types ──────────────────────────
@@ -346,32 +305,20 @@ export default async (request: Request, context: Context) => {
       return errorResponse('scope_type must be environment, group, or device');
     }
 
-    // Derive environment_id for RBAC
-    const envId = await deriveEnvironmentId(body.scope_type, body.scope_id);
-    if (!envId) return errorResponse('Scope target not found', 404);
-
-    await requireEnvironmentResourcePermission(auth, envId, 'policy', 'write');
-
-    // Look up old assignment before deleting
-    const oldAssignment = await queryOne<{ policy_id: string }>(
-      'SELECT policy_id FROM policy_assignments WHERE scope_type = $1 AND scope_id = $2',
-      [body.scope_type, body.scope_id]
-    );
-    const oldDerivative = oldAssignment
-      ? await queryOne<{ amapi_name: string | null }>(
-          `SELECT amapi_name
-           FROM policy_derivatives
-           WHERE policy_id = $1 AND scope_type = $2 AND scope_id = $3`,
-          [oldAssignment.policy_id, body.scope_type, body.scope_id]
-        )
-      : null;
-
     // Capture affected devices BEFORE deleting the assignment (M6 fix).
     // After the delete, the assignment row is gone so the cascade query finds nothing.
     let affectedDevicesSnapshot: Array<{ id: string; amapi_name: string }> = [];
     let deleted = false;
 
-    await transaction(async (client) => {
+    const { environmentId: envId, oldAssignment, oldDerivative } = await assignmentTransaction(auth, request, body.scope_type, 'unassign', async (client) => {
+      const { environmentId: envId } = await requirePolicyAssignmentAuthority(client, auth, body);
+      const oldAssignment = (await client.query<{ policy_id: string }>(
+        'SELECT policy_id FROM policy_assignments WHERE scope_type=$1 AND scope_id=$2 FOR UPDATE', [body.scope_type, body.scope_id],
+      )).rows[0];
+      const oldDerivative = oldAssignment ? (await client.query<{ amapi_name: string | null }>(
+        'SELECT amapi_name FROM policy_derivatives WHERE policy_id=$1 AND scope_type=$2 AND scope_id=$3',
+        [oldAssignment.policy_id, body.scope_type, body.scope_id],
+      )).rows[0] : null;
       if (oldAssignment) {
         if (body.scope_type === 'device') {
           const d = await client.query(
@@ -410,21 +357,13 @@ export default async (request: Request, context: Context) => {
           [body.scope_id]
         );
       }
+      if(deleted) await logAudit({environment_id:envId,user_id:auth.user.id,action:'policy.unassigned',resource_type:'policy_assignment',resource_id:body.scope_id,details:{scope_type:body.scope_type,scope_id:body.scope_id,old_policy_id:oldAssignment?.policy_id},ip_address:getClientIp(request)},client);
+      return { environmentId: envId, oldAssignment, oldDerivative };
     });
 
     if (!deleted) {
       return errorResponse('Assignment not found', 404);
     }
-
-    await logAudit({
-      environment_id: envId,
-      user_id: auth.user.id,
-      action: 'policy.unassigned',
-      resource_type: 'policy_assignment',
-      resource_id: body.scope_id,
-      details: { scope_type: body.scope_type, scope_id: body.scope_id, old_policy_id: oldAssignment?.policy_id },
-      ip_address: getClientIp(request),
-    });
 
     // ── Post-unassignment: re-sync affected devices to their new effective policy ──
     let amapiSync: Record<string, unknown> = {};
@@ -538,7 +477,7 @@ export default async (request: Request, context: Context) => {
           created_at: string;
         }>(
           `SELECT DISTINCT pa.id, pa.policy_id, p.name as policy_name,
-                  pa.scope_type, pa.scope_id, pa.locked, pa.locked_sections, pa.created_at
+                  pa.scope_type, pa.scope_id, pa.locked, pa.locked_sections, pa.created_at, md5(row_to_json(pa)::text) AS assignment_version
            FROM policy_assignments pa
            JOIN policies p ON p.id = pa.policy_id
            LEFT JOIN groups g_assigned
@@ -575,7 +514,7 @@ export default async (request: Request, context: Context) => {
           created_at: string;
         }>(
           `SELECT pa.id, pa.policy_id, p.name as policy_name,
-                  pa.scope_type, pa.scope_id, pa.locked, pa.locked_sections, pa.created_at
+                  pa.scope_type, pa.scope_id, pa.locked, pa.locked_sections, pa.created_at, md5(row_to_json(pa)::text) AS assignment_version
            FROM policy_assignments pa
            JOIN policies p ON p.id = pa.policy_id
            WHERE p.environment_id = $1

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Lock, Unlock, Shield, AlertTriangle } from 'lucide-react';
 import { useSetPolicyLocks } from '@/api/queries/policies';
 
@@ -51,6 +51,7 @@ interface LockControlsProps {
   policyId: string;
   scopeType: 'environment' | 'group' | 'device';
   scopeId: string;
+  assignmentVersion?: string;
   currentLocked: boolean;
   currentLockedSections: string[];
   /** Read-only inherited locks from ancestor scopes */
@@ -65,6 +66,7 @@ export default function LockControls({
   policyId,
   scopeType,
   scopeId,
+  assignmentVersion,
   currentLocked,
   currentLockedSections,
   inheritedLockState,
@@ -72,11 +74,21 @@ export default function LockControls({
   const lockMutation = useSetPolicyLocks();
   const [localLocked, setLocalLocked] = useState<boolean>(currentLocked);
   const [localLockedSections, setLocalLockedSections] = useState<string[]>(currentLockedSections);
+  // Keep the version tied to the displayed edit baseline. A refetch must not
+  // silently approve old edits against a newer assignment generation.
+  const [baseline, setBaseline] = useState({version:assignmentVersion,locked:currentLocked,sections:currentLockedSections});
+  const baselineVersion = baseline.version;
   const [error, setError] = useState<string | null>(null);
 
   const hasChanges =
-    localLocked !== currentLocked ||
-    JSON.stringify([...localLockedSections].sort()) !== JSON.stringify([...currentLockedSections].sort());
+    localLocked !== baseline.locked ||
+    JSON.stringify([...localLockedSections].sort()) !== JSON.stringify([...baseline.sections].sort());
+  useEffect(()=>{
+    if(!hasChanges && assignmentVersion!==baselineVersion) {
+      setLocalLocked(currentLocked);setLocalLockedSections(currentLockedSections);
+      setBaseline({version:assignmentVersion,locked:currentLocked,sections:currentLockedSections});
+    }
+  },[assignmentVersion,baselineVersion,currentLocked,currentLockedSections,hasChanges]);
 
   const toggleFullLock = useCallback(() => {
     setLocalLocked((prev) => !prev);
@@ -94,17 +106,21 @@ export default function LockControls({
   const handleSave = useCallback(async () => {
     setError(null);
     try {
+      if (!baselineVersion) throw new Error('Assign this policy directly at this scope before changing its locks.');
+      if (baselineVersion !== assignmentVersion) throw new Error('The assignment changed while you were editing. Close and reopen Lock Settings before saving.');
       await lockMutation.mutateAsync({
         policy_id: policyId,
         scope_type: scopeType,
         scope_id: scopeId,
         locked: localLocked,
         locked_sections: localLockedSections,
+        expected_version: baselineVersion,
       });
+      setBaseline({version:baselineVersion,locked:localLocked,sections:localLockedSections});
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update locks');
     }
-  }, [policyId, scopeType, scopeId, localLocked, localLockedSections, lockMutation]);
+  }, [policyId, scopeType, scopeId, assignmentVersion, baselineVersion, localLocked, localLockedSections, lockMutation]);
 
   // Sections that are locked by inheritance (can't be unlocked at this scope)
   const inheritedLockedSections = new Set(inheritedLockState?.locked_sections ?? []);
@@ -112,6 +128,7 @@ export default function LockControls({
 
   return (
     <div className="space-y-4">
+      {!assignmentVersion && <p className="text-sm text-gray-600">Locks apply to a direct assignment. Assign this policy at this scope first, then change its locks.</p>}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Shield className="h-4 w-4 text-gray-500" />
@@ -120,7 +137,7 @@ export default function LockControls({
         {hasChanges && (
           <button
             onClick={handleSave}
-            disabled={lockMutation.isPending}
+            disabled={lockMutation.isPending || !assignmentVersion}
             className="inline-flex items-center gap-1 px-3 py-1 text-xs font-medium text-white bg-accent hover:bg-accent/90 rounded transition-colors"
           >
             {lockMutation.isPending ? 'Saving...' : 'Save locks'}
@@ -159,6 +176,7 @@ export default function LockControls({
             <button
               type="button"
               role="switch"
+              aria-label="Lock entire policy"
               aria-checked={localLocked}
               onClick={toggleFullLock}
               className={`relative inline-flex h-6 w-11 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-accent/30 focus:ring-offset-2 ${

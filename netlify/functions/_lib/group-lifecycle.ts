@@ -46,6 +46,7 @@ async function requireConsistentSubtree(client:PoolClient,groupId:string) {
 export async function updateGroupLifecycle(input:{auth:AuthContext;groupId:string;parentId?:string|null;name?:string;description?:string;clearDirectAssignments?:boolean;ip:string}) {
   return transaction(async client=>{
     const group=await groupContext(client,input.auth,input.groupId,'write');
+    if(input.clearDirectAssignments)await requirePolicyAssignmentAuthority(client,input.auth,{scope_type:'group',scope_id:input.groupId});
     await requireConsistentSubtree(client,input.groupId);
     const parentChanged=input.parentId!==undefined&&input.parentId!==group.parent_group_id;
     if(parentChanged&&input.parentId) {
@@ -95,3 +96,4 @@ export async function deleteGroupLifecycle(input:{auth:AuthContext;groupId:strin
     return {affected_devices:affected.length};
   }));
 }
+import { requirePolicyAssignmentAuthority } from './policy-assignment-authority.js';

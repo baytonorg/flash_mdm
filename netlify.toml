@@ -214,6 +214,10 @@
 
 # Policies (specific files first, then catch-all to policy-crud)
 [[redirects]]
+  from = "/api/policies/locks"
+  to = "/.netlify/functions/policy-assign"
+  status = 200
+[[redirects]]
   from = "/api/policies/assign"
   to = "/.netlify/functions/policy-assign"
   status = 200
