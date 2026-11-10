@@ -4,8 +4,23 @@ import { errorResponse } from './helpers.js';
 import { lockMembershipWorkspaces } from './membership-lifecycle.js';
 import { resolvePolicyAssignmentMinimum } from './rbac-matrix.js';
 import { workspaceRoleMeetsMinimum } from './rbac.js';
+import { logAudit } from './audit.js';
+import { runWithoutAuditAuthContext } from './request-auth-context.js';
 
 export type AssignmentTarget = { scope_type: 'environment' | 'group' | 'device'; scope_id: string };
+
+export async function withPolicyAssignmentDeniedAudit<T>(auth: AuthContext, scopeType: string, operation: string, fn: () => Promise<T>) {
+  try {return await fn();}
+  catch(error) {
+    if(error instanceof Response && [403,404].includes(error.status)) {
+      // Denials survive transaction rollback. Explicit attribution excludes
+      // request-time role/creator enrichment and foreign resource identifiers.
+      await runWithoutAuditAuthContext(()=>logAudit({user_id:auth.user.id,actor_type:auth.authType==='api_key'?'api_key':'user',api_key_id:auth.authType==='api_key'?auth.apiKey.id:undefined,
+        action:'policy.assignment_denied',resource_type:'policy_assignment',details:{scope_type:scopeType,operation,reason:error.status===403?'insufficient_current_authority':'scope_or_policy_unavailable',support:!!auth.user.impersonation?.active,support_actor_user_id:auth.user.impersonation?.by_user_id}}));
+    }
+    throw error;
+  }
+}
 
 // All reads and the mutation use this client. The workspace row is the same
 // lifecycle anchor used by membership and topology writers, even for a scope

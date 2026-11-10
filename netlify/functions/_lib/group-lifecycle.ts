@@ -8,7 +8,7 @@ import { logAudit } from './audit.js';
 import { enqueueDevicePolicyReconcile } from './device-policy-reconcile.js';
 import { withSignupLinkReferenceLock } from './signup-link-reference-lock.js';
 import { scopeAuthority } from './scope-authority.js';
-import { requirePolicyAssignmentAuthority } from './policy-assignment-authority.js';
+import { requirePolicyAssignmentAuthority, withPolicyAssignmentDeniedAudit } from './policy-assignment-authority.js';
 
 async function groupContext(client: PoolClient, auth: AuthContext, groupId: string, action:'write'|'delete') {
   const hint=(await client.query('SELECT e.workspace_id FROM groups g JOIN environments e ON e.id=g.environment_id WHERE g.id=$1',[groupId])).rows[0];
@@ -45,7 +45,7 @@ async function requireConsistentSubtree(client:PoolClient,groupId:string) {
 }
 
 export async function updateGroupLifecycle(input:{auth:AuthContext;groupId:string;parentId?:string|null;name?:string;description?:string;clearDirectAssignments?:boolean;ip:string}) {
-  return transaction(async client=>{
+  const mutate=()=>transaction(async client=>{
     const group=await groupContext(client,input.auth,input.groupId,'write');
     if(input.clearDirectAssignments)await requirePolicyAssignmentAuthority(client,input.auth,{scope_type:'group',scope_id:input.groupId});
     await requireConsistentSubtree(client,input.groupId);
@@ -73,6 +73,7 @@ export async function updateGroupLifecycle(input:{auth:AuthContext;groupId:strin
     await audit(client,input.auth,input.groupId,group.environment_id,'group.updated',{parent_changed:parentChanged,previous_parent_group_id:group.parent_group_id,new_parent_group_id:input.parentId??null,clear_direct_assignments:input.clearDirectAssignments===true,policy_reconciliation_queued:queued},input.ip);
     return {affected_devices:queued};
   });
+  return input.clearDirectAssignments ? withPolicyAssignmentDeniedAudit(input.auth,'group','clear_direct_assignments',mutate) : mutate();
 }
 
 export async function deleteGroupLifecycle(input:{auth:AuthContext;groupId:string;ip:string}) {

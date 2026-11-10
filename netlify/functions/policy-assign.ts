@@ -7,7 +7,7 @@ import {
   requireEnvironmentResourcePermission,
   requireGroupPermission,
 } from './_lib/rbac.js';
-import { requirePolicyAssignmentAuthority } from './_lib/policy-assignment-authority.js';
+import { requirePolicyAssignmentAuthority, withPolicyAssignmentDeniedAudit } from './_lib/policy-assignment-authority.js';
 import { logAudit } from './_lib/audit.js';
 import {
   assignPolicyToDeviceWithDerivative,
@@ -21,19 +21,7 @@ import { jsonResponse, errorResponse, parseJsonBody, getClientIp, getSearchParam
 import { preparePolicyBaseForDerivativeGeneration } from './_lib/policy-merge.js';
 
 async function assignmentTransaction<T>(auth: AuthContext, request: Request, scopeType: string, operation: string, fn: (client: PoolClient) => Promise<T>) {
-  try { return await transaction(fn); }
-  catch (error) {
-    if (error instanceof Response && error.status === 403) {
-      // The mutation has rolled back. Keep denied evidence without a foreign
-      // policy/target identifier, payload, credential or impersonated actor guess.
-      await logAudit({ user_id: auth.user.id, action: 'policy.assignment_denied',
-        actor_type: auth.authType === 'api_key' ? 'api_key' : 'user',
-        api_key_id: auth.authType === 'api_key' ? auth.apiKey.id : undefined,
-        resource_type: 'policy_assignment', details: { scope_type: scopeType, operation, reason: 'insufficient_current_authority', support: !!auth.user.impersonation?.active },
-        ip_address: getClientIp(request) });
-    }
-    throw error;
-  }
+  return withPolicyAssignmentDeniedAudit(auth,scopeType,operation,()=>transaction(fn));
 }
 
 /**

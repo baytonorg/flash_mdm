@@ -10,7 +10,7 @@ vi.mock('../_lib/db.js', () => ({
 vi.mock('../_lib/auth.js', () => ({ requireAuth: vi.fn() }));
 // This suite covers derivative payload preservation only. The composed
 // permission helper is exercised against PostgreSQL in policy-assignment.postgres.
-vi.mock('../_lib/policy-assignment-authority.js', () => ({ requirePolicyAssignmentAuthority: vi.fn().mockResolvedValue({ environmentId: 'env_1' }) }));
+vi.mock('../_lib/policy-assignment-authority.js', () => ({ requirePolicyAssignmentAuthority: vi.fn().mockResolvedValue({ environmentId: 'env_1' }), withPolicyAssignmentDeniedAudit: (_auth:unknown,_scope:unknown,_operation:unknown,fn:()=>Promise<unknown>)=>fn() }));
 vi.mock('../_lib/rbac.js', () => ({
   requireEnvironmentAccessScopeForResourcePermission: vi.fn(),
   requireEnvironmentResourcePermission: vi.fn(),

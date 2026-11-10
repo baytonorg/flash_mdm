@@ -7,6 +7,8 @@ import { requirePolicyAssignmentAuthority } from '../_lib/policy-assignment-auth
 import { requireAuth, type AuthContext } from '../_lib/auth.js';
 import { requireEnvironmentResourcePermission, requireGroupPermission, clearWorkspacePermissionMatrixCache } from '../_lib/rbac.js';
 import { getPolicyAmapiContext } from '../_lib/policy-derivatives.js';
+import { updateGroupLifecycle } from '../_lib/group-lifecycle.js';
+import { runWithAuditAuthContext } from '../_lib/request-auth-context.js';
 import handler from '../policy-assign.js';
 vi.mock('../_lib/auth.js', async original => ({ ...await original<typeof import('../_lib/auth.js')>(), requireAuth: vi.fn() }));
 // No production provider is called. Permissions, transactions, schema and audit
@@ -100,8 +102,16 @@ suite('policy assignment current authority with PostgreSQL', () => {
     await pool.query("INSERT INTO policies(id,environment_id,name) VALUES($1,$2,'Other')", [foreign,otherEnv]);
     const absent = await assign('group',child,crypto.randomUUID()), outside = await assign('group',child,foreign);
     expect(absent.status).toBe(404); expect(outside.status).toBe(404); expect(await absent.text()).toBe(await outside.text());
+    const denials=(await pool.query("SELECT details FROM audit_log WHERE action='policy.assignment_denied'")).rows;
+    expect(denials).toHaveLength(2);expect(denials[0]).toEqual(denials[1]);expect(JSON.stringify(denials)).not.toContain(foreign);
     await pool.query("UPDATE group_memberships SET role='member'");
     expect((await assign('group',child,foreign)).status).toBe(403);
+  });
+  it('audits denied clear-direct-assignment alternate control after transaction rollback',async()=>{
+    await assign();await pool.query("UPDATE group_memberships SET role='member'");
+    await expect(updateGroupLifecycle({auth,groupId:child,clearDirectAssignments:true,ip:''})).rejects.toBeInstanceOf(Response);
+    expect((await pool.query('SELECT 1 FROM policy_assignments')).rowCount).toBe(1);
+    expect((await pool.query("SELECT details->>'operation' AS operation FROM audit_log WHERE action='policy.assignment_denied'")).rows).toEqual([{operation:'clear_direct_assignments'}]);
   });
   it('preserves all lock provenance on ordinary reassign, and rejects stale lock-panel versions without changing intent', async () => {
     expect((await assign()).status).toBe(200);
@@ -183,7 +193,9 @@ suite('policy assignment current authority with PostgreSQL', () => {
     const id=crypto.randomUUID(); await pool.query('UPDATE users SET is_superadmin=true');
     await pool.query("INSERT INTO api_keys(id,name,scope_type,workspace_id,environment_id,role,token_hash,token_enc,token_prefix,created_by_user_id) VALUES($1,'Synthetic fixture',$2,$3,$4,'member',$5,'synthetic','synthetic',$6)",[id,scope,ws,scope==='environment'?env:null,id.replaceAll('-',''),user]);
     auth={authType:'api_key',user:{id:null,is_superadmin:true},apiKey:{id,role:'owner'}} as AuthContext;
-    expect((await assign()).status).toBe(403);
+    expect((await runWithAuditAuthContext({...auth,user:{id:null,email:'synthetic@fixture.invalid'},apiKey:{...auth.apiKey!,name:'fixture',scope_type:scope as 'workspace'|'environment',scope_id:ws,workspace_id:ws,environment_id:scope==='environment'?env:null,role:'owner',created_by_user_id:user,created_by_email:'excluded@fixture.invalid'}},()=>assign())).status).toBe(403);
+    const denial=(await pool.query("SELECT user_id,api_key_id,details FROM audit_log WHERE action='policy.assignment_denied' ORDER BY created_at DESC LIMIT 1")).rows[0];
+    expect(denial.user_id).toBeNull();expect(denial.api_key_id).toBe(id);expect(JSON.stringify(denial.details)).not.toContain('excluded');expect(denial.details).not.toHaveProperty('auth_context');
     await pool.query("UPDATE api_keys SET role='admin' WHERE id=$1",[id]);
     expect((await assign()).status).toBe(200); expect((await unassign()).status).toBe(200);
     await pool.query("UPDATE api_keys SET expires_at=now()-interval '1 hour' WHERE id=$1",[id]);
