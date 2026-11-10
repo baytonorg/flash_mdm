@@ -104,7 +104,9 @@ suite('policy assignment current authority with PostgreSQL', () => {
     expect((await assign('group',child,foreign)).status).toBe(403);
   });
   it('preserves all lock provenance on ordinary reassign, and rejects stale lock-panel versions without changing intent', async () => {
-    expect((await post('assign',{scope_type:'group',scope_id:child,policy_id:policy,locked:true,locked_sections:['cameraDisabled']})).status).toBe(200);
+    expect((await assign()).status).toBe(200);
+    const original = (await pool.query('SELECT md5(row_to_json(pa)::text) AS version FROM policy_assignments pa')).rows[0];
+    expect((await post('locks',{scope_type:'group',scope_id:child,policy_id:policy,locked:true,locked_sections:['cameraDisabled'],expected_version:original.version})).status).toBe(200);
     const before = (await pool.query('SELECT *,md5(row_to_json(pa)::text) AS assignment_version FROM policy_assignments pa')).rows[0];
     expect((await assign()).status).toBe(200);
     const after = (await pool.query('SELECT * FROM policy_assignments')).rows[0];
@@ -114,6 +116,12 @@ suite('policy assignment current authority with PostgreSQL', () => {
     const current = (await pool.query('SELECT md5(row_to_json(pa)::text) AS version FROM policy_assignments pa')).rows[0];
     expect((await post('locks',{...lockBody,expected_version:current.version})).status).toBe(200);
     expect((await pool.query('SELECT policy_id,locked FROM policy_assignments')).rows[0]).toEqual({policy_id:policy,locked:false});
+  });
+  it('rejects an old browser lock save through assign instead of resurrecting stale policy intent',async()=>{
+    await assign();const before=(await pool.query('SELECT * FROM policy_assignments')).rows;
+    expect((await post('assign',{scope_type:'group',scope_id:child,policy_id:policy,locked:false,locked_sections:[]})).status).toBe(409);
+    expect((await pool.query('SELECT * FROM policy_assignments')).rows).toEqual(before);
+    expect(getPolicyAmapiContext).toHaveBeenCalledTimes(1);
   });
   it('allows Admin lock editing with Owner assignment floor while denying reassignment', async () => {
     await assign();

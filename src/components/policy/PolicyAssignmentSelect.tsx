@@ -88,7 +88,7 @@ export default function PolicyAssignmentSelect({
           <p className="text-xs text-amber-600">Currently inherited from {currentSource}. Assigning here will override.</p>
           {currentPolicyId && <button type="button" disabled={isPending}
             className="text-xs font-medium text-accent hover:underline disabled:opacity-50"
-            onClick={async()=>{try{await assignMutation.mutateAsync({policy_id:currentPolicyId,scope_type:scopeType,scope_id:scopeId});onAssigned?.();}catch{/* Mutation error remains visible below. */}}>
+            onClick={async()=>{try{await assignMutation.mutateAsync({policy_id:currentPolicyId,scope_type:scopeType,scope_id:scopeId});onAssigned?.();}catch{/* Mutation error remains visible below. */}}}>
             Assign here
           </button>}
         </div>

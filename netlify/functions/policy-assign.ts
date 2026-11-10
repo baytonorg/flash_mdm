@@ -170,6 +170,7 @@ export default async (request: Request, context: Context) => {
     }
     if(typeof body.policy_id!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.policy_id))return errorResponse('A valid policy identifier is required',400);
     if((body.locked!==undefined&&typeof body.locked!=='boolean')||(body.locked_sections!==undefined&&(!Array.isArray(body.locked_sections)||body.locked_sections.some(section=>typeof section!=='string'))))return errorResponse('Invalid policy lock values',400);
+    if(body.locked!==undefined||body.locked_sections!==undefined)return errorResponse('Lock settings now require a current assignment version. Refresh the page and use Lock Settings.',409);
 
     if (!['environment', 'group', 'device'].includes(body.scope_type)) {
       return errorResponse('scope_type must be environment, group, or device');
@@ -181,19 +182,13 @@ export default async (request: Request, context: Context) => {
       if (!policy) throw errorResponse('Policy not found', 404);
       // Omission means preserve. Reassignment must not attribute existing locks
       // to a different actor or silently clear them.
-      const changesLocks = body.locked !== undefined || body.locked_sections !== undefined;
-      if (changesLocks) await requirePolicyAssignmentAuthority(client, auth, body, 'locks');
       await client.query(
-        `INSERT INTO policy_assignments (policy_id, scope_type, scope_id, locked, locked_sections, locked_by, locked_at)
-         VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $4 OR array_length($5::text[], 1) > 0 THEN now() ELSE NULL END)
+        `INSERT INTO policy_assignments (policy_id, scope_type, scope_id)
+         VALUES ($1, $2, $3)
          ON CONFLICT (scope_type, scope_id) DO UPDATE
            SET policy_id = EXCLUDED.policy_id,
-               locked = CASE WHEN $7 THEN EXCLUDED.locked ELSE policy_assignments.locked END,
-               locked_sections = CASE WHEN $7 THEN EXCLUDED.locked_sections ELSE policy_assignments.locked_sections END,
-               locked_by = CASE WHEN $7 THEN EXCLUDED.locked_by ELSE policy_assignments.locked_by END,
-               locked_at = CASE WHEN $7 THEN EXCLUDED.locked_at ELSE policy_assignments.locked_at END,
                created_at = now()`,
-        [body.policy_id, body.scope_type, body.scope_id, body.locked ?? false, body.locked_sections ?? [], auth.user.id, changesLocks]
+        [body.policy_id, body.scope_type, body.scope_id]
       );
 
       // If scope_type is device, also update devices.policy_id
