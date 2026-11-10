@@ -13,6 +13,7 @@ import { amapiCall, getAmapiErrorHttpStatus } from './_lib/amapi.js';
 import { logAudit } from './_lib/audit.js';
 import { jsonResponse, errorResponse, parseJsonBody, getClientIp, getSearchParams } from './_lib/helpers.js';
 import { withSignupLinkReferenceLock } from './_lib/signup-link-reference-lock.js';
+import { environmentFeaturesPreservingRbac } from './_lib/environment-features.js';
 
 type PgLikeError = {
   code?: unknown;
@@ -452,7 +453,13 @@ export default async (request: Request, _context: Context) => {
       updates.push(`pubsub_topic = $${idx++}`);
       values.push(dbPubsubTopic);
     }
-    if (body.enterprise_features) { updates.push(`enterprise_features = $${idx++}`); values.push(JSON.stringify(body.enterprise_features)); }
+    if (body.enterprise_features) {
+      if (typeof body.enterprise_features !== 'object' || Array.isArray(body.enterprise_features)) {
+        return errorResponse('enterprise_features must be an object');
+      }
+      updates.push(`enterprise_features = ${environmentFeaturesPreservingRbac(idx++)}`);
+      values.push(JSON.stringify(body.enterprise_features));
+    }
     updates.push('updated_at = now()');
 
     values.push(body.id);

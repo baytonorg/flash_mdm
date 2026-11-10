@@ -244,10 +244,12 @@ export async function setWorkspaceAssistantSettings(
 
   await execute(
     `UPDATE workspaces
-     SET settings = $1::jsonb,
+     SET settings = CASE WHEN $1::jsonb = 'null'::jsonb
+           THEN COALESCE(settings, '{}'::jsonb) - 'flashagent'
+           ELSE jsonb_set(COALESCE(settings, '{}'::jsonb), '{flashagent}', $1::jsonb) END,
          updated_at = now()
      WHERE id = $2`,
-    [JSON.stringify(currentSettings), workspaceId],
+    [JSON.stringify((currentSettings as Record<string, unknown>).flashagent ?? null), workspaceId],
   );
 }
 

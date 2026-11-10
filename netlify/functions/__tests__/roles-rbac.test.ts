@@ -250,9 +250,9 @@ describe('roles-rbac', () => {
     const savedSettingsJson = mockExecute.mock.calls[0]?.[1]?.[0];
     expect(typeof savedSettingsJson).toBe('string');
     const savedSettings = JSON.parse(savedSettingsJson as string);
-    expect(savedSettings.some_existing_setting).toBe(true);
-    expect(savedSettings.rbac.permission_matrix.audit.read).toBe('viewer');
-    expect(savedSettings.rbac.permission_matrix.audit.read_privileged).toBe('owner');
+    expect(savedSettings.permission_matrix.audit.read).toBe('viewer');
+    expect(savedSettings.permission_matrix.audit.read_privileged).toBe('owner');
+    expect(mockExecute.mock.calls[0]?.[0]).toContain("jsonb_set(COALESCE(settings, '{}'::jsonb), '{rbac}', $1::jsonb)");
     expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({
       action: 'rbac.permission_matrix.updated',
       workspace_id: 'ws_1',
@@ -343,10 +343,8 @@ describe('roles-rbac', () => {
     expect(body.has_override).toBe(false);
     expect(body.matrix).toEqual(body.defaults);
 
-    const savedSettingsJson = mockExecute.mock.calls[0]?.[1]?.[0];
-    const savedSettings = JSON.parse(savedSettingsJson as string);
-    expect(savedSettings.some_existing_setting).toBe(true);
-    expect(savedSettings.rbac).toBeUndefined();
+    expect(mockExecute.mock.calls[0]?.[0]).toContain("#- '{rbac,permission_matrix}'");
+    expect(mockExecute.mock.calls[0]?.[1]).toEqual(['ws_1']);
     expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({
       action: 'rbac.permission_matrix.cleared',
       workspace_id: 'ws_1',
@@ -448,11 +446,11 @@ describe('roles-rbac', () => {
       [expect.any(String), 'env_1']
     );
 
-    // Verify existing enterprise_features preserved
+    // Only RBAC is supplied; SQL preserves the current unrelated features.
     const savedJson = mockExecute.mock.calls[0]?.[1]?.[0];
-    const savedFeatures = JSON.parse(savedJson as string);
-    expect(savedFeatures.some_existing).toBe(true);
-    expect(savedFeatures.rbac.permission_matrix.device.write).toBe('admin');
+    const savedRbac = JSON.parse(savedJson as string);
+    expect(savedRbac.permission_matrix.device.write).toBe('admin');
+    expect(mockExecute.mock.calls[0]?.[0]).toContain("jsonb_set(COALESCE(enterprise_features, '{}'::jsonb), '{rbac}', $1::jsonb)");
 
     // Verify audit log
     expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({
@@ -490,11 +488,9 @@ describe('roles-rbac', () => {
     // Matrix should be workspace inherited (defaults since no ws override)
     expect(body.matrix.workspace).toBeUndefined(); // filtered for env scope
 
-    // Verify DB update clears rbac from enterprise_features
-    const savedJson = mockExecute.mock.calls[0]?.[1]?.[0];
-    const savedFeatures = JSON.parse(savedJson as string);
-    expect(savedFeatures.some_existing).toBe(true);
-    expect(savedFeatures.rbac).toBeUndefined();
+    // Remove only override fields from the latest row, preserving feature data.
+    expect(mockExecute.mock.calls[0]?.[0]).toContain("#- '{rbac,permission_matrix}'");
+    expect(mockExecute.mock.calls[0]?.[1]).toEqual(['env_1']);
 
     // Verify audit log
     expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({
