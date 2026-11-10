@@ -8,6 +8,7 @@ import { logAudit } from './audit.js';
 import { enqueueDevicePolicyReconcile } from './device-policy-reconcile.js';
 import { withSignupLinkReferenceLock } from './signup-link-reference-lock.js';
 import { scopeAuthority } from './scope-authority.js';
+import { requirePolicyAssignmentAuthority } from './policy-assignment-authority.js';
 
 async function groupContext(client: PoolClient, auth: AuthContext, groupId: string, action:'write'|'delete') {
   const hint=(await client.query('SELECT e.workspace_id FROM groups g JOIN environments e ON e.id=g.environment_id WHERE g.id=$1',[groupId])).rows[0];
@@ -96,4 +97,3 @@ export async function deleteGroupLifecycle(input:{auth:AuthContext;groupId:strin
     return {affected_devices:affected.length};
   }));
 }
-import { requirePolicyAssignmentAuthority } from './policy-assignment-authority.js';
