@@ -7,7 +7,7 @@ import {
   requireEnvironmentResourcePermission,
   requireGroupPermission,
 } from './_lib/rbac.js';
-import { requirePolicyAssignmentAuthority, withPolicyAssignmentDeniedAudit } from './_lib/policy-assignment-authority.js';
+import { requirePolicyAssignmentAuthority, requireUnexpiredAssignmentPrincipal, withPolicyAssignmentDeniedAudit } from './_lib/policy-assignment-authority.js';
 import { logAudit } from './_lib/audit.js';
 import {
   assignPolicyToDeviceWithDerivative,
@@ -116,6 +116,7 @@ export default async (request: Request, context: Context) => {
       const authority = await requirePolicyAssignmentAuthority(client, auth, body, 'locks');
       const current = (await client.query('SELECT policy_id, md5(row_to_json(pa)::text) AS assignment_version FROM policy_assignments pa WHERE scope_type=$1 AND scope_id=$2 FOR UPDATE', [body.scope_type, body.scope_id])).rows[0];
       if (!current || current.policy_id !== body.policy_id || current.assignment_version !== body.expected_version) throw errorResponse('The assignment changed. Refresh before updating its locks.', 409);
+      await requireUnexpiredAssignmentPrincipal(client,auth);
       await client.query(`UPDATE policy_assignments SET locked=$3, locked_sections=$4, locked_by=$5,
         locked_at=CASE WHEN $3 OR cardinality($4::text[])>0 THEN now() ELSE NULL END, created_at=clock_timestamp()
         WHERE scope_type=$1 AND scope_id=$2`, [body.scope_type, body.scope_id, body.locked, body.locked_sections, auth.user.id]);
@@ -168,6 +169,8 @@ export default async (request: Request, context: Context) => {
       const { environmentId } = await requirePolicyAssignmentAuthority(client, auth, body);
       const policy = (await client.query('SELECT id FROM policies WHERE id=$1 AND environment_id=$2 FOR SHARE', [body.policy_id, environmentId])).rows[0];
       if (!policy) throw errorResponse('Policy not found', 404);
+      await client.query('SELECT id FROM policy_assignments WHERE scope_type=$1 AND scope_id=$2 FOR UPDATE',[body.scope_type,body.scope_id]);
+      await requireUnexpiredAssignmentPrincipal(client,auth);
       // Omission means preserve. Reassignment must not attribute existing locks
       // to a different actor or silently clear them.
       await client.query(
@@ -327,6 +330,7 @@ export default async (request: Request, context: Context) => {
         }
       }
 
+      await requireUnexpiredAssignmentPrincipal(client,auth);
       const result = await client.query(
         'DELETE FROM policy_assignments WHERE scope_type = $1 AND scope_id = $2',
         [body.scope_type, body.scope_id]

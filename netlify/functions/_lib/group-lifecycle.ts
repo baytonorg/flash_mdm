@@ -8,7 +8,7 @@ import { logAudit } from './audit.js';
 import { enqueueDevicePolicyReconcile } from './device-policy-reconcile.js';
 import { withSignupLinkReferenceLock } from './signup-link-reference-lock.js';
 import { scopeAuthority } from './scope-authority.js';
-import { requirePolicyAssignmentAuthority, withPolicyAssignmentDeniedAudit } from './policy-assignment-authority.js';
+import { requirePolicyAssignmentAuthority, requireUnexpiredAssignmentPrincipal, withPolicyAssignmentDeniedAudit } from './policy-assignment-authority.js';
 
 async function groupContext(client: PoolClient, auth: AuthContext, groupId: string, action:'write'|'delete') {
   const hint=(await client.query('SELECT e.workspace_id FROM groups g JOIN environments e ON e.id=g.environment_id WHERE g.id=$1',[groupId])).rows[0];
@@ -61,6 +61,7 @@ export async function updateGroupLifecycle(input:{auth:AuthContext;groupId:strin
       if(!scope.role||!workspaceRoleMeetsMinimum(scope.role,scope.matrix.group.write))throw errorResponse('Moving to the environment root requires environment-wide management authority',403);
     }
     const affected=(await client.query(`SELECT d.id FROM devices d JOIN group_closures gc ON gc.descendant_id=d.group_id WHERE gc.ancestor_id=$1 AND d.deleted_at IS NULL`,[input.groupId])).rows.map(r=>r.id);
+    if(input.clearDirectAssignments)await requireUnexpiredAssignmentPrincipal(client,input.auth);
     await client.query(`UPDATE groups SET name=COALESCE($2,name),description=COALESCE($3,description),parent_group_id=CASE WHEN $4 THEN $5::uuid ELSE parent_group_id END,updated_at=now() WHERE id=$1`,[input.groupId,input.name??null,input.description??null,parentChanged,input.parentId??null]);
     if(parentChanged) {
       await client.query(`DELETE FROM group_closures gc USING group_closures old_anc,group_closures sub WHERE old_anc.descendant_id=$1 AND old_anc.ancestor_id<>$1 AND sub.ancestor_id=$1 AND gc.ancestor_id=old_anc.ancestor_id AND gc.descendant_id=sub.descendant_id`,[input.groupId]);

@@ -9,6 +9,15 @@ import { runWithoutAuditAuthContext } from './request-auth-context.js';
 
 export type AssignmentTarget = { scope_type: 'environment' | 'group' | 'device'; scope_id: string };
 
+// Call after all potentially blocking scope/policy/assignment reads and directly
+// before mutation. The authority check holds the key row FOR SHARE, preventing
+// role/scope/revocation changes, but wall-clock expiry can pass while waiting.
+export async function requireUnexpiredAssignmentPrincipal(client: PoolClient, auth: AuthContext) {
+  if(auth.authType!=='api_key')return;
+  const current=(await client.query('SELECT 1 FROM api_keys WHERE id=$1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp())',[auth.apiKey.id])).rows[0];
+  if(!current)throw errorResponse('API-key authority expired or changed before the operation could be saved',403);
+}
+
 export async function withPolicyAssignmentDeniedAudit<T>(auth: AuthContext, scopeType: string, operation: string, fn: () => Promise<T>) {
   try {return await fn();}
   catch(error) {

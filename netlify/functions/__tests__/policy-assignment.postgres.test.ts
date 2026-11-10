@@ -207,4 +207,29 @@ suite('policy assignment current authority with PostgreSQL', () => {
     await pool.query('UPDATE api_keys SET workspace_id=$2 WHERE id=$1',[id,otherWs]);
     expect((await assign()).status).toBe(403);
   });
+  it('denies an API key that expires while its authorised request waits for the policy row',async()=>{
+    const id=crypto.randomUUID();
+    await pool.query("INSERT INTO api_keys(id,name,scope_type,workspace_id,environment_id,role,token_hash,token_enc,token_prefix,created_by_user_id,expires_at) VALUES($1,'Synthetic expiring fixture','environment',$2,$3,'admin',$4,'synthetic','synthetic',$5,clock_timestamp()+interval '2 seconds')",[id,ws,env,id.replaceAll('-',''),user]);
+    auth={authType:'api_key',user:{id:null,is_superadmin:false},apiKey:{id,role:'admin'}} as AuthContext;
+    const blocker=await pool.connect();await blocker.query('BEGIN');
+    await blocker.query('SELECT id FROM policies WHERE id=$1 FOR UPDATE',[policy]);
+    const pending=assign('device',device);
+    try {
+      await waitForBlockedMutation();
+      // Confirm the request has already passed key authority and reached the
+      // policy lock, then wait on PostgreSQL's clock rather than a guessed sleep.
+      const blocked=(await pool.query("SELECT query FROM pg_stat_activity WHERE application_name='flash_assignment_acceptance' AND wait_event_type='Lock'")).rows;
+      expect(blocked.some(row=>row.query.includes('SELECT id FROM policies'))).toBe(true);
+      for(let attempt=0;attempt<400;attempt++) {
+        if((await pool.query('SELECT expires_at<=clock_timestamp() AS expired FROM api_keys WHERE id=$1',[id])).rows[0].expired)break;
+        await new Promise(resolve=>setTimeout(resolve,10));
+      }
+      expect((await pool.query('SELECT expires_at<=clock_timestamp() AS expired FROM api_keys WHERE id=$1',[id])).rows[0].expired).toBe(true);
+    } finally {await blocker.query('COMMIT');blocker.release();}
+    expect((await pending).status).toBe(403);
+    expect((await pool.query('SELECT 1 FROM policy_assignments')).rowCount).toBe(0);
+    expect((await pool.query('SELECT policy_id FROM devices WHERE id=$1',[device])).rows[0].policy_id).toBeNull();
+    expect(getPolicyAmapiContext).not.toHaveBeenCalled();
+    expect((await pool.query("SELECT 1 FROM audit_log WHERE action='policy.assignment_denied' AND api_key_id=$1",[id])).rowCount).toBe(1);
+  });
 });
