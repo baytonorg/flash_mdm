@@ -120,7 +120,7 @@ export default async function handler(request: Request, _context: Context) {
         }
 
         // Resolve environment-level override
-        const envSavedMatrix = getEnvironmentRbacOverridesFromFeatures(env.enterprise_features);
+        const envSavedMatrix = getEnvironmentRbacOverridesFromFeatures(env.enterprise_features, effectiveMatrix);
         const envEffective = envSavedMatrix ? mergePermissionMatrixWithDefaults(envSavedMatrix) : effectiveWithFeatureGates;
         const envEffectiveWithFeatureGates = licensingVisible ? envEffective : filterOutBillingResource(envEffective);
 
@@ -162,6 +162,15 @@ export default async function handler(request: Request, _context: Context) {
       if (!workspaceId) return errorResponse('workspace_id is required');
       if (body.matrix === undefined) return errorResponse('matrix is required');
       const environmentId = body.environment_id?.trim();
+
+      // Older tabs do not know assignment authority. Refuse an omission rather
+      // than silently reducing an existing Owner threshold to the new default.
+      if (body.matrix && typeof body.matrix === 'object' && !Array.isArray(body.matrix)) {
+        const policy = (body.matrix as Record<string, unknown>).policy;
+        if (policy && typeof policy === 'object' && !Array.isArray(policy) && !('assign' in policy)) {
+          return errorResponse('Policy assignment permissions have changed. Refresh this page before saving RBAC settings.', 409);
+        }
+      }
 
       // --- Environment-level RBAC override ---
       if (environmentId) {

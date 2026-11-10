@@ -11,6 +11,7 @@ export type Permission =
   | 'read'
   | 'read_privileged'
   | 'write'
+  | 'assign'
   | 'delete'
   | 'manage_users'
   | 'manage_settings'
@@ -68,6 +69,7 @@ export const DEFAULT_PERMISSION_MATRIX: PermissionMatrix = {
   policy: {
     read: 'viewer',
     write: 'member',
+    assign: 'admin',
     delete: 'admin',
   },
   certificate: {
@@ -121,6 +123,7 @@ const MINIMUM_PERMISSION_FLOORS: Partial<Record<string, Partial<Record<string, W
     delete: 'admin',
   },
   policy: {
+    assign: 'admin',
     delete: 'admin',
   },
   certificate: {
@@ -160,7 +163,7 @@ function clonePermissionMatrix(matrix: PermissionMatrix): PermissionMatrix {
   return JSON.parse(JSON.stringify(matrix)) as PermissionMatrix;
 }
 
-function mergePermissionMatrixWithDefaults(value: unknown): PermissionMatrix {
+export function mergePermissionMatrixWithDefaults(value: unknown, workspaceMatrix?: PermissionMatrix): PermissionMatrix {
   const merged = clonePermissionMatrix(DEFAULT_PERMISSION_MATRIX);
   if (!value || typeof value !== 'object' || Array.isArray(value)) return merged;
 
@@ -178,6 +181,13 @@ function mergePermissionMatrixWithDefaults(value: unknown): PermissionMatrix {
     }
   }
 
+  const inputPolicy = (value as Record<string, unknown>).policy;
+  if (!inputPolicy || typeof inputPolicy !== 'object' || !('assign' in inputPolicy)) {
+    const legacyRoles = workspaceMatrix
+      ? [merged.policy.write, workspaceMatrix.policy.assign, workspaceMatrix.group.write]
+      : [merged.policy.write, merged.group.write];
+    merged.policy.assign = legacyRoles.includes('owner') ? 'owner' : 'admin';
+  }
   return merged;
 }
 
@@ -251,13 +261,13 @@ export async function getEffectivePermissionMatrixForWorkspace(
   return clonePermissionMatrix(matrix);
 }
 
-function getPermissionMatrixFromEnvironmentFeatures(features: unknown): PermissionMatrix | null {
+function getPermissionMatrixFromEnvironmentFeatures(features: unknown, workspaceMatrix: PermissionMatrix): PermissionMatrix | null {
   if (!features || typeof features !== 'object' || Array.isArray(features)) return null;
   const rbac = (features as Record<string, unknown>).rbac;
   if (!rbac || typeof rbac !== 'object' || Array.isArray(rbac)) return null;
   const permissionMatrix = (rbac as Record<string, unknown>).permission_matrix;
   if (!permissionMatrix || typeof permissionMatrix !== 'object' || Array.isArray(permissionMatrix)) return null;
-  return mergePermissionMatrixWithDefaults(permissionMatrix);
+  return mergePermissionMatrixWithDefaults(permissionMatrix, workspaceMatrix);
 }
 
 function getCachedEnvironmentPermissionMatrix(environmentId: string): PermissionMatrix | null {
@@ -288,14 +298,14 @@ export async function getEffectivePermissionMatrixForEnvironment(
     'SELECT enterprise_features FROM environments WHERE id = $1',
     [environmentId]
   );
-  const envMatrix = getPermissionMatrixFromEnvironmentFeatures(env?.enterprise_features);
+  const wsMatrix = await getEffectivePermissionMatrixForWorkspace(workspaceId);
+  const envMatrix = getPermissionMatrixFromEnvironmentFeatures(env?.enterprise_features, wsMatrix);
   if (envMatrix) {
     setCachedEnvironmentPermissionMatrix(environmentId, envMatrix);
     return clonePermissionMatrix(envMatrix);
   }
 
   // No environment override — inherit workspace matrix
-  const wsMatrix = await getEffectivePermissionMatrixForWorkspace(workspaceId);
   setCachedEnvironmentPermissionMatrix(environmentId, wsMatrix);
   return clonePermissionMatrix(wsMatrix);
 }

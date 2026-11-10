@@ -87,6 +87,15 @@ beforeEach(() => {
 });
 
 describe('roles-rbac', () => {
+  it('requires an old browser to refresh instead of dropping assignment authority', async () => {
+    const response = await handler(new Request('http://localhost/api/roles/rbac', {
+      method: 'PUT',
+      body: JSON.stringify({ workspace_id: 'ws_1', matrix: { policy: { write: 'member' } } }),
+    }), {} as never);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'Policy assignment permissions have changed. Refresh this page before saving RBAC settings.' });
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
   it('returns default/effective matrix for a workspace', async () => {
     mockQueryOne.mockResolvedValueOnce({
       settings: {
@@ -206,7 +215,7 @@ describe('roles-rbac', () => {
       environment: { read: 'viewer', write: 'admin', delete: 'owner', manage_users: 'admin', manage_settings: 'admin' },
       group: { read: 'viewer', write: 'member', delete: 'admin', manage_users: 'admin' },
       device: { read: 'viewer', write: 'member', delete: 'member', command: 'member', command_destructive: 'admin', bulk_destructive: 'admin' },
-      policy: { read: 'viewer', write: 'member', delete: 'admin' },
+      policy: { read: 'viewer', write: 'member', assign: 'admin', delete: 'admin' },
       certificate: { read: 'viewer', write: 'member', delete: 'admin' },
       geofence: { read: 'viewer', write: 'member', delete: 'admin' },
       audit: { read: 'viewer', read_privileged: 'admin' },
@@ -282,7 +291,7 @@ describe('roles-rbac', () => {
       environment: { read: 'viewer', write: 'admin', delete: 'owner', manage_users: 'admin', manage_settings: 'admin' },
       group: { read: 'viewer', write: 'member', delete: 'admin', manage_users: 'admin' },
       device: { read: 'viewer', write: 'member', delete: 'member', command: 'member', command_destructive: 'admin', bulk_destructive: 'admin' },
-      policy: { read: 'viewer', write: 'member', delete: 'admin' },
+      policy: { read: 'viewer', write: 'member', assign: 'admin', delete: 'admin' },
       certificate: { read: 'viewer', write: 'member', delete: 'admin' },
       geofence: { read: 'viewer', write: 'member', delete: 'admin' },
       audit: { read: 'viewer', read_privileged: 'admin' },
@@ -405,7 +414,7 @@ describe('roles-rbac', () => {
       environment: { read: 'viewer', write: 'admin', delete: 'owner', manage_users: 'admin', manage_settings: 'admin' },
       group: { read: 'viewer', write: 'member', delete: 'admin', manage_users: 'admin' },
       device: { read: 'viewer', write: 'admin', delete: 'admin', command: 'admin', command_destructive: 'admin', bulk_destructive: 'admin' },
-      policy: { read: 'viewer', write: 'member', delete: 'admin' },
+      policy: { read: 'viewer', write: 'member', assign: 'admin', delete: 'admin' },
       certificate: { read: 'viewer', write: 'member', delete: 'admin' },
       geofence: { read: 'viewer', write: 'member', delete: 'admin' },
       audit: { read: 'viewer', read_privileged: 'admin' },

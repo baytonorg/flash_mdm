@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import Roles from '@/pages/Roles';
 
 const mocks = vi.hoisted(() => ({
+  owner: false,
   updateMatrix: vi.fn(),
   clearOverride: vi.fn(),
   rbacQuery: {
@@ -10,7 +11,9 @@ const mocks = vi.hoisted(() => ({
       workspace_id: 'ws_1',
       environment_id: 'env_1',
       has_override: false,
+      can_manage: true,
       defaults: {
+        policy: { read: 'viewer', write: 'member', assign: 'admin', delete: 'admin' },
         workspace: {
           read: 'viewer',
           write: 'admin',
@@ -18,6 +21,7 @@ const mocks = vi.hoisted(() => ({
         },
       },
       matrix: {
+        policy: { read: 'viewer', write: 'member', assign: 'admin', delete: 'admin' },
         workspace: {
           read: 'viewer',
           write: 'admin',
@@ -26,8 +30,8 @@ const mocks = vi.hoisted(() => ({
       },
       meta: {
         roles: ['viewer', 'member', 'admin', 'owner'],
-        resource_order: ['workspace'],
-        action_order: ['read', 'write', 'delete'],
+        resource_order: ['workspace', 'policy'],
+        action_order: ['read', 'write', 'assign', 'delete'],
       },
     },
     isLoading: false,
@@ -37,7 +41,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({
-    user: { id: 'u_member', is_superadmin: false },
+    user: { id: 'u_member', is_superadmin: mocks.owner },
   }),
 }));
 
@@ -71,6 +75,24 @@ vi.mock('@/api/queries/rbac', () => ({
 describe('Roles page read-only viewer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.owner = false;
+  });
+
+  it('shows assignment alongside editing and prevents below-Admin selection in both views', () => {
+    mocks.owner = true;
+    render(<Roles />);
+    const assignmentLabels = screen.getAllByText('Assign');
+    expect(assignmentLabels).toHaveLength(4);
+    const assignmentChecks = assignmentLabels.map(label => label.closest('label')!.querySelector('input')!);
+    expect(assignmentChecks.map(input => input.disabled)).toEqual([true, false, true, true]);
+    expect(assignmentChecks.map(input => input.checked)).toEqual([true, true, false, false]);
+    fireEvent.click(screen.getByRole('button', { name: 'Raw Matrix' }));
+    const assignmentSelect = screen.getByText('Assign').closest('.rounded-lg')!.querySelector('select')!;
+    expect(Array.from(assignmentSelect.options).map(option => [option.value, option.disabled])).toEqual([
+      ['viewer', true], ['member', true], ['admin', false], ['owner', false],
+    ]);
+    fireEvent.change(assignmentSelect, { target: { value: 'owner' } });
+    expect(assignmentSelect.value).toBe('owner');
   });
 
   it('shows read-only banner and disables permission inputs for non-owner users', () => {
