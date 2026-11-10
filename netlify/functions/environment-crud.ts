@@ -335,6 +335,9 @@ export default async (request: Request, _context: Context) => {
       enterprise_features?: Record<string, unknown>;
     }>(request);
     if (!body.id) return errorResponse('Environment ID is required');
+    if (body.enterprise_features && (typeof body.enterprise_features !== 'object' || Array.isArray(body.enterprise_features))) {
+      return errorResponse('enterprise_features must be an object');
+    }
 
     const envCheck = await queryOne<{
       workspace_id: string;
@@ -454,9 +457,6 @@ export default async (request: Request, _context: Context) => {
       values.push(dbPubsubTopic);
     }
     if (body.enterprise_features) {
-      if (typeof body.enterprise_features !== 'object' || Array.isArray(body.enterprise_features)) {
-        return errorResponse('enterprise_features must be an object');
-      }
       updates.push(`enterprise_features = ${environmentFeaturesPreservingRbac(idx++)}`);
       values.push(JSON.stringify(body.enterprise_features));
     }
