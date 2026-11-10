@@ -7969,30 +7969,19 @@
         "tags": [
           "policies"
         ],
-        "summary": "POST /api/policies/assign",
-        "description": "Implemented by Netlify function `policy-assign`.\nRequirement: Auth: authenticated request required (session or API key, route-dependent)\nRequirement: Environment resource permissions checked: policy:read\nRequirement: Group permissions checked: read\nRequirement: Common required JSON body fields: policy_id, scope_type, scope_id",
-        "parameters": [],
+        "summary": "Assign a policy at an authorised scope",
+        "description": "Requires current policy.assign authority (Admin minimum, or Owner if configured) for the environment or target group subtree. Root devices require environment-wide authority. Local commit does not alone establish managed-device convergence; inspect amapi_sync. Persistent workflow delegation and remote ordering are separate contracts.",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
         "x-flash-auth": {
-          "authModel": "auth",
-          "apiKeyRejected": false,
-          "workspaceRoles": [],
-          "environmentRoles": [],
-          "workspacePerms": [],
-          "envResourcePerms": [
-            "policy:read"
-          ],
-          "groupPerms": [
-            "read"
-          ]
-        },
-        "x-flash-inferred": {
-          "queryParams": [],
-          "queryParamAlternatives": false,
-          "bodyRequiredFields": [
-            "policy_id",
-            "scope_type",
-            "scope_id"
-          ]
+          "authModel": "session-or-api-key",
+          "policyAssignmentMinimum": "policy.assign (admin floor)"
         },
         "requestBody": {
           "required": true,
@@ -8000,54 +7989,55 @@
             "application/json": {
               "schema": {
                 "type": "object",
+                "required": [
+                  "scope_type",
+                  "scope_id",
+                  "policy_id"
+                ],
                 "properties": {
-                  "policy_id": {
-                    "type": "string"
-                  },
                   "scope_type": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                      "environment",
+                      "group",
+                      "device"
+                    ]
                   },
                   "scope_id": {
-                    "type": "string"
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "policy_id": {
+                    "type": "string",
+                    "format": "uuid"
                   }
                 },
-                "required": [
-                  "policy_id",
-                  "scope_type",
-                  "scope_id"
-                ],
-                "additionalProperties": true,
-                "description": "Partially inferred request body schema from handler validation checks. Additional fields may be required or accepted."
+                "description": "Lock fields are rejected with 409. Use the dedicated locks endpoint after reading the assignment version."
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
+            "description": "Local assignment intent committed; inspect amapi_sync for propagation outcome"
           },
           "400": {
-            "description": "Bad request"
+            "description": "Invalid scope or input"
           },
           "401": {
-            "description": "Unauthorized"
+            "description": "Authentication required"
           },
           "403": {
-            "description": "Forbidden"
+            "description": "Insufficient current authority"
           },
           "404": {
-            "description": "Not found"
+            "description": "Target or policy unavailable; absent and foreign policy identifiers are indistinguishable"
+          },
+          "409": {
+            "description": "Stale assignment, changed scope, or legacy lock request. Refresh before retrying."
           },
           "500": {
-            "description": "Server error"
+            "description": "Operation failed"
           }
         }
       }
@@ -8652,109 +8642,90 @@
         "tags": [
           "policies"
         ],
-        "summary": "POST /api/policies/locks",
-        "description": "Implemented by Netlify function `policy-assign`.\nRequirement: Auth: authenticated request required (session or API key, route-dependent)\nRequirement: Environment resource permissions checked: policy:read\nRequirement: Group permissions checked: read",
-        "parameters": [],
+        "summary": "Update locks on the observed direct assignment",
+        "description": "Requires current environment or scoped group Admin authority. Lock edits cannot change the assigned policy. Read assignment_version from GET /api/policies/assignments; a stale editor must refresh on 409.",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
         "x-flash-auth": {
-          "authModel": "auth",
-          "apiKeyRejected": false,
-          "workspaceRoles": [],
-          "environmentRoles": [],
-          "workspacePerms": [],
-          "envResourcePerms": [
-            "policy:read"
-          ],
-          "groupPerms": [
-            "read"
-          ]
+          "authModel": "session-or-api-key",
+          "policyAssignmentMinimum": "admin"
         },
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
-                "additionalProperties": true
+                "required": [
+                  "scope_type",
+                  "scope_id",
+                  "policy_id",
+                  "expected_version",
+                  "locked",
+                  "locked_sections"
+                ],
+                "properties": {
+                  "scope_type": {
+                    "type": "string",
+                    "enum": [
+                      "environment",
+                      "group",
+                      "device"
+                    ]
+                  },
+                  "scope_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "policy_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "expected_version": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{32}$"
+                  },
+                  "locked": {
+                    "type": "boolean"
+                  },
+                  "locked_sections": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
+            "description": "Locks committed locally; inspect amapi_sync for propagation outcome"
           },
           "400": {
-            "description": "Bad request"
+            "description": "Invalid scope or input"
           },
           "401": {
-            "description": "Unauthorized"
+            "description": "Authentication required"
           },
           "403": {
-            "description": "Forbidden"
+            "description": "Insufficient current authority"
           },
           "404": {
-            "description": "Not found"
+            "description": "Target or policy unavailable; absent and foreign policy identifiers are indistinguishable"
+          },
+          "409": {
+            "description": "Stale assignment, changed scope, or legacy lock request. Refresh before retrying."
           },
           "500": {
-            "description": "Server error"
-          }
-        }
-      },
-      "get": {
-        "operationId": "get_api_policies_locks",
-        "tags": [
-          "policies"
-        ],
-        "summary": "GET /api/policies/locks",
-        "description": "Implemented by Netlify function `policy-assign`.\nRequirement: Auth: authenticated request required (session or API key, route-dependent)\nRequirement: Environment resource permissions checked: policy:read\nRequirement: Group permissions checked: read",
-        "parameters": [],
-        "x-flash-auth": {
-          "authModel": "auth",
-          "apiKeyRejected": false,
-          "workspaceRoles": [],
-          "environmentRoles": [],
-          "workspacePerms": [],
-          "envResourcePerms": [
-            "policy:read"
-          ],
-          "groupPerms": [
-            "read"
-          ]
-        },
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not found"
-          },
-          "500": {
-            "description": "Server error"
+            "description": "Operation failed"
           }
         }
       }
@@ -9039,29 +9010,19 @@
         "tags": [
           "policies"
         ],
-        "summary": "POST /api/policies/unassign",
-        "description": "Implemented by Netlify function `policy-assign`.\nRequirement: Auth: authenticated request required (session or API key, route-dependent)\nRequirement: Environment resource permissions checked: policy:read\nRequirement: Group permissions checked: read\nRequirement: Common required JSON body fields: scope_type, scope_id",
-        "parameters": [],
+        "summary": "Remove a direct assignment and restore inheritance",
+        "description": "Requires current policy.assign authority (Admin minimum, or Owner if configured) for the environment or target group subtree. Root devices require environment-wide authority. Local commit does not alone establish managed-device convergence; inspect amapi_sync. Persistent workflow delegation and remote ordering are separate contracts.",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
         "x-flash-auth": {
-          "authModel": "auth",
-          "apiKeyRejected": false,
-          "workspaceRoles": [],
-          "environmentRoles": [],
-          "workspacePerms": [],
-          "envResourcePerms": [
-            "policy:read"
-          ],
-          "groupPerms": [
-            "read"
-          ]
-        },
-        "x-flash-inferred": {
-          "queryParams": [],
-          "queryParamAlternatives": false,
-          "bodyRequiredFields": [
-            "scope_type",
-            "scope_id"
-          ]
+          "authModel": "session-or-api-key",
+          "policyAssignmentMinimum": "policy.assign (admin floor)"
         },
         "requestBody": {
           "required": true,
@@ -9069,50 +9030,49 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "properties": {
-                  "scope_type": {
-                    "type": "string"
-                  },
-                  "scope_id": {
-                    "type": "string"
-                  }
-                },
                 "required": [
                   "scope_type",
                   "scope_id"
                 ],
-                "additionalProperties": true,
-                "description": "Partially inferred request body schema from handler validation checks. Additional fields may be required or accepted."
+                "properties": {
+                  "scope_type": {
+                    "type": "string",
+                    "enum": [
+                      "environment",
+                      "group",
+                      "device"
+                    ]
+                  },
+                  "scope_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
+            "description": "Local assignment intent committed; inspect amapi_sync for propagation outcome"
           },
           "400": {
-            "description": "Bad request"
+            "description": "Invalid scope or input"
           },
           "401": {
-            "description": "Unauthorized"
+            "description": "Authentication required"
           },
           "403": {
-            "description": "Forbidden"
+            "description": "Insufficient current authority"
           },
           "404": {
-            "description": "Not found"
+            "description": "Target or policy unavailable; absent and foreign policy identifiers are indistinguishable"
+          },
+          "409": {
+            "description": "Stale assignment, changed scope, or legacy lock request. Refresh before retrying."
           },
           "500": {
-            "description": "Server error"
+            "description": "Operation failed"
           }
         }
       }
