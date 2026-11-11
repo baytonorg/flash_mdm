@@ -667,7 +667,7 @@ import 'dotenv/config';
 import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
-import { traceHttp, installOperationalConsoleCapture, closeOperationalTrace } from './netlify/functions/_lib/operational-trace.js';
+import { traceHttp, markTraceApiDocumentationServed, installOperationalConsoleCapture, closeOperationalTrace } from './netlify/functions/_lib/operational-trace.js';
 import { requireInternalCaller } from './netlify/functions/_lib/internal-auth.js';
 import operationalTrace from './netlify/functions/operational-trace.js';
 import apiNotFound from './netlify/functions/api-not-found.js';
@@ -999,8 +999,9 @@ app.all('/.netlify/functions/workflow-evaluate-background', h(workflowEvaluateBa
 // Preserve the published Swagger documentation inside the API namespace.
 // serveStatic handles only GET and HEAD, so other methods continue to the JSON
 // namespace fallback below.
-app.use('/api/docs', serveStatic({ root: './dist' }));
-app.use('/api/docs/*', serveStatic({ root: './dist' }));
+const apiDocumentation = serveStatic({ root: './dist', onFound: markTraceApiDocumentationServed });
+app.use('/api/docs', apiDocumentation);
+app.use('/api/docs/*', apiDocumentation);
 
 // The API namespace must never fall through to the HTML application shell.
 // Keep this after every supported API route and before all static handling.

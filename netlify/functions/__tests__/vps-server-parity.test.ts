@@ -191,8 +191,8 @@ describe('VPS server parity', () => {
 
   it('rejects unknown API requests before static and SPA fallbacks on both hosts', () => {
     const installer = readText('install.sh');
-    const apiDocsRoot = server.indexOf("app.use('/api/docs', serveStatic({ root: './dist' }));");
-    const apiDocsAssets = server.indexOf("app.use('/api/docs/*', serveStatic({ root: './dist' }));");
+    const apiDocsRoot = server.indexOf("app.use('/api/docs', apiDocumentation);");
+    const apiDocsAssets = server.indexOf("app.use('/api/docs/*', apiDocumentation);");
     const apiRootFallback = server.indexOf("app.all('/api', h(apiNotFound));");
     const apiFallback = server.indexOf("app.all('/api/*', h(apiNotFound));");
     const staticAssets = server.indexOf("app.use('/*', serveStatic({ root: './dist' }));");

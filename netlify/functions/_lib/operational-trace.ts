@@ -39,6 +39,7 @@ type TraceContext = {
   route?: string;
   feature?: string;
   gate?: PollGate;
+  apiDocumentationServed?: boolean;
 };
 const storage = new AsyncLocalStorage<TraceContext>();
 let writer: TraceWriter | undefined;
@@ -277,6 +278,13 @@ export async function traceResponseOutcome(
   }
 }
 
+// Called by the documentation file server after finding an asset. Keeping this
+// in the trace context avoids trusting request headers or changing the response.
+export function markTraceApiDocumentationServed(): void {
+  const context = storage.getStore();
+  if (context) context.apiDocumentationServed = true;
+}
+
 export async function traceHttp(
   request: Request,
   fn: () => Promise<Response>,
@@ -375,7 +383,8 @@ export async function traceHttp(
         url.pathname.startsWith("/api/") &&
         status >= 200 &&
         status < 300 &&
-        responseKind === "html"
+        responseKind === "html" &&
+        !ctx.apiDocumentationServed
       )
         outcome = "protocol_failure";
       traceEvent("http.end", {
