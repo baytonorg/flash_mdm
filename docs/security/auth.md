@@ -52,7 +52,7 @@ Source: `netlify/functions/_lib/auth.ts` (`requireAuth`), `netlify/functions/_li
 - Setup flow: `POST /api/auth/totp/setup` generates a 160-bit secret + 10 backup codes; both are stored encrypted (`AES-256-GCM`) in `totp_pending_enc` until confirmed. Setup creation time is tracked in `totp_pending_created_at`.
 - Confirmation flow: `POST /api/auth/totp/verify` verifies a 6-digit code against the pending secret, then promotes the pending data to permanent `totp_secret_enc` / `totp_backup_codes_enc`.
 - Pending TOTP setups expire after 15 minutes.
-- Stale pending TOTP setup data is cleaned daily by `cleanup-scheduled` (pending blob + pending timestamp cleared).
+- Daily `cleanup-scheduled` counts stale pending TOTP setup records for operator review and preserves the stored data. See the [retention policy](../operations/data-retention.md).
 - Disabling TOTP requires either a valid authenticator code or a backup code (both accepted in the disable flow).
 
 ## Backup codes

@@ -48,4 +48,4 @@ This table is generated from `.env.example`, `netlify.toml`, and `process.env.*`
 
 ## Retention note
 
-`cleanup-scheduled` also clears stale pending TOTP setup data after one day. This threshold is currently fixed in code and has no environment variable override.
+Daily `cleanup-scheduled` counts pending TOTP setup records with no timestamp or a timestamp older than one day and preserves the stored data. The observation threshold is fixed in code. The 15-minute setup validity window is separate. See the [retention policy](../operations/data-retention.md).
