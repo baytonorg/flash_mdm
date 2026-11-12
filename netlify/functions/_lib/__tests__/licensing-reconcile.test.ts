@@ -16,6 +16,7 @@ const {
   mockSendEmail,
   mockBuildNearExpiryEmail,
   mockGetWorkspaceScopeNames,
+  mockGetWorkspaceBillingRecipients,
   mockQueueAndSendBillingEmail,
 } = vi.hoisted(() => ({
   mockExecute: vi.fn(),
@@ -33,6 +34,7 @@ const {
   mockSendEmail: vi.fn(),
   mockBuildNearExpiryEmail: vi.fn(),
   mockGetWorkspaceScopeNames: vi.fn(),
+  mockGetWorkspaceBillingRecipients: vi.fn(),
   mockQueueAndSendBillingEmail: vi.fn(),
 }));
 
@@ -63,6 +65,7 @@ vi.mock('../resend.js', () => ({
 vi.mock('../billing-notifications.js', () => ({
   buildNearExpiryEmail: mockBuildNearExpiryEmail,
   getWorkspaceScopeNames: mockGetWorkspaceScopeNames,
+  getWorkspaceBillingRecipients: mockGetWorkspaceBillingRecipients,
   queueAndSendBillingEmail: mockQueueAndSendBillingEmail,
 }));
 
@@ -84,6 +87,7 @@ beforeEach(() => {
   mockSendEmail.mockReset();
   mockBuildNearExpiryEmail.mockReset();
   mockGetWorkspaceScopeNames.mockReset();
+  mockGetWorkspaceBillingRecipients.mockReset();
   mockQueueAndSendBillingEmail.mockReset();
   mockQuery.mockResolvedValue([]);
   mockLockClientQuery.mockImplementation(async (sql: string) => ({
@@ -105,6 +109,7 @@ beforeEach(() => {
   });
   mockSendEmail.mockResolvedValue(undefined);
   mockGetWorkspaceScopeNames.mockResolvedValue({ workspaceName: 'Acme', environmentName: 'Testing' });
+  mockGetWorkspaceBillingRecipients.mockResolvedValue([]);
   mockBuildNearExpiryEmail.mockReturnValue({ subject: 'Expiry', html: '<p>Expiry</p>' });
   mockQueueAndSendBillingEmail.mockResolvedValue({ queued: true, sent: true, skipped: false });
 });
@@ -271,9 +276,6 @@ describe('runLicensingReconcile', () => {
       if (sql.includes('FROM devices') && sql.includes("state = 'ACTIVE'")) {
         return [{ id: 'dev_2' }, { id: 'dev_1' }];
       }
-      if (sql.includes('FROM workspace_memberships')) {
-        return [];
-      }
       return [];
     });
 
@@ -352,9 +354,6 @@ describe('runLicensingReconcile', () => {
       if (sql.includes('FROM license_enforcement_actions lea')) {
         return [{ device_id: 'dev_1' }];
       }
-      if (sql.includes('FROM workspace_memberships')) {
-        return [];
-      }
       return [];
     });
 
@@ -427,11 +426,9 @@ describe('runLicensingReconcile', () => {
         const offset = Number((params as unknown[] | undefined)?.[1] ?? 0);
         return offset === 0 ? [{ id: 'env_1', workspace_id: 'ws_1' }] : [];
       }
-      if (sql.includes('FROM workspace_memberships')) {
-        return [{ email: 'owner@example.com' }];
-      }
       return [];
     });
+    mockGetWorkspaceBillingRecipients.mockResolvedValue(['owner@example.com']);
 
     mockGetEnvironmentLicensingSnapshot.mockResolvedValue({
       environment_id: 'env_1',
@@ -508,9 +505,6 @@ describe('runLicensingReconcile', () => {
         const offset = Number((params as unknown[] | undefined)?.[1] ?? 0);
         return offset === 0 ? [{ id: 'env_1', workspace_id: 'ws_1' }] : [];
       }
-      if (sql.includes('FROM workspace_memberships')) {
-        return [{ email: 'owner@example.com' }];
-      }
       if (sql.includes('FROM license_enforcement_actions lea')) {
         return [{ device_id: 'dev_1' }, { device_id: 'dev_2' }];
       }
@@ -546,7 +540,8 @@ describe('runLicensingReconcile', () => {
       grace_day_disable: 30,
       grace_day_wipe: 45,
     });
-    mockSendEmail.mockRejectedValue(new Error('smtp unavailable'));
+    mockGetWorkspaceBillingRecipients.mockResolvedValue(['owner@example.com']);
+    mockSendEmail.mockRejectedValue(new Error('Provider echoed owner@example.com'));
     mockExecute.mockResolvedValue({ rowCount: 1 });
 
     const stats = await runLicensingReconcile({ dryRun: false });
@@ -578,10 +573,11 @@ describe('runLicensingReconcile', () => {
       )
     ).toBe(true);
     expect(
-      mockExecute.mock.calls.some(([sql]) =>
+      mockExecute.mock.calls.some(([sql, params]) =>
         typeof sql === 'string'
         && sql.includes('UPDATE license_overage_notifications')
         && sql.includes("SET status = 'failed'")
+        && params?.[2] === 'Overage notice delivery failed'
       )
     ).toBe(true);
     expect(

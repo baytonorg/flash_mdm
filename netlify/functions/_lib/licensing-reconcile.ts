@@ -11,6 +11,7 @@ import { logAudit } from './audit.js';
 import { sendEmail } from './resend.js';
 import {
   buildNearExpiryEmail,
+  getWorkspaceBillingRecipients,
   getWorkspaceScopeNames,
   queueAndSendBillingEmail,
 } from './billing-notifications.js';
@@ -225,21 +226,13 @@ async function getNotificationContext(
        WHERE id = $1`,
       [environmentId]
     ),
-    query<{ email: string }>(
-      `SELECT DISTINCT u.email
-       FROM workspace_memberships wm
-       JOIN users u ON u.id = wm.user_id
-       WHERE wm.workspace_id = $1
-         AND wm.role IN ('owner', 'admin')
-         AND COALESCE(u.email, '') <> ''`,
-      [workspaceId]
-    ),
+    getWorkspaceBillingRecipients(workspaceId),
   ]);
 
   return {
     workspaceName: workspace?.name ?? workspaceId,
     environmentName: environment?.name ?? environmentId,
-    recipients: recipients.map((recipient) => recipient.email).filter(Boolean),
+    recipients,
   };
 }
 
@@ -309,8 +302,8 @@ async function queueOverageNotification(
       resource_id: caseId,
       details: { notification_key: notificationKey, recipient_count: context.recipients.length },
     });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+  } catch {
+    const message = 'Overage notice delivery failed';
     await execute(
       `UPDATE license_overage_notifications
        SET status = 'failed', error = $3, updated_at = now()

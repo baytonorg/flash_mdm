@@ -70,7 +70,7 @@ describe('billing notifications', () => {
     mockExecute
       .mockResolvedValueOnce({ rowCount: 1 })
       .mockResolvedValueOnce({ rowCount: 1 });
-    mockQuery.mockResolvedValueOnce([{ email: 'owner@example.com' }]);
+    mockQuery.mockResolvedValueOnce([{ email: 'owner@example.com', role: 'owner', settings: null }]);
     mockQueryOne.mockResolvedValueOnce({ email: 'customer@example.com' });
 
     const result = await queueAndSendBillingEmail({
@@ -84,7 +84,32 @@ describe('billing notifications', () => {
     });
 
     expect(result).toMatchObject({ queued: true, sent: true, skipped: false });
-    expect(mockSendEmail).toHaveBeenCalledTimes(2);
+    expect(mockSendEmail.mock.calls.map(([message]) => message.to)).toEqual([
+      'owner@example.com',
+      'customer@example.com',
+    ]);
+  });
+
+  it('honours a stricter current billing role and records a bounded delivery failure', async () => {
+    mockExecute.mockResolvedValue({ rowCount: 1 });
+    const settings = { rbac: { permission_matrix: { billing: { billing_view: 'owner' } } } };
+    mockQuery.mockResolvedValue([
+      { email: 'owner@example.com', role: 'owner', settings },
+      { email: 'admin@example.com', role: 'admin', settings },
+    ]);
+    mockSendEmail.mockRejectedValue(new Error('Provider echoed owner@example.com'));
+
+    const result = await queueAndSendBillingEmail({
+      workspaceId: 'ws_1',
+      notificationType: 'test',
+      dedupeKey: 'failure_1',
+      subject: 'Subject',
+      html: '<p>Hello</p>',
+    });
+
+    expect(result).toMatchObject({ queued: true, sent: false, skipped: false });
+    expect(mockSendEmail.mock.calls.map(([message]) => message.to)).toEqual(['owner@example.com']);
+    expect(mockExecute.mock.lastCall?.[1]?.[3]).toBe('Billing notice delivery failed');
   });
 
   it('builds safe billing email templates', () => {
