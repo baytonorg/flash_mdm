@@ -290,7 +290,11 @@ async function processWorkspaceStripeEvent(
     }
 
     const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-    const environmentId = subscription.metadata?.environment_id ?? null;
+    const environmentId = subscription.metadata?.environment_id || null;
+    if (environmentId && (!isValidUuid(environmentId) || !await environmentBelongsToWorkspace(client, environmentId, workspaceId))) {
+      return terminalResult({ ignored: 'environment is not in workspace scope' });
+    }
+
     return terminalResult({}, async () => {
       const names = await getWorkspaceScopeNames(workspaceId, environmentId);
       const { subject, html } = buildPaymentFailedEmail(names, invoice.id ?? null, subscriptionId);

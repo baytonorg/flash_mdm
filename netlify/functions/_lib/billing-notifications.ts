@@ -104,8 +104,8 @@ export async function getWorkspaceScopeNames(
   let environmentName: string | null = null;
   if (environmentId) {
     const environment = await queryOne<{ name: string }>(
-      `SELECT name FROM environments WHERE id = $1`,
-      [environmentId]
+      `SELECT name FROM environments WHERE id = $1 AND workspace_id = $2`,
+      [environmentId, workspaceId]
     );
     environmentName = environment?.name ?? null;
   }
