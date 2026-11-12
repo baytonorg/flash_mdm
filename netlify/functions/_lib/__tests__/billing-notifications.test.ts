@@ -70,7 +70,7 @@ describe('billing notifications', () => {
     mockExecute
       .mockResolvedValueOnce({ rowCount: 1 })
       .mockResolvedValueOnce({ rowCount: 1 });
-    mockQuery.mockResolvedValueOnce([{ email: 'owner@example.com', role: 'owner', settings: null }]);
+    mockQuery.mockResolvedValueOnce([{ email: 'owner@example.com', role: 'owner', permission_matrix: null }]);
     mockQueryOne.mockResolvedValueOnce({ email: 'customer@example.com' });
 
     const result = await queueAndSendBillingEmail({
@@ -84,6 +84,7 @@ describe('billing notifications', () => {
     });
 
     expect(result).toMatchObject({ queued: true, sent: true, skipped: false });
+    expect(mockQuery.mock.calls[0]?.[0]).toContain("w.settings #> '{rbac,permission_matrix}' AS permission_matrix");
     expect(mockSendEmail.mock.calls.map(([message]) => message.to)).toEqual([
       'owner@example.com',
       'customer@example.com',
@@ -92,10 +93,10 @@ describe('billing notifications', () => {
 
   it('honours a stricter current billing role and records a bounded delivery failure', async () => {
     mockExecute.mockResolvedValue({ rowCount: 1 });
-    const settings = { rbac: { permission_matrix: { billing: { billing_view: 'owner' } } } };
+    const permissionMatrix = { billing: { billing_view: 'owner' } };
     mockQuery.mockResolvedValue([
-      { email: 'owner@example.com', role: 'owner', settings },
-      { email: 'admin@example.com', role: 'admin', settings },
+      { email: 'owner@example.com', role: 'owner', permission_matrix: permissionMatrix },
+      { email: 'admin@example.com', role: 'admin', permission_matrix: permissionMatrix },
     ]);
     mockSendEmail.mockRejectedValue(new Error('Provider echoed owner@example.com'));
 

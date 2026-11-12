@@ -191,7 +191,7 @@ export function mergePermissionMatrixWithDefaults(value: unknown, workspaceMatri
   return merged;
 }
 
-export function getPermissionMatrixFromWorkspaceSettings(settings: unknown): PermissionMatrix | null {
+function getPermissionMatrixFromWorkspaceSettings(settings: unknown): PermissionMatrix | null {
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return null;
   const rbac = (settings as Record<string, unknown>).rbac;
   if (!rbac || typeof rbac !== 'object' || Array.isArray(rbac)) return null;
