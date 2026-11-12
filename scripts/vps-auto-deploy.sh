@@ -2,10 +2,20 @@
 set -euo pipefail
 
 CONFIG_FILE="${FLASH_AUTO_DEPLOY_CONFIG_FILE:-/etc/flash-mdm/auto-deploy.env}"
-[[ -r "$CONFIG_FILE" ]] || exit 0
+if [[ ! -f "$CONFIG_FILE" || -L "$CONFIG_FILE" || "$(stat -c '%u:%a' "$CONFIG_FILE")" != "0:640" ]]; then
+  echo "Protected automatic deployment configuration is unavailable or has invalid permissions" >&2
+  exit 1
+fi
+if ! bash -n "$CONFIG_FILE" >/dev/null 2>&1; then
+  echo "Protected automatic deployment configuration is malformed" >&2
+  exit 1
+fi
 
 # shellcheck disable=SC1090
-source "$CONFIG_FILE"
+if ! source "$CONFIG_FILE" >/dev/null 2>&1; then
+  echo "Protected automatic deployment configuration could not be read" >&2
+  exit 1
+fi
 
 required=(
   FLASH_AUTO_DEPLOY_USER

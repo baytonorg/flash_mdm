@@ -2,9 +2,12 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHmac } from 'node:crypto';
 import { request } from 'node:http';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { createWebhookServer, isEntrypoint, validateConfig } from '../vps-auto-deploy-webhook.mjs';
+import { createWebhookServer, isEntrypoint, readConfig, validateConfig } from '../vps-auto-deploy-webhook.mjs';
 
 const secret = 'test-webhook-secret';
 const config = {
@@ -115,4 +118,62 @@ test('root launcher rejects non-SHA arguments before invoking systemctl', () => 
   const launcher = fileURLToPath(new URL('../vps-auto-deploy-launcher.sh', import.meta.url));
   const result = spawnSync('bash', [launcher, 'not-a-sha']);
   assert.equal(result.status, 64);
+});
+
+
+test('automatic release verification preserves the protected file and rejects invalid or changed inputs', () => {
+  const installer = readFileSync(new URL('../../install.sh', import.meta.url), 'utf8');
+  const start = installer.indexOf('verify_auto_deploy_config() {');
+  const end = installer.indexOf('\n}\n', start);
+  assert.ok(start >= 0 && end > start, 'installer must define the verification function');
+  const verify = installer.slice(start, end + 2);
+  const directory = mkdtempSync(join(tmpdir(), 'flash-deploy-config-test-'));
+  const file = join(directory, 'auto-deploy.env');
+  const link = join(directory, 'linked.env');
+  const original = 'FLASH_AUTO_DEPLOY_WEBHOOK_SECRET="fixture-only"\n';
+  const run = (candidate = file, expected = original, uid = process.getuid()) => spawnSync(
+    'bash',
+    ['-c', `${verify}
+expected_configuration="$4"
+render_auto_deploy_config() { printf '%s' "$expected_configuration"; }
+verify_auto_deploy_config "$1" "$2" "$3"`, 'fixture', candidate, String(uid), String(process.getgid()), expected],
+    { encoding: 'utf8' },
+  );
+  try {
+    chmodSync(directory, 0o750);
+    writeFileSync(file, original, { mode: 0o640 });
+    const before = statSync(file, { bigint: true });
+    assert.equal(run().status, 0);
+    assert.equal(run(file, 'other synthetic configuration').status, 1);
+    assert.equal(run(file, original, process.getuid() + 1).status, 1);
+    assert.equal(run(join(directory, 'missing.env')).status, 1);
+    symlinkSync(file, link);
+    assert.equal(run(link).status, 1);
+    const after = statSync(file, { bigint: true });
+    assert.equal(after.ino, before.ino);
+    assert.equal(after.mtimeNs, before.mtimeNs);
+    assert.equal(after.ctimeNs, before.ctimeNs);
+    assert.equal(readFileSync(file, 'utf8'), original);
+    chmodSync(file, 0o644);
+    assert.equal(run().status, 1);
+    chmodSync(file, 0o640);
+    chmodSync(directory, 0o755);
+    assert.equal(run().status, 1);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+
+test('configuration syntax errors do not include stored values', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'flash-deploy-parse-test-'));
+  const file = join(directory, 'auto-deploy.env');
+  try {
+    for (const malformed of ['fixture-value-without-assignment', 'FIELD=fixture-value-without-quotes']) {
+      writeFileSync(file, malformed, { mode: 0o640 });
+      assert.throws(() => readConfig(file), { message: 'Malformed automatic deployment configuration' });
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
