@@ -3,9 +3,8 @@ import { isMissingRelationError } from './db-errors.js';
 import { sendEmail } from './resend.js';
 import { escapeHtml } from './html.js';
 import {
-  DEFAULT_PERMISSION_MATRIX,
   getPermissionMatrixMinimumRoleFloor,
-  getPermissionMatrixFromWorkspaceSettings,
+  mergePermissionMatrixWithDefaults,
   RBAC_ROLE_VALUES,
   workspaceRoleMeetsMinimum,
 } from './rbac.js';
@@ -127,8 +126,8 @@ export async function getWorkspaceScopeNames(
 }
 
 export async function getWorkspaceBillingRecipients(workspaceId: string): Promise<string[]> {
-  const members = await query<{ email: string; role: string; settings: unknown }>(
-    `SELECT u.email, wm.role, w.settings
+  const members = await query<{ email: string; role: string; permission_matrix: unknown }>(
+    `SELECT u.email, wm.role, w.settings #> '{rbac,permission_matrix}' AS permission_matrix
      FROM workspace_memberships wm
      JOIN workspaces w ON w.id = wm.workspace_id
      JOIN users u ON u.id = wm.user_id
@@ -140,7 +139,7 @@ export async function getWorkspaceBillingRecipients(workspaceId: string): Promis
   );
   if (members.length === 0) return [];
 
-  const permissions = getPermissionMatrixFromWorkspaceSettings(members[0].settings) ?? DEFAULT_PERMISSION_MATRIX;
+  const permissions = mergePermissionMatrixWithDefaults(members[0].permission_matrix);
   return [...new Set(members
     .filter((member) =>
       workspaceRoleMeetsMinimum(member.role, permissions.workspace.read) &&
