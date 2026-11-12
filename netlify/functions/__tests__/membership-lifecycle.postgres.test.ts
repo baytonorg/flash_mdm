@@ -32,6 +32,7 @@ import registerHandler from '../auth-register.js';
 import { requireEnvironmentLifecyclePermission } from '../_lib/scope-authority.js';
 import startMagic from '../auth-magic-link-start.js';
 import { sendEmail } from '../_lib/resend.js';
+import { queueAndSendBillingEmail } from '../_lib/billing-notifications.js';
 import verifyMagic from '../auth-magic-link-verify.js';
 import loginHandler from '../auth-login.js';
 import bindingHandler from '../environment-bind.js';
@@ -176,6 +177,48 @@ suite('membership lifecycle with PostgreSQL and actual handlers', () => {
       await c.query("INSERT INTO group_memberships (group_id,user_id,role) VALUES ($1,$2,'admin')", [group,target]);
       await c.query('COMMIT');
     } finally { c.release(); }
+  });
+
+  it('sends billing notices only to current workspace billing readers and the exact active customer', async () => {
+    const siblingEnvironment = crypto.randomUUID();
+    await pool.query("INSERT INTO environments (id,workspace_id,name) VALUES ($1,$2,'Sibling')", [siblingEnvironment, workspace]);
+    await pool.query("UPDATE workspace_memberships SET role = 'admin' WHERE workspace_id = $1 AND user_id IN ($2,$3)", [workspace, target, other]);
+    await pool.query(
+      "INSERT INTO workspace_customers (workspace_id,environment_id,email,status) VALUES ($1,$2,'customer@fixture.invalid','active'),($1,$3,'sibling@fixture.invalid','active')",
+      [workspace, env, siblingEnvironment]
+    );
+    vi.mocked(sendEmail).mockClear();
+    const send = (dedupeKey: string) => queueAndSendBillingEmail({
+      workspaceId: workspace,
+      environmentId: env,
+      notificationType: 'test',
+      dedupeKey,
+      subject: 'Synthetic notice',
+      html: '<p>Synthetic notice</p>',
+      includeEnvironmentCustomer: true,
+    });
+    const recipients = () => vi.mocked(sendEmail).mock.calls.map(([message]) => message.to).sort();
+
+    await expect(send('default')).resolves.toMatchObject({ sent: true });
+    expect(recipients()).toEqual(['customer@fixture.invalid', 'other@fixture.invalid', 'owner@fixture.invalid']);
+    vi.mocked(sendEmail).mockClear();
+    await pool.query('UPDATE workspaces SET settings = $2 WHERE id = $1', [
+      workspace,
+      { rbac: { permission_matrix: { billing: { billing_view: 'owner' } } } },
+    ]);
+    await expect(send('owner-only')).resolves.toMatchObject({ sent: true });
+    expect(recipients()).toEqual(['customer@fixture.invalid', 'owner@fixture.invalid']);
+    vi.mocked(sendEmail).mockClear();
+    await pool.query('UPDATE workspaces SET settings = $2 WHERE id = $1', [
+      workspace,
+      { rbac: { permission_matrix: { workspace: { read: 'owner' } } } },
+    ]);
+    await expect(send('workspace-read-owner-only')).resolves.toMatchObject({ sent: true });
+    expect(recipients()).toEqual(['customer@fixture.invalid', 'owner@fixture.invalid']);
+    vi.mocked(sendEmail).mockClear();
+    await pool.query("UPDATE workspace_customers SET status = 'inactive' WHERE workspace_id = $1 AND environment_id = $2", [workspace, env]);
+    await expect(send('inactive-customer')).resolves.toMatchObject({ sent: true });
+    expect(recipients()).toEqual(['owner@fixture.invalid']);
   });
 
   it('removes all three grant levels and stale session selections, preserving other access', async () => {

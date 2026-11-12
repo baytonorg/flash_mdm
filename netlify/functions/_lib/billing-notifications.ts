@@ -2,6 +2,16 @@ import { execute, query, queryOne } from './db.js';
 import { isMissingRelationError } from './db-errors.js';
 import { sendEmail } from './resend.js';
 import { escapeHtml } from './html.js';
+import {
+  DEFAULT_PERMISSION_MATRIX,
+  getPermissionMatrixMinimumRoleFloor,
+  getPermissionMatrixFromWorkspaceSettings,
+  RBAC_ROLE_VALUES,
+  workspaceRoleMeetsMinimum,
+} from './rbac.js';
+
+const billingViewFloor = getPermissionMatrixMinimumRoleFloor('billing', 'billing_view') ?? 'viewer';
+const billingViewRoles = RBAC_ROLE_VALUES.filter((role) => workspaceRoleMeetsMinimum(role, billingViewFloor));
 
 interface WorkspaceNames {
   workspaceName: string;
@@ -116,23 +126,34 @@ export async function getWorkspaceScopeNames(
   };
 }
 
+export async function getWorkspaceBillingRecipients(workspaceId: string): Promise<string[]> {
+  const members = await query<{ email: string; role: string; settings: unknown }>(
+    `SELECT u.email, wm.role, w.settings
+     FROM workspace_memberships wm
+     JOIN workspaces w ON w.id = wm.workspace_id
+     JOIN users u ON u.id = wm.user_id
+     WHERE wm.workspace_id = $1
+       AND wm.access_scope = 'workspace'
+       AND wm.role = ANY($2::text[])
+       AND COALESCE(u.email, '') <> ''`,
+    [workspaceId, billingViewRoles]
+  );
+  if (members.length === 0) return [];
+
+  const permissions = getPermissionMatrixFromWorkspaceSettings(members[0].settings) ?? DEFAULT_PERMISSION_MATRIX;
+  return [...new Set(members
+    .filter((member) =>
+      workspaceRoleMeetsMinimum(member.role, permissions.workspace.read) &&
+      workspaceRoleMeetsMinimum(member.role, permissions.billing.billing_view))
+    .map((member) => member.email))];
+}
+
 async function getBillingRecipients(
   workspaceId: string,
   environmentId: string | null,
   includeEnvironmentCustomer: boolean
 ): Promise<string[]> {
-  const recipients = new Set<string>();
-
-  const admins = await query<{ email: string }>(
-    `SELECT DISTINCT u.email
-     FROM workspace_memberships wm
-     JOIN users u ON u.id = wm.user_id
-     WHERE wm.workspace_id = $1
-       AND wm.role IN ('owner', 'admin')
-       AND COALESCE(u.email, '') <> ''`,
-    [workspaceId]
-  );
-  admins.forEach((row) => recipients.add(row.email));
+  const recipients = new Set(await getWorkspaceBillingRecipients(workspaceId));
 
   if (includeEnvironmentCustomer && environmentId) {
     const customer = await queryOne<{ email: string | null }>(
@@ -210,8 +231,7 @@ export async function queueAndSendBillingEmail(
       [input.workspaceId, input.dedupeKey, JSON.stringify(recipients)]
     );
     return { queued: true, sent: true, skipped: false };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+  } catch {
     await execute(
       `UPDATE workspace_billing_notifications
        SET status = 'failed',
@@ -220,7 +240,7 @@ export async function queueAndSendBillingEmail(
            updated_at = now()
        WHERE workspace_id = $1
          AND dedupe_key = $2`,
-      [input.workspaceId, input.dedupeKey, JSON.stringify(recipients), message]
+      [input.workspaceId, input.dedupeKey, JSON.stringify(recipients), 'Billing notice delivery failed']
     );
     return { queued: true, sent: false, skipped: false };
   }
