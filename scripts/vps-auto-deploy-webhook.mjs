@@ -18,8 +18,12 @@ export function readConfig(configPath) {
       .filter((line) => line && !line.startsWith('#'))
       .map((line) => {
         const index = line.indexOf('=');
-        if (index < 1) throw new Error(`Malformed automatic deployment configuration: ${line}`);
-        return [line.slice(0, index), JSON.parse(line.slice(index + 1))];
+        if (index < 1) throw new Error('Malformed automatic deployment configuration');
+        try {
+          return [line.slice(0, index), JSON.parse(line.slice(index + 1))];
+        } catch {
+          throw new Error('Malformed automatic deployment configuration');
+        }
       })
   );
 }

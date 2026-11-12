@@ -125,6 +125,48 @@ env_value() {
   printf '"%s"' "$value"
 }
 
+render_auto_deploy_config() {
+  printf '%s\n' \
+    "FLASH_AUTO_DEPLOY_USER=$(env_value "$AUTO_DEPLOY_USER")" \
+    "FLASH_AUTO_DEPLOY_REPO_URL=$(env_value "$AUTO_DEPLOY_REPO_URL")" \
+    "FLASH_AUTO_DEPLOY_REPO_REF=$(env_value "$AUTO_DEPLOY_REPO_REF")" \
+    "FLASH_AUTO_DEPLOY_REPO_SSH_KEY_PATH=$(env_value "$AUTO_DEPLOY_KEY_PATH")" \
+    "FLASH_AUTO_DEPLOY_REPO_SSH_KNOWN_HOSTS_PATH=$(env_value "$AUTO_DEPLOY_KNOWN_HOSTS_PATH")" \
+    "FLASH_AUTO_DEPLOY_WEBHOOK_BIND_ADDRESS=$(env_value "$AUTO_DEPLOY_WEBHOOK_BIND_ADDRESS")" \
+    "FLASH_AUTO_DEPLOY_DOMAIN=$(env_value "$DOMAIN")" \
+    "FLASH_AUTO_DEPLOY_INSTALL_DIR=$(env_value "$INSTALL_DIR")" \
+    "FLASH_AUTO_DEPLOY_EXTERNAL_CADDY=$(env_value "$USE_EXTERNAL_CADDY")" \
+    "FLASH_AUTO_DEPLOY_WEBHOOK_SECRET=$(env_value "$AUTO_DEPLOY_WEBHOOK_SECRET")" \
+    "FLASH_AUTO_DEPLOY_WEBHOOK_REPOSITORY=$(env_value "$AUTO_DEPLOY_WEBHOOK_REPOSITORY")" \
+    "FLASH_AUTO_DEPLOY_WEBHOOK_PORT=$(env_value "$AUTO_DEPLOY_WEBHOOK_PORT")"
+}
+
+verify_auto_deploy_config() {
+  local config_file="$1" owner_uid="$2" group_gid="$3"
+  render_auto_deploy_config | node -e '
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const [file, owner, group] = process.argv.slice(1);
+    let fd;
+    try {
+      const matches = (stat, mode) =>
+        stat.uid === Number(owner) && stat.gid === Number(group) &&
+        (stat.mode & 0o7777) === mode;
+      const dir = fs.lstatSync(path.dirname(file));
+      if (!dir.isDirectory() || !matches(dir, 0o750)) process.exit(1);
+      fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+      const stat = fs.fstatSync(fd);
+      if (!stat.isFile() || !matches(stat, 0o640) || stat.size > 65536) process.exit(1);
+      const expected = fs.readFileSync(0);
+      if (!fs.readFileSync(fd).equals(expected)) process.exit(1);
+    } catch {
+      process.exitCode = 1;
+    } finally {
+      if (fd !== undefined) fs.closeSync(fd);
+    }
+  ' "$config_file" "$owner_uid" "$group_gid"
+}
+
 read_env_value() {
   local env_file="$1" key="$2"
   node - "$env_file" "$key" <<'NODE'
@@ -271,6 +313,15 @@ if [[ -f "$ENV_FILE" ]]; then
   info "Existing installation detected; environment and database credentials will be preserved"
 fi
 
+AUTOMATIC_RELEASE=false
+if [[ $EUID -eq 0 && -n "${FLASH_RELEASE_REF:-}" ]]; then
+  AUTOMATIC_RELEASE=true
+  [[ "$IS_UPGRADE" == "true" && ! -L "$ENV_FILE" ]] \
+    || fail "Automatic releases require an existing regular application environment file"
+  [[ "${FLASH_AUTO_DEPLOY:-}" == "true" ]] \
+    || fail "Automatic releases require existing webhook deployment configuration"
+fi
+
 echo
 printf "${BOLD}${CYAN}── Database ───────────────────────────────────────────────${NC}\n"
 echo
@@ -384,6 +435,10 @@ REPO_SSH_KEY_PATH="${FLASH_REPO_SSH_KEY_PATH:-${FLASH_AUTO_DEPLOY_REPO_SSH_KEY_P
 REPO_SSH_KEY_B64="${FLASH_REPO_SSH_PRIVATE_KEY_B64:-${FLASH_AUTO_DEPLOY_REPO_SSH_PRIVATE_KEY_B64:-}}"
 REPO_SSH_KNOWN_HOSTS_PATH="${FLASH_REPO_SSH_KNOWN_HOSTS_PATH:-${FLASH_AUTO_DEPLOY_REPO_SSH_KNOWN_HOSTS_PATH:-}}"
 REPO_SSH_KNOWN_HOSTS_B64="${FLASH_REPO_SSH_KNOWN_HOSTS_B64:-${FLASH_AUTO_DEPLOY_REPO_SSH_KNOWN_HOSTS_B64:-}}"
+if [[ "$AUTOMATIC_RELEASE" == "true" ]]; then
+  [[ -z "$REPO_SSH_KEY_B64" && -z "$REPO_SSH_KNOWN_HOSTS_B64" ]] \
+    || fail "Automatic releases cannot provision deploy key or known-hosts material"
+fi
 if [[ -n "$REPO_SSH_KEY_B64" ]]; then
   if [[ -z "$REPO_SSH_KEY_PATH" ]]; then
     REPO_SSH_KEY_PATH="$INSTALL_DIR/data/deploy/repository-deploy.key"
@@ -403,6 +458,32 @@ if [[ -n "$REPO_SSH_KNOWN_HOSTS_B64" ]]; then
   sudo chown "$INSTALL_USER:$INSTALL_GROUP" "$REPO_SSH_KNOWN_HOSTS_PATH"
   sudo chmod 600 "$REPO_SSH_KNOWN_HOSTS_PATH"
 fi
+AUTO_DEPLOY_CONFIG_FILE=/etc/flash-mdm/auto-deploy.env
+if [[ "$AUTO_DEPLOY" == "true" ]]; then
+  AUTO_DEPLOY_USER="${FLASH_AUTO_DEPLOY_USER:-$INSTALL_USER}"
+  AUTO_DEPLOY_REPO_URL="${FLASH_AUTO_DEPLOY_REPO_URL:-$REPO_URL}"
+  AUTO_DEPLOY_REPO_REF="${FLASH_AUTO_DEPLOY_REPO_REF:-main}"
+  AUTO_DEPLOY_KEY_PATH="${FLASH_AUTO_DEPLOY_REPO_SSH_KEY_PATH:-$REPO_SSH_KEY_PATH}"
+  AUTO_DEPLOY_KNOWN_HOSTS_PATH="${FLASH_AUTO_DEPLOY_REPO_SSH_KNOWN_HOSTS_PATH:-$REPO_SSH_KNOWN_HOSTS_PATH}"
+  AUTO_DEPLOY_WEBHOOK_BIND_ADDRESS="${FLASH_AUTO_DEPLOY_WEBHOOK_BIND_ADDRESS:-127.0.0.1}"
+  AUTO_DEPLOY_WEBHOOK_SECRET="$FLASH_AUTO_DEPLOY_WEBHOOK_SECRET"
+  AUTO_DEPLOY_WEBHOOK_REPOSITORY="$FLASH_AUTO_DEPLOY_WEBHOOK_REPOSITORY"
+
+  id "$AUTO_DEPLOY_USER" > /dev/null 2>&1 || fail "Automatic deploy user does not exist: $AUTO_DEPLOY_USER"
+  AUTO_DEPLOY_GROUP="$(id -gn "$AUTO_DEPLOY_USER")"
+  [[ -n "$AUTO_DEPLOY_REPO_URL" ]] || fail "FLASH_AUTO_DEPLOY_REPO_URL or FLASH_REPO_URL is required"
+  if [[ "$AUTO_DEPLOY_REPO_URL" == git@* || "$AUTO_DEPLOY_REPO_URL" == ssh://* ]]; then
+    [[ -n "$AUTO_DEPLOY_KEY_PATH" ]] || fail "A repository SSH key is required for an SSH repository URL"
+    [[ -r "$AUTO_DEPLOY_KEY_PATH" ]] || fail "Automatic deploy key is not readable: $AUTO_DEPLOY_KEY_PATH"
+    [[ -n "$AUTO_DEPLOY_KNOWN_HOSTS_PATH" && -r "$AUTO_DEPLOY_KNOWN_HOSTS_PATH" ]] || fail "A verified repository known_hosts file is required for an SSH repository URL"
+  fi
+  if [[ "$AUTOMATIC_RELEASE" == "true" ]]; then
+    verify_auto_deploy_config "$AUTO_DEPLOY_CONFIG_FILE" 0 "$(id -g "$AUTO_DEPLOY_USER")" \
+      || fail "Existing protected webhook deployment configuration failed verification"
+    success "Existing webhook deployment configuration verified and preserved"
+  fi
+fi
+
 if [[ -n "$REPO_SSH_KEY_PATH" ]]; then
   [[ -r "$REPO_SSH_KEY_PATH" ]] || fail "Repository deploy key is not readable: $REPO_SSH_KEY_PATH"
 fi
@@ -1401,23 +1482,6 @@ success "Cron jobs installed with overlap protection, timeouts, and retained fai
 # This is deliberately opt-in. Enabling it trusts the configured repository to
 # run the installer with the local operator's deployment privileges.
 if [[ "$AUTO_DEPLOY" == "true" ]]; then
-  AUTO_DEPLOY_USER="${FLASH_AUTO_DEPLOY_USER:-$INSTALL_USER}"
-  AUTO_DEPLOY_REPO_URL="${FLASH_AUTO_DEPLOY_REPO_URL:-$REPO_URL}"
-  AUTO_DEPLOY_REPO_REF="${FLASH_AUTO_DEPLOY_REPO_REF:-main}"
-  AUTO_DEPLOY_KEY_PATH="${FLASH_AUTO_DEPLOY_REPO_SSH_KEY_PATH:-$REPO_SSH_KEY_PATH}"
-  AUTO_DEPLOY_KNOWN_HOSTS_PATH="${FLASH_AUTO_DEPLOY_REPO_SSH_KNOWN_HOSTS_PATH:-$REPO_SSH_KNOWN_HOSTS_PATH}"
-  AUTO_DEPLOY_WEBHOOK_BIND_ADDRESS="${FLASH_AUTO_DEPLOY_WEBHOOK_BIND_ADDRESS:-127.0.0.1}"
-  AUTO_DEPLOY_WEBHOOK_SECRET="$FLASH_AUTO_DEPLOY_WEBHOOK_SECRET"
-  AUTO_DEPLOY_WEBHOOK_REPOSITORY="$FLASH_AUTO_DEPLOY_WEBHOOK_REPOSITORY"
-
-  id "$AUTO_DEPLOY_USER" > /dev/null 2>&1 || fail "Automatic deploy user does not exist: $AUTO_DEPLOY_USER"
-  AUTO_DEPLOY_GROUP="$(id -gn "$AUTO_DEPLOY_USER")"
-  [[ -n "$AUTO_DEPLOY_REPO_URL" ]] || fail "FLASH_AUTO_DEPLOY_REPO_URL or FLASH_REPO_URL is required"
-  if [[ "$AUTO_DEPLOY_REPO_URL" == git@* || "$AUTO_DEPLOY_REPO_URL" == ssh://* ]]; then
-    [[ -n "$AUTO_DEPLOY_KEY_PATH" ]] || fail "A repository SSH key is required for an SSH repository URL"
-    [[ -r "$AUTO_DEPLOY_KEY_PATH" ]] || fail "Automatic deploy key is not readable: $AUTO_DEPLOY_KEY_PATH"
-    [[ -n "$AUTO_DEPLOY_KNOWN_HOSTS_PATH" && -r "$AUTO_DEPLOY_KNOWN_HOSTS_PATH" ]] || fail "A verified repository known_hosts file is required for an SSH repository URL"
-  fi
   AUTO_DEPLOY_GIT_ENV=(env GIT_TERMINAL_PROMPT=0)
   if [[ "$AUTO_DEPLOY_REPO_URL" == git@* || "$AUTO_DEPLOY_REPO_URL" == ssh://* ]]; then
     AUTO_DEPLOY_GIT_ENV+=("GIT_SSH_COMMAND=ssh -i $AUTO_DEPLOY_KEY_PATH -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$AUTO_DEPLOY_KNOWN_HOSTS_PATH")
@@ -1430,25 +1494,14 @@ if [[ "$AUTO_DEPLOY" == "true" ]]; then
       || fail "Automatic deployment repository access preflight failed"
   fi
 
-  sudo install -d -o root -g "$AUTO_DEPLOY_GROUP" -m 750 /etc/flash-mdm
-  sudo chown root:"$AUTO_DEPLOY_GROUP" /etc/flash-mdm
-  sudo chmod 750 /etc/flash-mdm
-  sudo tee /etc/flash-mdm/auto-deploy.env > /dev/null <<AUTOENV
-FLASH_AUTO_DEPLOY_USER=$(env_value "$AUTO_DEPLOY_USER")
-FLASH_AUTO_DEPLOY_REPO_URL=$(env_value "$AUTO_DEPLOY_REPO_URL")
-FLASH_AUTO_DEPLOY_REPO_REF=$(env_value "$AUTO_DEPLOY_REPO_REF")
-FLASH_AUTO_DEPLOY_REPO_SSH_KEY_PATH=$(env_value "$AUTO_DEPLOY_KEY_PATH")
-FLASH_AUTO_DEPLOY_REPO_SSH_KNOWN_HOSTS_PATH=$(env_value "$AUTO_DEPLOY_KNOWN_HOSTS_PATH")
-FLASH_AUTO_DEPLOY_WEBHOOK_BIND_ADDRESS=$(env_value "$AUTO_DEPLOY_WEBHOOK_BIND_ADDRESS")
-FLASH_AUTO_DEPLOY_DOMAIN=$(env_value "$DOMAIN")
-FLASH_AUTO_DEPLOY_INSTALL_DIR=$(env_value "$INSTALL_DIR")
-FLASH_AUTO_DEPLOY_EXTERNAL_CADDY=$(env_value "$USE_EXTERNAL_CADDY")
-FLASH_AUTO_DEPLOY_WEBHOOK_SECRET=$(env_value "$AUTO_DEPLOY_WEBHOOK_SECRET")
-FLASH_AUTO_DEPLOY_WEBHOOK_REPOSITORY=$(env_value "$AUTO_DEPLOY_WEBHOOK_REPOSITORY")
-FLASH_AUTO_DEPLOY_WEBHOOK_PORT=$(env_value "$AUTO_DEPLOY_WEBHOOK_PORT")
-AUTOENV
-  sudo chown root:"$AUTO_DEPLOY_GROUP" /etc/flash-mdm/auto-deploy.env
-  sudo chmod 640 /etc/flash-mdm/auto-deploy.env
+  if [[ "$AUTOMATIC_RELEASE" != "true" ]]; then
+    sudo install -d -o root -g "$AUTO_DEPLOY_GROUP" -m 750 /etc/flash-mdm
+    sudo chown root:"$AUTO_DEPLOY_GROUP" /etc/flash-mdm
+    sudo chmod 750 /etc/flash-mdm
+    render_auto_deploy_config | sudo tee "$AUTO_DEPLOY_CONFIG_FILE" > /dev/null
+    sudo chown root:"$AUTO_DEPLOY_GROUP" "$AUTO_DEPLOY_CONFIG_FILE"
+    sudo chmod 640 "$AUTO_DEPLOY_CONFIG_FILE"
+  fi
   sudo install -D -o root -g root -m 0755 "$RELEASE_DIR/scripts/vps-auto-deploy.sh" /usr/local/libexec/flashmdm-auto-deploy
   sudo install -D -o root -g root -m 0755 "$RELEASE_DIR/scripts/vps-auto-deploy-launcher.sh" /usr/local/libexec/flashmdm-auto-deploy-launcher
   sudo tee /etc/sudoers.d/flashmdm-auto-deploy-webhook > /dev/null <<SUDOERSEOF
