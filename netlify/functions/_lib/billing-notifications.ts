@@ -142,7 +142,9 @@ export async function getWorkspaceBillingRecipients(workspaceId: string): Promis
 
   const permissions = getPermissionMatrixFromWorkspaceSettings(members[0].settings) ?? DEFAULT_PERMISSION_MATRIX;
   return [...new Set(members
-    .filter((member) => workspaceRoleMeetsMinimum(member.role, permissions.billing.billing_view))
+    .filter((member) =>
+      workspaceRoleMeetsMinimum(member.role, permissions.workspace.read) &&
+      workspaceRoleMeetsMinimum(member.role, permissions.billing.billing_view))
     .map((member) => member.email))];
 }
 

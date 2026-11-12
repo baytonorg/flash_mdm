@@ -209,6 +209,13 @@ suite('membership lifecycle with PostgreSQL and actual handlers', () => {
     await expect(send('owner-only')).resolves.toMatchObject({ sent: true });
     expect(recipients()).toEqual(['customer@fixture.invalid', 'owner@fixture.invalid']);
     vi.mocked(sendEmail).mockClear();
+    await pool.query('UPDATE workspaces SET settings = $2 WHERE id = $1', [
+      workspace,
+      { rbac: { permission_matrix: { workspace: { read: 'owner' } } } },
+    ]);
+    await expect(send('workspace-read-owner-only')).resolves.toMatchObject({ sent: true });
+    expect(recipients()).toEqual(['customer@fixture.invalid', 'owner@fixture.invalid']);
+    vi.mocked(sendEmail).mockClear();
     await pool.query("UPDATE workspace_customers SET status = 'inactive' WHERE workspace_id = $1 AND environment_id = $2", [workspace, env]);
     await expect(send('inactive-customer')).resolves.toMatchObject({ sent: true });
     expect(recipients()).toEqual(['owner@fixture.invalid']);
