@@ -506,6 +506,7 @@ describe('workspace-billing-webhook', () => {
 
     mockClientQuery
       .mockResolvedValueOnce({ rowCount: 1, rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ workspace_id: WORKSPACE_ID }] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [] });
 
     const res = await handler(
@@ -527,6 +528,59 @@ describe('workspace-billing-webhook', () => {
       environmentId: '223e4567-e89b-12d3-a456-426614174000',
       notificationType: 'workspace_payment_failed',
       dedupeKey: 'workspace:payment_failed:evt_invoice_failed_ws',
+    }));
+  });
+
+  it.each([
+    ['another workspace', { workspace_id: '323e4567-e89b-12d3-a456-426614174000' }],
+    ['a deleted environment', undefined],
+  ])('ignores payment failure metadata for %s', async (_reason, environment) => {
+    const environmentId = '223e4567-e89b-12d3-a456-426614174000';
+    mockConstructEvent.mockReturnValue({
+      id: 'evt_payment_failed_out_of_scope',
+      type: 'invoice.payment_failed',
+      data: { object: { subscription: 'sub_123', metadata: { workspace_id: WORKSPACE_ID } } },
+    });
+    mockSubscriptionsRetrieve.mockResolvedValueOnce({ metadata: { environment_id: environmentId } });
+    mockClientQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT workspace_id FROM environments')) {
+        return { rowCount: environment ? 1 : 0, rows: environment ? [environment] : [] };
+      }
+      return { rowCount: 1, rows: [] };
+    });
+
+    const response = await handler(makeWorkspaceWebhookRequest('{}'), {} as never);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      received: true,
+      ignored: 'environment is not in workspace scope',
+    });
+    expect(mockClientQuery).toHaveBeenCalledWith(expect.stringContaining('UPDATE workspace_billing_events'), [
+      'evt_payment_failed_out_of_scope',
+    ]);
+    expect(mockGetWorkspaceScopeNames).not.toHaveBeenCalled();
+    expect(mockBuildPaymentFailedEmail).not.toHaveBeenCalled();
+    expect(mockQueueAndSendBillingEmail).not.toHaveBeenCalled();
+  });
+
+  it('retains workspace-only payment failure notices without environment metadata', async () => {
+    mockConstructEvent.mockReturnValue({
+      id: 'evt_workspace_payment_failed',
+      type: 'invoice.payment_failed',
+      data: { object: { subscription: 'sub_123', metadata: { workspace_id: WORKSPACE_ID } } },
+    });
+    mockClientQuery.mockResolvedValue({ rowCount: 1, rows: [] });
+
+    const response = await handler(makeWorkspaceWebhookRequest('{}'), {} as never);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ received: true });
+    expect(mockGetWorkspaceScopeNames).toHaveBeenCalledWith(WORKSPACE_ID, null);
+    expect(mockQueueAndSendBillingEmail).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: WORKSPACE_ID,
+      environmentId: null,
+      includeEnvironmentCustomer: false,
     }));
   });
 
