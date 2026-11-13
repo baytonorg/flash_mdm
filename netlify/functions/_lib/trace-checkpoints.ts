@@ -59,25 +59,38 @@ const CHECKPOINT_FILE =
 async function readCheckpoint(
   path: string,
   name: string,
+  onReadFailure?: (failure: "unavailable" | "invalid") => void,
 ): Promise<Checkpoint | null> {
   const match = CHECKPOINT_FILE.exec(name);
   if (!match) return null;
+  const invalid = () => {
+    onReadFailure?.("invalid");
+    return null;
+  };
+  let bounds;
+  try {
+    bounds = traceWindowBounds(match[1]);
+  } catch {
+    return invalid();
+  }
   const file = await open(
     join(path, name),
     constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-  ).catch(() => null);
+  ).catch((error: NodeJS.ErrnoException) => {
+    onReadFailure?.(error.code === "ELOOP" ? "invalid" : "unavailable");
+    return null;
+  });
   if (!file) return null;
   try {
     const stat = await file.stat();
-    if (!stat.isFile() || stat.size > 2 * 1024 * 1024) return null;
+    if (!stat.isFile() || stat.size > 2 * 1024 * 1024) return invalid();
     const bytes = await file.readFile();
     if (
       match[3] &&
       createHash("sha256").update(bytes).digest("hex") !== match[3]
     )
-      return null;
+      return invalid();
     const c = JSON.parse(bytes.toString("utf8"));
-    const bounds = traceWindowBounds(match[1]);
     if (
       c.schema !== 1 ||
       c.window !== match[1] ||
@@ -99,9 +112,11 @@ async function readCheckpoint(
           h.meaningful_events >= 0,
       )
     )
-      return null;
+      return invalid();
     return c;
-  } catch {
+  } catch (error) {
+    if (error instanceof SyntaxError || error instanceof TypeError || error instanceof RangeError) return invalid();
+    onReadFailure?.("unavailable");
     return null;
   } finally {
     await file.close();
@@ -259,9 +274,14 @@ export async function traceComparisons(directory: string, to: Date) {
     [...new Set(names.map((n) => n.slice(0, 10)))].slice(0, 35),
   );
   const checkpoints = new Map<string, Checkpoint>();
+  const unavailable = new Set<string>();
+  const invalid = new Set<string>();
   for (const name of names) {
-    if (!windows.has(name.slice(0, 10))) continue;
-    const c = await readCheckpoint(path, name);
+    const day = name.slice(0, 10);
+    if (!windows.has(day)) continue;
+    const c = await readCheckpoint(path, name, (failure) => {
+      (failure === "unavailable" ? unavailable : invalid).add(day);
+    });
     if (!c || Date.parse(c.to) > to.getTime()) continue;
     const previous = checkpoints.get(c.window);
     if (
@@ -276,13 +296,16 @@ export async function traceComparisons(directory: string, to: Date) {
     const earliest = new Date(currentWindow + "T12:00:00Z");
     earliest.setUTCDate(earliest.getUTCDate() - days);
     const firstWindow = earliest.toISOString().slice(0, 10);
-    const selected = [...checkpoints.values()].filter(
-      (c) => c.window >= firstWindow && c.window < currentWindow,
-    );
+    const includesDay = (day: string) => day >= firstWindow && day < currentWindow;
+    const selected = [...checkpoints.values()].filter((c) => includesDay(c.window));
+    const unavailableWindows = [...unavailable].filter(includesDay).sort();
+    const invalidWindows = [...invalid].filter(includesDay).sort();
     const humans = new Set(selected.flatMap((c) => c.humans.map((h) => h.id)));
     return {
       requested_days: days,
       windows_available: selected.length,
+      unavailable_checkpoint_windows: unavailableWindows,
+      invalid_checkpoint_windows: invalidWindows,
       active_humans: humans.size,
       meaningful_human_events: selected.reduce(
         (n, c) => n + c.humans.reduce((m, h) => m + h.meaningful_events, 0),
@@ -291,6 +314,8 @@ export async function traceComparisons(directory: string, to: Date) {
       http_requests: selected.reduce((n, c) => n + c.totals.http_requests, 0),
       partial_history:
         selected.length < days ||
+        unavailableWindows.length > 0 ||
+        invalidWindows.length > 0 ||
         selected.some(
           (c) =>
             c.coverage.component_coverage_incomplete !== false ||

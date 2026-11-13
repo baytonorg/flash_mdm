@@ -266,6 +266,29 @@ describe('trace evidence integrity', () => {
     const comparison=await traceComparisons(directory,to);
     expect(comparison.seven_days).toMatchObject({windows_available:1,http_requests:12,partial_history:true});
   });
+  it('distinguishes unreadable and malformed checkpoint candidates from absent days', async () => {
+    const reportDir = join(directory, 'reports');
+    await mkdir(reportDir, { mode: 0o700 });
+    const unreadable = join(reportDir, '2026-10-26.json');
+    await writeFile(unreadable, '{}', { mode: 0o600 });
+    await chmod(unreadable, 0);
+    await writeFile(join(reportDir, '2026-10-27.json'), '{', { mode: 0o600 });
+    await writeFile(join(reportDir, '2026-10-32.json'), '{}', { mode: 0o600 });
+    try {
+      const report = await traceComparisons(directory, traceWindowBounds('2026-11-01').to);
+      expect(report.seven_days).toMatchObject({
+        windows_available: 0,
+        unavailable_checkpoint_windows: process.getuid?.() === 0 ? [] : ['2026-10-26'],
+        invalid_checkpoint_windows: [
+          ...(process.getuid?.() === 0 ? ['2026-10-26'] : []),
+          '2026-10-27', '2026-10-32',
+        ],
+        partial_history: true,
+      });
+    } finally {
+      await chmod(unreadable, 0o600);
+    }
+  });
   it('requires both component heartbeats and selects seven completed London days across autumn DST', async () => {
     for(let day=21;day<=27;day++){
       const window='2026-10-'+day,{from,to}=traceWindowBounds(window);
