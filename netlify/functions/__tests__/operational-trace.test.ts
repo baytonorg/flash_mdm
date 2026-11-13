@@ -103,6 +103,24 @@ describe('correlated request evidence', () => {
     await closeOperationalTrace();
     expect((await records()).filter(r => r.event === 'http.end').map(r => r.data.outcome)).toEqual(['partial_failure', 'challenge']);
   });
+  it('classifies nested licensing reconcile errors without collecting nested response data', async () => {
+    process.env.FLASH_TRACE_DIR = directory;
+    const details = { message: 'fixture-private-detail', stats: { errors: 1, notice: 'fixture-private-notice' } };
+    const partial = await traceHttp(new Request('http://localhost/api/licensing-reconcile-scheduled'), async () => Response.json(details));
+    await traceHttp(new Request('http://localhost/api/licensing/reconcile', { method: 'POST' }), async () => Response.json(details));
+    await traceHttp(new Request('http://localhost/api/licensing-reconcile-scheduled'), async () => Response.json({ stats: { errors: 0 } }));
+    await traceHttp(new Request('http://localhost/api/licensing-reconcile-scheduled'), async () => Response.json({ stats: { errors: '1' } }));
+    await traceHttp(new Request('http://localhost/api/licensing-reconcile'), async () => Response.json(details));
+    await traceHttp(new Request('http://localhost/api/health'), async () => Response.json(details));
+    expect(partial.status).toBe(200);
+    expect(await partial.json()).toEqual(details);
+
+    await closeOperationalTrace();
+    const rows = await records();
+    expect(rows.filter(row => row.event === 'http.end').map(row => [row.data.outcome, row.data.errors]))
+      .toEqual([['partial_failure', 1], ['partial_failure', 1], ['success', 0], ['success', undefined], ['success', undefined], ['success', undefined]]);
+    expect(JSON.stringify(rows)).not.toContain('fixture-private');
+  });
   it('cancels timed-out diagnostic inspection while preserving the product response stream', async () => {
     process.env.FLASH_TRACE_DIR = directory;
     let stream!: ReadableStreamDefaultController<Uint8Array>;
