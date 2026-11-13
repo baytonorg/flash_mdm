@@ -231,6 +231,7 @@ export async function traceSpan<T>(
 
 export async function traceResponseOutcome(
   response: Response,
+  pathname?: string,
 ): Promise<Record<string, unknown>> {
   if (
     !response.headers.get("content-type")?.includes("application/json") ||
@@ -254,9 +255,17 @@ export async function traceResponseOutcome(
         }
         chunks.push(next.value);
       }
-      return responseOutcome(
-        JSON.parse(Buffer.concat(chunks).toString("utf8")),
-      );
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      const outcome = responseOutcome(body);
+      if (
+        pathname === "/api/licensing/reconcile" ||
+        pathname === "/api/licensing-reconcile-scheduled"
+      ) {
+        const errors: unknown = body?.stats?.errors;
+        if (typeof errors === "number" && Number.isSafeInteger(errors) && errors >= 0)
+          outcome.errors = errors;
+      }
+      return outcome;
     } catch {
       return { detail: "unavailable" };
     }
@@ -356,7 +365,7 @@ export async function traceHttp(
       const status = response.status;
       let outcome =
         status >= 500 ? "failure" : status >= 400 ? "rejected" : "success";
-      const detail = await traceResponseOutcome(response).catch(
+      const detail = await traceResponseOutcome(response, url.pathname).catch(
         () => ({ detail: "unavailable" }) as Record<string, unknown>,
       );
       if (
