@@ -20,7 +20,7 @@
 
 | Import | From | Used for |
 |--------|------|----------|
-| `execute`, `query`, `queryOne` | `_lib/db` | Database operations |
+| `query`, `queryOne`, `transaction` | `_lib/db` | Database operations |
 | `requireAuth` | `_lib/auth` | Authenticate the caller |
 | `requireEnvironmentPermission`, `requireWorkspaceResourcePermission` | `_lib/rbac` | Permission checks |
 | `getSearchParams`, `jsonResponse`, `errorResponse`, `parseJsonBody`, `isValidUuid`, `getClientIp` | `_lib/helpers` | Request/response utilities |
@@ -47,8 +47,8 @@
 7. Calculates `billingIntervals` as `ceil(duration_months / plan_interval_months)`.
 8. Computes subtotal with integer overflow guard (`INT32_MAX`).
 9. Creates a `billing_invoices` row (status `paid` if subtotal is 0, otherwise `pending` with a due date).
-10. Creates a corresponding `billing_invoice_items` row.
-11. Logs an audit event and returns the invoice ID plus gift-seat breakdown.
+10. Commits the invoice, its line item and the audit event in one transaction.
+11. Returns the invoice ID and gift-seat breakdown after commit.
 
 ## API Surface
 

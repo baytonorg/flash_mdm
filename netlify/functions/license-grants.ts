@@ -1,5 +1,5 @@
 import type { Context } from '@netlify/functions';
-import { execute, query, queryOne } from './_lib/db.js';
+import { query, queryOne, transaction } from './_lib/db.js';
 import { requireAuth } from './_lib/auth.js';
 import { requireEnvironmentPermission, requireWorkspaceResourcePermission } from './_lib/rbac.js';
 import { getSearchParams, jsonResponse, errorResponse, parseJsonBody, isValidUuid, getClientIp } from './_lib/helpers.js';
@@ -210,19 +210,65 @@ export default async function handler(request: Request, _context: Context) {
       const dueAt = new Date(Date.now() + dueDays * 86_400_000).toISOString();
       const invoiceStatus = subtotal === 0 ? 'paid' : 'pending';
 
-      await execute(
-        `INSERT INTO billing_invoices
-           (id, workspace_id, invoice_type, status, subtotal_cents, currency, due_at, paid_at, source, metadata, created_by)
-         VALUES ($1, $2, 'workspace_to_superadmin', $3, $4, $5, $6, $7, 'workspace_request', $8::jsonb, $9)`,
-        [
-          invoiceId,
-          body.workspace_id,
-          invoiceStatus,
-          subtotal,
-          currency,
-          invoiceStatus === 'paid' ? null : dueAt,
-          invoiceStatus === 'paid' ? new Date().toISOString() : null,
-          JSON.stringify({
+      await transaction(async (client) => {
+        await client.query(
+          `INSERT INTO billing_invoices
+             (id, workspace_id, invoice_type, status, subtotal_cents, currency, due_at, paid_at, source, metadata, created_by)
+           VALUES ($1, $2, 'workspace_to_superadmin', $3, $4, $5, $6, $7, 'workspace_request', $8::jsonb, $9)`,
+          [
+            invoiceId,
+            body.workspace_id,
+            invoiceStatus,
+            subtotal,
+            currency,
+            invoiceStatus === 'paid' ? null : dueAt,
+            invoiceStatus === 'paid' ? new Date().toISOString() : null,
+            JSON.stringify({
+              seat_count: body.seat_count,
+              billable_seat_count: billableSeats,
+              gift_offset_seats: giftOffsetSeats,
+              plan_id: plan.id,
+              plan_name: plan.name,
+              duration_months: body.duration_months,
+              billing_intervals: billingIntervals,
+              plan_interval_months: planIntervalMonths,
+              unit_amount_cents: unitAmountCents,
+            }),
+            auth.user.id,
+          ]
+        );
+
+        await client.query(
+          `INSERT INTO billing_invoice_items
+             (id, invoice_id, description, quantity, unit_amount_cents, period_start, period_end, metadata)
+           VALUES ($1, $2, $3, $4, $5, now(), now() + ($6 || ' months')::interval, $7::jsonb)`,
+          [
+            crypto.randomUUID(),
+            invoiceId,
+            `${plan.name}: ${body.seat_count} seats for ${body.duration_months} month(s)`,
+            billableSeats * billingIntervals,
+            unitAmountCents,
+            String(body.duration_months),
+            JSON.stringify({
+              seat_count: body.seat_count,
+              billable_seat_count: billableSeats,
+              gift_offset_seats: giftOffsetSeats,
+              plan_id: plan.id,
+              plan_name: plan.name,
+              duration_months: body.duration_months,
+              billing_intervals: billingIntervals,
+              plan_interval_months: planIntervalMonths,
+            }),
+          ]
+        );
+
+        await logAudit({
+          workspace_id: body.workspace_id,
+          user_id: auth.user.id,
+          action: 'license.invoice.requested',
+          resource_type: 'invoice',
+          resource_id: invoiceId,
+          details: {
             seat_count: body.seat_count,
             billable_seat_count: billableSeats,
             gift_offset_seats: giftOffsetSeats,
@@ -231,56 +277,12 @@ export default async function handler(request: Request, _context: Context) {
             duration_months: body.duration_months,
             billing_intervals: billingIntervals,
             plan_interval_months: planIntervalMonths,
+            subtotal_cents: subtotal,
             unit_amount_cents: unitAmountCents,
-          }),
-          auth.user.id,
-        ]
-      );
-
-      await execute(
-        `INSERT INTO billing_invoice_items
-           (id, invoice_id, description, quantity, unit_amount_cents, period_start, period_end, metadata)
-         VALUES ($1, $2, $3, $4, $5, now(), now() + ($6 || ' months')::interval, $7::jsonb)`,
-        [
-          crypto.randomUUID(),
-          invoiceId,
-          `${plan.name}: ${body.seat_count} seats for ${body.duration_months} month(s)`,
-          billableSeats * billingIntervals,
-          unitAmountCents,
-          String(body.duration_months),
-          JSON.stringify({
-            seat_count: body.seat_count,
-            billable_seat_count: billableSeats,
-            gift_offset_seats: giftOffsetSeats,
-            plan_id: plan.id,
-            plan_name: plan.name,
-            duration_months: body.duration_months,
-            billing_intervals: billingIntervals,
-            plan_interval_months: planIntervalMonths,
-          }),
-        ]
-      );
-
-      await logAudit({
-        workspace_id: body.workspace_id,
-        user_id: auth.user.id,
-        action: 'license.invoice.requested',
-        resource_type: 'invoice',
-        resource_id: invoiceId,
-        details: {
-          seat_count: body.seat_count,
-          billable_seat_count: billableSeats,
-          gift_offset_seats: giftOffsetSeats,
-          plan_id: plan.id,
-          plan_name: plan.name,
-          duration_months: body.duration_months,
-          billing_intervals: billingIntervals,
-          plan_interval_months: planIntervalMonths,
-          subtotal_cents: subtotal,
-          unit_amount_cents: unitAmountCents,
-          currency,
-        },
-        ip_address: getClientIp(request),
+            currency,
+          },
+          ip_address: getClientIp(request),
+        }, client);
       });
 
       return jsonResponse({
