@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { access, mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 export const ARCHIVE_FORMAT = 'flash-mdm-blob-archive-v1';
@@ -9,12 +9,25 @@ export function sha256(data) {
 }
 
 export function localBlobPath(root, store, key) {
-  return path.join(root, encodeURIComponent(store), sha256(key));
+  return path.join(root, storeDirectoryName(store), sha256(key));
+}
+
+function storeDirectoryName(store) {
+  if (typeof store !== 'string' || !store || store === '.' || store === '..') {
+    throw new Error('Invalid blob store name');
+  }
+  return encodeURIComponent(store);
+}
+
+async function privateStagingDirectory(destination) {
+  const parent = path.dirname(destination);
+  await mkdir(parent, { recursive: true, mode: 0o700 });
+  return mkdtemp(path.join(parent, `.${path.basename(destination)}.tmp-`));
 }
 
 async function exists(filePath) {
   try {
-    await access(filePath);
+    await lstat(filePath);
     return true;
   } catch (error) {
     if (error?.code === 'ENOENT') return false;
@@ -36,19 +49,19 @@ export async function createArchive(archiveDir, entries, createdAt = new Date().
   assertAbsolute('archive directory', archiveDir);
   if (await exists(archiveDir)) throw new Error(`Archive destination already exists: ${archiveDir}`);
 
-  const parent = path.dirname(archiveDir);
-  const temporaryDir = path.join(parent, `.${path.basename(archiveDir)}.tmp-${process.pid}-${Date.now()}`);
-  await mkdir(path.join(temporaryDir, 'objects'), { recursive: true });
+  const temporaryDir = await privateStagingDirectory(archiveDir);
 
   const stores = new Map();
   try {
+    await mkdir(path.join(temporaryDir, 'objects'), { mode: 0o700 });
     for await (const entry of entries) {
       if (!entry.store || !entry.key) throw new Error('Every blob must have a store and key');
+      storeDirectoryName(entry.store);
       const data = Buffer.from(entry.data);
       const digest = sha256(data);
       const objectPath = `objects/${digest}`;
       const contentPath = path.join(temporaryDir, objectPath);
-      if (!(await exists(contentPath))) await writeFile(contentPath, data, { flag: 'wx' });
+      if (!(await exists(contentPath))) await writeFile(contentPath, data, { flag: 'wx', mode: 0o600 });
 
       const objects = stores.get(entry.store) ?? [];
       objects.push({
@@ -71,7 +84,7 @@ export async function createArchive(archiveDir, entries, createdAt = new Date().
           objects: objects.sort((left, right) => left.key.localeCompare(right.key)),
         })),
     };
-    await writeFile(path.join(temporaryDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, { flag: 'wx' });
+    await writeFile(path.join(temporaryDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
     await rename(temporaryDir, archiveDir);
     return summarizeManifest(manifest);
   } catch (error) {
@@ -90,7 +103,8 @@ export async function loadAndValidateArchive(archiveDir) {
 
   const seen = new Set();
   for (const store of manifest.stores) {
-    if (!store?.name || !Array.isArray(store.objects)) throw new Error('Invalid store entry in blob manifest');
+    if (!Array.isArray(store?.objects)) throw new Error('Invalid store entry in blob manifest');
+    storeDirectoryName(store.name);
     for (const object of store.objects) {
       const identity = `${store.name}\0${object.key}`;
       if (!object.key || seen.has(identity)) throw new Error(`Duplicate or empty blob key in ${store.name}`);
@@ -122,17 +136,14 @@ export async function importArchive(archiveDir, blobRoot, { execute = false } = 
   }
 
   if (execute) {
-    const temporaryRoot = path.join(
-      path.dirname(blobRoot),
-      `.${path.basename(blobRoot)}.tmp-${process.pid}-${Date.now()}`
-    );
+    const temporaryRoot = await privateStagingDirectory(blobRoot);
     try {
       for (const { store, object } of targets) {
         const target = localBlobPath(temporaryRoot, store, object.key);
-        await mkdir(path.dirname(target), { recursive: true });
+        await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
         const data = await readFile(path.join(archiveDir, object.object_path));
-        await writeFile(target, data, { flag: 'wx' });
-        await writeFile(`${target}.metadata.json`, `${JSON.stringify(object.metadata)}\n`, { flag: 'wx' });
+        await writeFile(target, data, { flag: 'wx', mode: 0o600 });
+        await writeFile(`${target}.metadata.json`, `${JSON.stringify(object.metadata)}\n`, { flag: 'wx', mode: 0o600 });
       }
       await rename(temporaryRoot, blobRoot);
     } catch (error) {

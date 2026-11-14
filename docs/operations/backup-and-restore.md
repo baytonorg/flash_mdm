@@ -57,7 +57,7 @@ PostgreSQL export does not include Netlify Blobs. Before switching traffic:
 7. Exercise representative authenticated downloads and certificate/policy paths before directing production traffic to the VPS.
 8. Retain the Netlify data and the migration archive until the agreed recovery window has passed.
 
-The archive manifest contains store names, object keys, metadata, sizes, and hashes. Protect it as operational data even though it contains no Netlify credentials. Never put tokens in command arguments or archive files.
+New Netlify migration archives and imported trees use owner-only directories and files (0700 and 0600). Run the importer under the intended service account or have the operator verify ownership before using the result. The archive contains raw blob data and a manifest of object keys and metadata. Treat both as protected data, and keep deployment credentials out of command arguments and archive metadata.
 
 ## Related
 
