@@ -41,7 +41,7 @@ import verifyMagic from '../auth-magic-link-verify.js';
 import loginHandler from '../auth-login.js';
 import bindingHandler from '../environment-bind.js';
 import { amapiCall, prepareAmapiCall } from '../_lib/amapi.js';
-import { runWithAuditAuthContext } from '../_lib/request-auth-context.js';
+import { runWithAuditAuthContext, runWithoutAuditAuthContext } from '../_lib/request-auth-context.js';
 
 vi.mock('../_lib/resend.js', async original => ({ ...await original<typeof import('../_lib/resend.js')>(), sendEmail: vi.fn() }));
 vi.mock('../_lib/amapi.js', async original => ({ ...await original<typeof import('../_lib/amapi.js')>(), prepareAmapiCall: vi.fn(), amapiCall: vi.fn() }));
@@ -728,7 +728,7 @@ suite('membership lifecycle with PostgreSQL and actual handlers', () => {
   });
 
 
-  it('stores UUID, singleton and AMAPI operation audit identities without changing their scope', async () => {
+  it('stores UUID, singleton and AMAPI operation audit identities without changing their scope', () => runWithoutAuditAuthContext(async () => {
     const session = 'fixture-audit-identities';
     await pool.query("INSERT INTO sessions(user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval '30 days')", [owner, hashToken(session)]);
     await pool.query("UPDATE workspaces SET gcp_project_id = 'fixture-project' WHERE id = $1", [workspace]);
@@ -778,7 +778,7 @@ suite('membership lifecycle with PostgreSQL and actual handlers', () => {
     } finally {
       consoleError.mockRestore();
     }
-  });
+  }));
 
   it('commits an invoice request with its line item and audit, or rolls all three back', async () => {
     const session = 'fixture-invoice-request';
