@@ -358,6 +358,16 @@ async function* traceLines(file: FileHandle, bytes: number) {
       ? null
       : Buffer.concat(fragments, length).toString("utf8");
 }
+const HTTP_OUTCOMES = new Set([
+  "success",
+  "rejected",
+  "failure",
+  "challenge",
+  "partial_failure",
+  "protocol_failure",
+  "delivery_uncertain",
+]);
+
 export async function buildTraceReport(
   directory: string,
   from: Date,
@@ -380,6 +390,8 @@ export async function buildTraceReport(
       actor: TraceRecord["actor"];
       first: string;
       last: string;
+      first_meaningful: string | null;
+      last_meaningful: string | null;
       events: number;
       http_requests: number;
       meaningful_events: number;
@@ -390,7 +402,8 @@ export async function buildTraceReport(
   >();
   const eventCounts: Record<string, number> = Object.create(null),
     routes: Record<string, number> = {},
-    statuses: Record<string, number> = {};
+    statuses: Record<string, number> = {},
+    httpOutcomes: Record<string, number> = {};
   const problems: TraceRecord[] = [];
   const requests = new Map<string, TraceRecord["actor"]>();
   const committedTransactions = new Set<string>();
@@ -477,6 +490,9 @@ export async function buildTraceReport(
       if (record.route) routes[record.route] = (routes[record.route] ?? 0) + 1;
       const key = String(record.data.status);
       statuses[key] = (statuses[key] ?? 0) + 1;
+      const label = record.data.outcome;
+      const outcome = typeof label === "string" && HTTP_OUTCOMES.has(label) ? label : "unknown";
+      httpOutcomes[outcome] = (httpOutcomes[outcome] ?? 0) + 1;
     }
     const established = record.request_id
       ? requests.get(record.request_id)
@@ -492,6 +508,8 @@ export async function buildTraceReport(
         actor,
         first: record.time,
         last: record.time,
+        first_meaningful: null,
+        last_meaningful: null,
         events: 0,
         http_requests: 0,
         meaningful_events: 0,
@@ -521,6 +539,10 @@ export async function buildTraceReport(
             (!!record.span_id && committedTransactions.has(record.span_id))));
       if (meaningful) {
         summary.meaningful_events++;
+        if (summary.first_meaningful === null || record.time < summary.first_meaningful)
+          summary.first_meaningful = record.time;
+        if (summary.last_meaningful === null || record.time > summary.last_meaningful)
+          summary.last_meaningful = record.time;
         const feature = record.feature ?? "other";
         summary.features[feature] = (summary.features[feature] ?? 0) + 1;
       }
@@ -609,6 +631,7 @@ export async function buildTraceReport(
     event_counts: eventCounts,
     routes,
     statuses,
+    http_outcomes: httpOutcomes,
     actors: [...actors.values()],
     problems,
     storage: status,
