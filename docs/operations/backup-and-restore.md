@@ -50,9 +50,9 @@ PostgreSQL export does not include Netlify Blobs. Before switching traffic:
 
 1. Load `NETLIFY_SITE_ID` and `NETLIFY_API_TOKEN` from the deployment's protected secret storage without echoing them.
 2. Quiesce writes for the final database recovery point, blob inventory, export, and verification. A delta inventory while writes continue is not a completeness boundary.
-3. Export every object, key, and metadata value into a new archive: `node scripts/migrate-netlify-blobs.mjs export --archive /absolute/new/archive`. The command enumerates all stores and writes a checksum manifest; it refuses an existing destination.
+3. Reserve a new archive destination under a trusted parent directory. Give one operator exclusive use of the destination and keep the parent stable throughout staging and publication. Export every object, key, and metadata value into the new archive: `node scripts/migrate-netlify-blobs.mjs export --archive /absolute/new/archive`. The command enumerates all stores and writes a checksum manifest; it refuses an existing destination.
 4. Copy the completed archive and its database recovery point to the target. Run a non-writing preflight: `node scripts/migrate-netlify-blobs.mjs import --archive /absolute/archive --blob-dir /absolute/flash-blobs`.
-5. Import only into a new absolute blob directory by adding `--execute`. The importer stages the complete tree and renames it into place atomically; any existing destination is refused.
+5. Reserve a new absolute blob destination under the same trusted-parent and exclusive-use conditions. Add `--execute` to stage and publish the complete tree with a rename. The importer refuses a destination that already exists at preflight.
 6. Verify exact key, metadata, size, and SHA-256 parity: `node scripts/migrate-netlify-blobs.mjs verify --archive /absolute/archive --blob-dir /absolute/flash-blobs`.
 7. Exercise representative authenticated downloads and certificate/policy paths before directing production traffic to the VPS.
 8. Retain the Netlify data and the migration archive until the agreed recovery window has passed.
