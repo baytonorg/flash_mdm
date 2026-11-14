@@ -257,7 +257,8 @@ describe('device-operations', () => {
     expect(mockLogAudit).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'device.operation.cancelled',
-        resource_id: operationName,
+        resource_type: 'operation',
+        details: { operation_name: operationName },
       })
     );
     await expect(res.json()).resolves.toEqual({

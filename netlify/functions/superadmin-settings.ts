@@ -58,7 +58,6 @@ export default async function handler(request: Request, _context: Context) {
         user_id: auth.user.id,
         action: 'superadmin.platform_settings.updated',
         resource_type: 'platform_settings',
-        resource_id: 'singleton',
         details: {
           invite_only_registration: updatedSettings.invite_only_registration,
           licensing_enabled: updatedSettings.licensing_enabled,

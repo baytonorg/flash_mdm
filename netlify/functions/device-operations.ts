@@ -203,7 +203,6 @@ export default async (request: Request, _context: Context) => {
           user_id: auth.user.id,
           action: 'device.operation.cancelled',
           resource_type: 'operation',
-          resource_id: body.operation_name,
           details: { operation_name: body.operation_name },
           ip_address: getClientIp(request),
         });

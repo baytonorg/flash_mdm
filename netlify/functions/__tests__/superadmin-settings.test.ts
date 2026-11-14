@@ -90,6 +90,7 @@ describe('superadmin-settings', () => {
     expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({
       user_id: 'sa_1',
       action: 'superadmin.platform_settings.updated',
+      resource_type: 'platform_settings',
       details: expect.objectContaining({
         invite_only_registration: true,
         licensing_enabled: true,

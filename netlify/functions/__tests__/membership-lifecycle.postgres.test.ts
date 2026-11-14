@@ -8,6 +8,9 @@ import { changeMemberships } from '../_lib/membership-lifecycle.js';
 import { deleteUserAccount, userDeletionPreflight } from '../_lib/user-offboarding.js';
 import { applyInviteOffer } from '../_lib/invite-membership.js';
 import { closeDatabasePool, transaction } from '../_lib/db.js';
+import { logAudit } from '../_lib/audit.js';
+import platformSettingsHandler from '../superadmin-settings.js';
+import deviceOperationsHandler from '../device-operations.js';
 import { hashToken } from '../_lib/crypto.js';
 import { requireAuth } from '../_lib/auth.js';
 import environmentHandler from '../environment-crud.js';
@@ -37,11 +40,11 @@ import { queueAndSendBillingEmail } from '../_lib/billing-notifications.js';
 import verifyMagic from '../auth-magic-link-verify.js';
 import loginHandler from '../auth-login.js';
 import bindingHandler from '../environment-bind.js';
-import { prepareAmapiCall } from '../_lib/amapi.js';
-import { runWithAuditAuthContext } from '../_lib/request-auth-context.js';
+import { amapiCall, prepareAmapiCall } from '../_lib/amapi.js';
+import { runWithAuditAuthContext, runWithoutAuditAuthContext } from '../_lib/request-auth-context.js';
 
 vi.mock('../_lib/resend.js', async original => ({ ...await original<typeof import('../_lib/resend.js')>(), sendEmail: vi.fn() }));
-vi.mock('../_lib/amapi.js', async original => ({ ...await original<typeof import('../_lib/amapi.js')>(), prepareAmapiCall: vi.fn() }));
+vi.mock('../_lib/amapi.js', async original => ({ ...await original<typeof import('../_lib/amapi.js')>(), prepareAmapiCall: vi.fn(), amapiCall: vi.fn() }));
 
 const url = process.env.MEMBERSHIP_TEST_DATABASE_URL;
 const suite = url ? describe : describe.skip;
@@ -724,6 +727,58 @@ suite('membership lifecycle with PostgreSQL and actual handlers', () => {
     expect((await pool.query('SELECT enterprise_name FROM environments WHERE id=$1',[env])).rows[0].enterprise_name).toBe('enterprises/new');
   });
 
+
+  it('stores UUID, singleton and AMAPI operation audit identities without changing their scope', () => runWithoutAuditAuthContext(async () => {
+    const session = 'fixture-audit-identities';
+    await pool.query("INSERT INTO sessions(user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval '30 days')", [owner, hashToken(session)]);
+    await pool.query("UPDATE workspaces SET gcp_project_id = 'fixture-project' WHERE id = $1", [workspace]);
+    await pool.query("UPDATE environments SET enterprise_name = 'enterprises/fixture' WHERE id = $1", [env]);
+    const request = (path: string, body: object) => new Request('http://localhost' + path, {
+      method: 'POST',
+      headers: { cookie: `flash_session=${session}`, 'x-requested-with': 'XMLHttpRequest', 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    const platform = await platformSettingsHandler(request('/api/superadmin/settings', { invite_only_registration: true }), {} as never);
+    expect(platform.status).toBe(200);
+    await expect(platform.json()).resolves.toMatchObject({ invite_only_registration: true });
+    const operationName = 'enterprises/fixture/devices/fixture/operations/fixture';
+    vi.mocked(amapiCall).mockResolvedValueOnce({});
+    const operation = await deviceOperationsHandler(request('/api/devices/operations', { operation_name: operationName }), {} as never);
+    expect(operation.status).toBe(200);
+    await expect(operation.json()).resolves.toMatchObject({ cancelled: true, operation_name: operationName });
+    expect(amapiCall).toHaveBeenCalledWith(operationName + ':cancel', workspace, expect.objectContaining({ method: 'POST' }));
+
+    const readAudit = async (action: string) => (await pool.query(
+      'SELECT user_id, workspace_id, environment_id, resource_type, resource_id, details FROM audit_log WHERE action = $1',
+      [action],
+    )).rows;
+    expect(await readAudit('superadmin.platform_settings.updated')).toEqual([expect.objectContaining({
+      user_id: owner, workspace_id: null, environment_id: null, resource_type: 'platform_settings', resource_id: null,
+      details: expect.objectContaining({ invite_only_registration: true }),
+    })]);
+    expect(await readAudit('device.operation.cancelled')).toEqual([{
+      user_id: owner, workspace_id: workspace, environment_id: env, resource_type: 'operation', resource_id: null,
+      details: { operation_name: operationName },
+    }]);
+    await logAudit({ user_id: owner, workspace_id: workspace, resource_type: 'workspace', resource_id: workspace, action: 'fixture.uuid' });
+    expect(await readAudit('fixture.uuid')).toEqual([expect.objectContaining({ resource_id: workspace })]);
+
+    await expect(transaction(async (client) => {
+      await logAudit({ action: 'fixture.rolled_back' }, client);
+      throw new Error('fixture rollback');
+    })).rejects.toThrow('fixture rollback');
+    expect(await readAudit('fixture.rolled_back')).toEqual([]);
+
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(logAudit({ action: 'fixture.invalid_uuid', resource_id: 'invalid-local-id' })).resolves.toBeUndefined();
+      expect(consoleError).toHaveBeenCalledWith('Failed to write audit log:', expect.objectContaining({ code: '22P02' }));
+      expect(await readAudit('fixture.invalid_uuid')).toEqual([]);
+    } finally {
+      consoleError.mockRestore();
+    }
+  }));
 
   it('commits an invoice request with its line item and audit, or rolls all three back', async () => {
     const session = 'fixture-invoice-request';
