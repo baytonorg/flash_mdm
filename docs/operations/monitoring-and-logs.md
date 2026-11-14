@@ -43,11 +43,13 @@ Netlify deployment or under the `flashmdm-cron` journal tag on VPS.
 
 | Function | Schedule | Purpose |
 |---|---|---|
-| `cleanup-scheduled` | Daily at 03:00 UTC | Session/token expiry, retention enforcement |
-| `sync-reconcile-scheduled` | Every 15 minutes | Full AMAPI device and enrollment token reconciliation |
+| `cleanup-scheduled` | Daily at 03:00 UTC | Observe expired credentials and apply noncredential retention |
+| `sync-reconcile-scheduled` | Every 15 minutes | Reconcile AMAPI devices and observe enrollment token status |
 | `geofence-check-scheduled` | Every 10 minutes | Device location vs geofence evaluation |
 | `workflow-cron-scheduled` | Every 5 minutes | Time-based workflow trigger dispatch |
 | `licensing-reconcile-scheduled` | Every hour | Licensing overage evaluation and enforcement |
+
+Scheduled cleanup and reconciliation preserve credential backing records. See the [retention and credential observation contract](data-retention.md).
 
 ## 3) What to monitor
 

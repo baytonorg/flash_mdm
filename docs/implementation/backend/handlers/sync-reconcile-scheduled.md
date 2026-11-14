@@ -1,21 +1,21 @@
 # `netlify/functions/sync-reconcile-scheduled.ts`
 
-> Scheduled reconciliation function that syncs local device and enrollment token records against the Android Management API every 15 minutes.
+> Scheduled reconciliation function that reconciles devices and observes enrollment token status against the Android Management API every 15 minutes.
 
 ## Exports
 
 | Name | Type | Description |
 |------|------|-------------|
 | `config` | `{ schedule: string }` | Netlify scheduled function config: runs every 15 minutes |
-| `default` | `() => Promise<void>` | Default-exported scheduled handler |
+| `default` | `(request: Request) => Promise<Response>` | Default-exported scheduled handler |
 
 ## Internal Functions
 
-| Name | Lines | Description |
-|------|-------|-------------|
-| `listReconcilableEnvironments` | 88-111 | Queries environments that have an enterprise binding and credentials, with schema fallback for missing `deleted_at` column |
-| `reconcileEnvironment` | 113-267 | Paginates through AMAPI devices, reconciles device lineage and upserts each local record, then soft-deletes devices no longer present in AMAPI |
-| `reconcileEnrollmentTokens` | 269-354 | Hard-deletes expired tokens (after a 24h grace period), paginates AMAPI enrollment tokens, and retires stale/orphaned local tokens |
+| Name | Description |
+|------|-------------|
+| `listReconcilableEnvironments` | Queries environments that have an enterprise binding and credentials, with schema fallback for missing `deleted_at` column |
+| `reconcileEnvironment` | Paginates through AMAPI devices, reconciles device lineage and upserts each local record, then soft-deletes devices no longer present in AMAPI |
+| `reconcileEnrollmentTokens` | Reads bounded local token metadata, checks remote presence with GET requests, and reports candidates for operator review |
 
 ## Dependencies (imports from project)
 
@@ -35,13 +35,15 @@ Runs as a Netlify scheduled function (cron: `*/15 * * * *`). Iterates all enviro
 3. After full pagination completes, queries local active devices and soft-deletes any not seen in the AMAPI response (sets `state = 'DELETED'`, `deleted_at = now()`). Logs each deletion to the audit trail.
 4. If pagination fails partway, the soft-delete pass is skipped to avoid false deletions.
 
-**Enrollment token reconciliation:**
-1. Hard-deletes expired tokens after a 24-hour grace period (`ENROLLMENT_TOKEN_RETENTION_GRACE_HOURS`) to allow delayed enrollment processing.
-2. Paginates AMAPI enrollment tokens and builds a set of known AMAPI names.
-3. Retires stale tokens (local tokens with AMAPI names not found remotely) and orphaned tokens (no AMAPI name) by clearing sensitive fields and setting expiry to now.
+**Enrollment token observations:**
+1. Inspects at most 100 local rows per environment. The query reads one extra row to detect truncation and projects only identifiers and expiry metadata.
+2. Lists remote token names with bounded GET pagination. An incomplete listing falls back to GETs for the sampled local token names. A non-404 failure leaves the remote status uncertain.
+3. Reports expired, missing, orphaned and uncertain candidates for operator review. The scheduled run preserves the token rows, credential values, QR data, expiry and backing metadata.
+
+The [data retention and cleanup guide](../../../operations/data-retention.md) describes the preservation contract and the separate operator lifecycle paths.
 
 ## API Surface
 
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
-| N/A | Scheduled (`*/15 * * * *`) | Internal (Netlify scheduler) | Reconcile devices and enrollment tokens with AMAPI |
+| N/A | Scheduled (`*/15 * * * *`) | Internal (Netlify scheduler) | Reconcile devices and observe enrollment token status with AMAPI |
