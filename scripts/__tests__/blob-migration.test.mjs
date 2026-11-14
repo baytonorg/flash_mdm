@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -37,7 +37,22 @@ test('exports, dry-runs, imports, and verifies bytes, keys, and metadata', async
   });
   await assert.rejects(readFile(localBlobPath(blobRoot, 'exports', 'reports/daily.csv')));
 
-  await importArchive(archive, blobRoot, { execute: true });
+  const originalUmask = process.umask(0);
+  try {
+    await importArchive(archive, blobRoot, { execute: true });
+  } finally {
+    process.umask(originalUmask);
+  }
+  const mode = async (name) => (await stat(name)).mode & 0o777;
+  for (const directory of [archive, path.join(archive, 'objects'), blobRoot, path.join(blobRoot, 'exports')]) {
+    assert.equal(await mode(directory), 0o700);
+  }
+  const manifestPath = path.join(archive, 'manifest.json');
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  const restored = localBlobPath(blobRoot, 'exports', 'reports/daily.csv');
+  for (const file of [manifestPath, path.join(archive, manifest.stores[0].objects[0].object_path), restored, `${restored}.metadata.json`]) {
+    assert.equal(await mode(file), 0o600);
+  }
   assert.equal(await readFile(localBlobPath(blobRoot, 'exports', 'reports/daily.csv'), 'utf8'), 'a,b\n1,2\n');
   assert.deepEqual(
     JSON.parse(await readFile(`${localBlobPath(blobRoot, 'exports', 'reports/daily.csv')}.metadata.json`, 'utf8')),
@@ -54,6 +69,12 @@ test('detects archive corruption and refuses local overwrite', async (t) => {
   await createArchive(archive, [{ store: 'usage-logs', key: 'one', data: 'original', metadata: {} }]);
   await importArchive(archive, blobRoot, { execute: true });
   await assert.rejects(importArchive(archive, blobRoot, { execute: true }), /existing blob directory/);
+  const dangling = path.join(parent, 'dangling');
+  await symlink(path.join(parent, 'absent'), dangling);
+  await assert.rejects(importArchive(archive, dangling, { execute: true }), /existing blob directory/);
+  await assert.rejects(createArchive(path.join(parent, 'invalid-store'), [
+    { store: '..', key: 'one', data: 'synthetic' },
+  ]), /Invalid blob store name/);
 
   const manifest = JSON.parse(await readFile(path.join(archive, 'manifest.json'), 'utf8'));
   await writeFile(path.join(archive, manifest.stores[0].objects[0].object_path), 'tampered');
