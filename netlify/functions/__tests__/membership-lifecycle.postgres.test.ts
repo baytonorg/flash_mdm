@@ -12,6 +12,7 @@ import { hashToken } from '../_lib/crypto.js';
 import { requireAuth } from '../_lib/auth.js';
 import environmentHandler from '../environment-crud.js';
 import workspaceHandler from '../workspace-users.js';
+import licenseGrantsHandler from '../license-grants.js';
 import keyHandler from '../api-key-crud.js';
 import superadminHandler from '../superadmin-actions.js';
 import historyHandler from '../flashagent-chat-history.js';
@@ -723,6 +724,43 @@ suite('membership lifecycle with PostgreSQL and actual handlers', () => {
     expect((await pool.query('SELECT enterprise_name FROM environments WHERE id=$1',[env])).rows[0].enterprise_name).toBe('enterprises/new');
   });
 
+
+  it('commits an invoice request with its line item and audit, or rolls all three back', async () => {
+    const session = 'fixture-invoice-request';
+    await pool.query('INSERT INTO sessions(user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval \'30 days\')', [owner, hashToken(session)]);
+    const plan = (await pool.query(`INSERT INTO license_plans(name, max_devices, features)
+      VALUES ('Fixture invoice plan', 100, '{"invoice_unit_amount_cents": 100}') RETURNING id`)).rows[0];
+    const send = () => licenseGrantsHandler(new Request('http://localhost/api/licenses/grants/invoice-request', {
+      method: 'POST',
+      headers: { cookie: `flash_session=${session}`, 'x-requested-with': 'XMLHttpRequest', 'content-type': 'application/json' },
+      body: JSON.stringify({ workspace_id: workspace, plan_id: plan.id, seat_count: 3, duration_months: 1 }),
+    }), {} as never);
+    const counts = async () => (await pool.query(`SELECT
+      (SELECT count(*)::int FROM billing_invoices WHERE workspace_id = $1) AS invoices,
+      (SELECT count(*)::int FROM billing_invoice_items item JOIN billing_invoices invoice ON invoice.id = item.invoice_id WHERE invoice.workspace_id = $1) AS items,
+      (SELECT count(*)::int FROM audit_log WHERE workspace_id = $1 AND action = 'license.invoice.requested') AS audits`, [workspace])).rows[0];
+
+    await pool.query('ALTER TABLE billing_invoice_items ADD CONSTRAINT fixture_invoice_item_rejected CHECK (false) NOT VALID');
+    try {
+      expect((await send()).status).toBe(500);
+      expect(await counts()).toEqual({ invoices: 0, items: 0, audits: 0 });
+    } finally {
+      await pool.query('ALTER TABLE billing_invoice_items DROP CONSTRAINT fixture_invoice_item_rejected');
+    }
+
+    await pool.query("ALTER TABLE audit_log ADD CONSTRAINT fixture_invoice_audit_rejected CHECK (action <> 'license.invoice.requested') NOT VALID");
+    try {
+      expect((await send()).status).toBe(500);
+      expect(await counts()).toEqual({ invoices: 0, items: 0, audits: 0 });
+    } finally {
+      await pool.query('ALTER TABLE audit_log DROP CONSTRAINT fixture_invoice_audit_rejected');
+    }
+
+    const retry = await send();
+    expect(retry.status).toBe(201);
+    expect(await retry.json()).toMatchObject({ status: 'pending', gift_offset_seats: 0, billable_seat_count: 3 });
+    expect(await counts()).toEqual({ invoices: 1, items: 1, audits: 1 });
+  });
 
   it('refuses a purge-wide credential confirmation and rolls back on terminal audit failure',async()=>{
     const headers=await fixtureSession(owner);
