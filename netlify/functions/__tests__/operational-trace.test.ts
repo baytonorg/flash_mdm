@@ -214,6 +214,31 @@ describe('trace evidence integrity', () => {
     Object.defineProperty(broken, 'stack', { get() { throw Error('diagnostic error'); } });
     expect(traceError(broken)).toEqual({error_class:'Error',frames:[]});
   });
+  it('counts every HTTP outcome beyond the problem sample and separates meaningful activity times', async () => {
+    const time = new Date();
+    const at = (offset: number) => new Date(+time + offset).toISOString();
+    const actor = { type: 'human', id: 'fixture-user' };
+    const records = [
+      ...Array.from({ length: 2001 }, () => ({ event: 'console.warn', time: at(0), data: {} })),
+      { event: 'http.end', time: at(10), actor, data: { status: 200, outcome: 'success' } },
+      { event: 'ui.click', time: at(20), actor, data: {} },
+      { event: 'audit.write', time: at(30), actor, data: { durability: 'transaction_pending' } },
+      { event: 'http.end', time: at(40), actor, data: { status: 200, outcome: 'partial_failure' } },
+      { event: 'http.end', time: at(50), actor, data: { status: 200, outcome: 'unexpected-label' } },
+      { event: 'http.end', time: at(60), data: { status: 204 } },
+    ];
+    await writeFile(join(directory, `${traceWindow(time)}.test.1.00000.ndjson`),
+      records.map(record => JSON.stringify({ schema: 1, ...record })).join('\n') + '\n');
+
+    const report = await buildTraceReport(directory, new Date(+time - 1000), new Date(+time + 1000));
+    expect(report.coverage.problem_examples_limited).toBe(true);
+    expect(report.problems).toHaveLength(2000);
+    expect(report.http_outcomes).toEqual({ success: 1, partial_failure: 1, unknown: 2 });
+    expect(report.actors.find(summary => summary.actor?.id === actor.id)).toMatchObject({
+      first: at(10), last: at(50), first_meaningful: at(20), last_meaningful: at(20), meaningful_events: 1,
+    });
+  });
+
   it('includes browser exceptions and delivery uncertainty in problems and follows server IDs', async () => {
     process.env.FLASH_TRACE_DIR = directory;
     const response = await traceHttp(new Request('http://localhost/api/workflows'), async () => Response.json({ status: 'delivery_uncertain' }));
