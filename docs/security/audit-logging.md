@@ -27,7 +27,7 @@ Each entry captures:
 | `visibility_scope` | `standard` or `privileged` |
 | `action` | Event name (e.g. `auth.login`, `device.command`) |
 | `resource_type` | Resource category (nullable) |
-| `resource_id` | Resource UUID (nullable) |
+| `resource_id` | Local resource UUID, when applicable. Singleton and AMAPI operation events leave this null. |
 | `details` | JSON payload with event-specific data |
 | `ip_address` | Client IP at time of event |
 | `created_at` | Timestamp |
