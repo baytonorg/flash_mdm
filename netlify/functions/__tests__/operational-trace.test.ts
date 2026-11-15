@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtemp, readFile, readdir, rm, stat, chmod, mkdir, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -290,6 +291,34 @@ describe('trace evidence integrity', () => {
     await writeTraceCheckpoint(directory,window,{...report,totals:{...report.totals,events:100,http_requests:12}});
     const comparison=await traceComparisons(directory,to);
     expect(comparison.seven_days).toMatchObject({windows_available:1,http_requests:12,partial_history:true});
+  });
+  it('prefers complete component coverage when equal-count checkpoint candidates coexist', async () => {
+    const window = '2026-10-26';
+    const { from, to } = traceWindowBounds(window);
+    const reports = join(directory, 'reports');
+    await mkdir(reports, { mode: 0o700 });
+
+    const candidate = {
+      schema: 1,
+      window,
+      from: from.toISOString(),
+      to: to.toISOString(),
+      totals: { events: 10, http_requests: 7 },
+      coverage: { component_coverage_incomplete: false },
+      humans: [],
+    };
+    const partial = JSON.stringify({
+      ...candidate,
+      totals: { events: 10, http_requests: 3 },
+      coverage: { component_coverage_incomplete: true },
+    });
+    const digest = createHash('sha256').update(partial).digest('hex');
+    await writeFile(join(reports, window + '.000000000010.v2.json'), JSON.stringify(candidate), { mode: 0o600 });
+    await writeFile(join(reports, window + '.000000000010.' + digest + '.v2.json'), partial, { mode: 0o600 });
+
+    const comparison = await traceComparisons(directory, to);
+    expect(comparison.seven_days).toMatchObject({ windows_available: 1, http_requests: 7 });
+    expect(comparison.thirty_days).toMatchObject({ windows_available: 1, http_requests: 7 });
   });
   it('distinguishes unreadable and malformed checkpoint candidates from absent days', async () => {
     const reportDir = join(directory, 'reports');

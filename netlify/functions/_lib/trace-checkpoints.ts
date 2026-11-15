@@ -273,7 +273,7 @@ export async function traceComparisons(directory: string, to: Date) {
   const windows = new Set(
     [...new Set(names.map((n) => n.slice(0, 10)))].slice(0, 35),
   );
-  const checkpoints = new Map<string, Checkpoint>();
+  const checkpoints = new Map<string, { checkpoint: Checkpoint; versioned: boolean }>();
   const unavailable = new Set<string>();
   const invalid = new Set<string>();
   for (const name of names) {
@@ -284,12 +284,17 @@ export async function traceComparisons(directory: string, to: Date) {
     });
     if (!c || Date.parse(c.to) > to.getTime()) continue;
     const previous = checkpoints.get(c.window);
+    const versioned = name.endsWith(".v2.json");
+    const complete = c.coverage.component_coverage_incomplete === false;
+    const previousComplete = previous?.checkpoint.coverage.component_coverage_incomplete === false;
     if (
       !previous ||
-      c.totals.events > previous.totals.events ||
-      (c.totals.events === previous.totals.events && name.endsWith(".v2.json"))
-    )
-      checkpoints.set(c.window, c);
+      c.totals.events > previous.checkpoint.totals.events ||
+      (c.totals.events === previous.checkpoint.totals.events &&
+        (complete !== previousComplete ? complete : versioned && !previous.versioned))
+    ) {
+      checkpoints.set(c.window, { checkpoint: c, versioned });
+    }
   }
   const rolling = (days: number) => {
     const currentWindow = traceWindow(to);
@@ -297,7 +302,7 @@ export async function traceComparisons(directory: string, to: Date) {
     earliest.setUTCDate(earliest.getUTCDate() - days);
     const firstWindow = earliest.toISOString().slice(0, 10);
     const includesDay = (day: string) => day >= firstWindow && day < currentWindow;
-    const selected = [...checkpoints.values()].filter((c) => includesDay(c.window));
+    const selected = [...checkpoints.values()].map(({ checkpoint }) => checkpoint).filter((c) => includesDay(c.window));
     const unavailableWindows = [...unavailable].filter(includesDay).sort();
     const invalidWindows = [...invalid].filter(includesDay).sort();
     const humans = new Set(selected.flatMap((c) => c.humans.map((h) => h.id)));
