@@ -204,28 +204,22 @@ export default async (request: Request) => {
 };
 
 async function listReconcilableEnvironments(): Promise<Environment[]> {
-  try {
-    return await query<Environment>(
-      `SELECT e.id, e.workspace_id, e.enterprise_name, w.gcp_project_id
-       FROM environments e
-       JOIN workspaces w ON w.id = e.workspace_id
-       WHERE e.enterprise_name IS NOT NULL
-         AND e.deleted_at IS NULL
-         AND w.google_credentials_enc IS NOT NULL`
-    );
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (!message.includes('column e.deleted_at does not exist')) throw err;
-
-    // Legacy schema: environments table has no soft-delete column.
-    return query<Environment>(
-      `SELECT e.id, e.workspace_id, e.enterprise_name, w.gcp_project_id
-       FROM environments e
-       JOIN workspaces w ON w.id = e.workspace_id
-       WHERE e.enterprise_name IS NOT NULL
-         AND w.google_credentials_enc IS NOT NULL`
-    );
-  }
+  const schema = await queryOne<{ has_tombstone: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM pg_catalog.pg_attribute
+       WHERE attrelid = 'environments'::regclass
+         AND attname = 'deleted_at' AND attnum > 0 AND NOT attisdropped
+     ) AS has_tombstone`
+  );
+  const activeEnvironmentFilter = schema?.has_tombstone ? 'AND e.deleted_at IS NULL' : '';
+  return query<Environment>(
+    `SELECT e.id, e.workspace_id, e.enterprise_name, w.gcp_project_id
+     FROM environments e
+     JOIN workspaces w ON w.id = e.workspace_id
+     WHERE e.enterprise_name IS NOT NULL
+       ${activeEnvironmentFilter}
+       AND w.google_credentials_enc IS NOT NULL`
+  );
 }
 
 async function reconcileEnvironment(env: Environment): Promise<void> {
