@@ -57,6 +57,28 @@ describe('sync-reconcile-scheduled', () => {
     mockEnqueueOutstandingCommandReconciliations.mockResolvedValue(0);
   });
 
+  it('checks optional environment retirement without issuing a missing-column query', async () => {
+    mockQueryOne.mockResolvedValueOnce({ has_tombstone: false });
+    mockQuery.mockImplementationOnce(async (sql) => {
+      if (/\be\.deleted_at\b/.test(sql)) throw new Error('column e.deleted_at does not exist');
+      return [];
+    }).mockResolvedValueOnce([]);
+
+    const response = await handler(new Request('http://localhost/api/sync-reconcile-scheduled'));
+
+    expect(response.status).toBe(200);
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it('still excludes tombstoned environments where the optional column is present', async () => {
+    mockQueryOne.mockResolvedValueOnce({ has_tombstone: true });
+    mockQuery.mockResolvedValueOnce([]);
+
+    await handler(new Request('http://localhost/api/sync-reconcile-scheduled'));
+
+    expect(mockQuery).toHaveBeenCalledWith(expect.stringContaining('AND e.deleted_at IS NULL'));
+  });
+
   it('wakes the worker when an orphaned command reconciliation is queued', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 202 }));
     mockQuery.mockResolvedValueOnce([] as never);
@@ -509,7 +531,7 @@ describe('sync-reconcile-scheduled', () => {
       }] as never)
       .mockResolvedValueOnce([] as never)
       .mockResolvedValueOnce([] as never);
-    mockQueryOne.mockResolvedValueOnce({
+    mockQueryOne.mockResolvedValueOnce({ has_tombstone: false }).mockResolvedValueOnce({
       id: 'successor_1',
       amapi_name: 'enterprises/e1/devices/current',
     } as never);
