@@ -153,6 +153,37 @@ describe('correlated request evidence', () => {
     ])).toEqual(cases.map(testCase => testCase.expected));
     expect(JSON.stringify(rows)).not.toContain('fixture-confidential');
   });
+  it('aggregates scheduled lineage observations in the report without classifying them as problems', async () => {
+    process.env.FLASH_TRACE_DIR = directory;
+    const request = new Request('http://localhost/api/sync-reconcile-scheduled', { method: 'POST' });
+    const from = new Date(Date.now() - 60_000);
+    await traceHttp(request, async () => {
+      traceEvent('sync.device_lineage', { historical_predecessors_skipped: 32, current_rows_retained: 8 });
+      return Response.json({ stats: { errors: 0 } });
+    });
+    await traceHttp(request, async () => {
+      traceEvent('sync.device_lineage', {
+        historical_predecessors_skipped: 16,
+        current_rows_retained: -1,
+        multiple_predecessors_matched: 2,
+        concurrent_renames_resolved: '4',
+      });
+      return Response.json({ error: 'failed' }, { status: 500 });
+    });
+    await closeOperationalTrace();
+
+    const report = await buildTraceReport(directory, from, new Date(Date.now() + 60_000));
+    expect(report.reconciliation_lineage).toEqual({
+      historical_predecessors_skipped: 48,
+      current_rows_retained: 8,
+      multiple_predecessors_matched: 2,
+      concurrent_renames_resolved: 0,
+    });
+    expect(report.event_counts['sync.device_lineage']).toBe(2);
+    expect(report.problems.map(problem => problem.data.status)).toEqual([500]);
+    const tail = await readTraceTail(directory);
+    expect(tail.events.filter(event => event.event === 'sync.device_lineage')).toHaveLength(2);
+  });
   it('cancels timed-out diagnostic inspection while preserving the product response stream', async () => {
     process.env.FLASH_TRACE_DIR = directory;
     let stream!: ReadableStreamDefaultController<Uint8Array>;
