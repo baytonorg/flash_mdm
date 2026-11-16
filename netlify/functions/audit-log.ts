@@ -1,17 +1,29 @@
 import type { Context } from '@netlify/functions';
 import { query, queryOne } from './_lib/db.js';
-import { requireAuth } from './_lib/auth.js';
+import { requireAuth, requireReadOnlyApiKey, type AuthContext } from './_lib/auth.js';
 import { requireEnvironmentResourcePermission } from './_lib/rbac.js';
 import { jsonResponse, errorResponse, getSearchParams } from './_lib/helpers.js';
 import { sanitizeAuditValue } from './_lib/audit.js';
 
-export default async (request: Request, context: Context) => {
+export default async function handler(request: Request, _context: Context) {
+  return readAuditLog(request, () => requireAuth(request));
+}
+
+export async function inspectEnvironmentAudit(request: Request): Promise<Response> {
+  return readAuditLog(request, () => requireReadOnlyApiKey(request), false);
+}
+
+async function readAuditLog(
+  request: Request,
+  authenticate: () => Promise<AuthContext>,
+  logFailures = true,
+): Promise<Response> {
   try {
     if (request.method !== 'GET') {
       return errorResponse('Method not allowed', 405);
     }
 
-    const auth = await requireAuth(request);
+    const auth = await authenticate();
     const params = getSearchParams(request);
 
     const environmentId = params.get('environment_id');
@@ -156,7 +168,7 @@ export default async (request: Request, context: Context) => {
     });
   } catch (err) {
     if (err instanceof Response) return err;
-    console.error('audit-log error:', err);
+    if (logFailures) console.error('audit-log error:', err);
     return errorResponse('Internal server error', 500);
   }
-};
+}

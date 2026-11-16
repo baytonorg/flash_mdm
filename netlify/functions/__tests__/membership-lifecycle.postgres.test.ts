@@ -10,6 +10,7 @@ import { applyInviteOffer } from '../_lib/invite-membership.js';
 import { closeDatabasePool, transaction } from '../_lib/db.js';
 import { logAudit } from '../_lib/audit.js';
 import platformSettingsHandler from '../superadmin-settings.js';
+import auditLogHandler, { inspectEnvironmentAudit } from '../audit-log.js';
 import deviceOperationsHandler from '../device-operations.js';
 import { hashToken } from '../_lib/crypto.js';
 import { requireAuth } from '../_lib/auth.js';
@@ -332,6 +333,44 @@ suite('membership lifecycle with PostgreSQL and actual handlers', () => {
       VALUES ('Fixture',$1,$2,$3,$4,$5,'fixture ciphertext','fixture',$6,$7,$8) RETURNING id`, [input.scope??'workspace',workspace,input.scope==='environment'?env:null,input.role??'admin',hashToken(token),target,input.expired?new Date(Date.now()-60000):null,input.revoked?new Date():null]);
     return { token, id: result.rows[0].id };
   }
+
+  it('inspects environment audit in a read-only database process and preserves key metadata', async () => {
+    const key = await fixtureKey({ scope: 'environment', role: 'viewer' });
+    const otherEnvironment = crypto.randomUUID();
+    await pool.query("INSERT INTO environments (id,workspace_id,name) VALUES ($1,$2,'Other environment')", [otherEnvironment, workspace]);
+    await pool.query(`INSERT INTO audit_log (workspace_id, environment_id, actor_type, action, visibility_scope)
+      VALUES ($1,$2,'system','fixture.visible','standard'),
+             ($1,$2,'system','fixture.privileged','privileged'),
+             ($1,$3,'system','fixture.other','standard')`, [workspace, env, otherEnvironment]);
+
+    const headers = { authorization: 'Bearer ' + key.token };
+    const request = (environment: string) => new Request('http://localhost/api/audit-log?environment_id=' + environment, { headers });
+    const state = async () => (await pool.query('SELECT xmin::text AS row_version, to_jsonb(api_keys) AS state FROM api_keys WHERE id=$1', [key.id])).rows[0];
+    const before = await state();
+    const response = await inspectEnvironmentAudit(request(env));
+    expect(response.status).toBe(200);
+    expect((await response.json()).entries.map((entry: { action: string }) => entry.action)).toEqual(['fixture.visible']);
+    expect((await inspectEnvironmentAudit(request(otherEnvironment))).status).toBe(403);
+    expect(await state()).toEqual(before);
+
+    const runInspection = (fixtureToken: string) => spawnSync(process.execPath, ['--import', 'tsx', 'scripts/inspect-audit-readonly.ts'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      env: { ...process.env, FLASH_PLATFORM_HEALTH_API_KEY: fixtureToken },
+    });
+    const result = runInspection(key.token);
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, scope: 'environment', environments_inspected: 1, visible_events: 1, statuses: { 200: 1 } });
+    expect(result.stdout + result.stderr).not.toContain(key.token);
+    const rejected = runInspection('synthetic-unknown-key');
+    expect(rejected.status).toBe(1);
+    expect(JSON.parse(rejected.stdout)).toEqual({ ok: false, status: 401 });
+    expect(await state()).toEqual(before);
+
+    expect((await auditLogHandler(request(env), {} as never)).status).toBe(200);
+    expect((await state()).row_version).not.toBe(before.row_version);
+    expect((await state()).state.last_used_at).not.toBeNull();
+  });
 
   it('protects diagnostic logs from normal users and keys and attributes browser evidence from the real session',async()=>{
     const directory=await mkdtemp(join(tmpdir(),'flash-trace-auth-fixture-'));

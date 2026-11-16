@@ -236,7 +236,7 @@ function getApiKeyFromRequest(request: Request): string | null {
   return xApiKey || null;
 }
 
-async function validateApiKey(request: Request): Promise<AuthContext | null> {
+async function validateApiKey(request: Request, recordUse = true): Promise<ApiKeyPrincipalContext | null> {
   const token = getApiKeyFromRequest(request);
   if (!token) return null;
 
@@ -283,13 +283,15 @@ async function validateApiKey(request: Request): Promise<AuthContext | null> {
 
   if (!row) return null;
 
-  try {
-    await execute(
-      'UPDATE api_keys SET last_used_at = now(), last_used_ip = $2 WHERE id = $1',
-      [row.api_key_id, request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? request.headers.get('x-real-ip') ?? null]
-    );
-  } catch (err) {
-    console.error('Failed to update api_keys.last_used_at:', err);
+  if (recordUse) {
+    try {
+      await execute(
+        'UPDATE api_keys SET last_used_at = now(), last_used_ip = $2 WHERE id = $1',
+        [row.api_key_id, request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? request.headers.get('x-real-ip') ?? null]
+      );
+    } catch (err) {
+      console.error('Failed to update api_keys.last_used_at:', err);
+    }
   }
 
   const scopeId = row.scope_type === 'workspace' ? row.workspace_id : (row.environment_id ?? '');
@@ -328,14 +330,23 @@ async function validateApiKey(request: Request): Promise<AuthContext | null> {
   };
 }
 
+function unauthorized(): Response {
+  return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+    status: 401,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+// For the in-process audit CLI. HTTP handlers use requireAuth and record normal use.
+export async function requireReadOnlyApiKey(request: Request): Promise<ApiKeyPrincipalContext> {
+  const auth = await validateApiKey(request, false);
+  if (!auth) throw unauthorized();
+  return auth;
+}
+
 export async function requireAuth(request: Request): Promise<AuthContext> {
   const auth = await validateSession(request) ?? await validateApiKey(request);
-  if (!auth) {
-    throw new Response(JSON.stringify({ error: 'Unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
+  if (!auth) throw unauthorized();
 
   // Enforce read-only impersonation mode across handlers that call requireAuth.
   const method = request.method.toUpperCase();
