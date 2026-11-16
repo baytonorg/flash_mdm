@@ -548,6 +548,36 @@ describe('sync-reconcile-scheduled', () => {
     expect(mockTransaction).not.toHaveBeenCalled();
   });
 
+  it('coalesces routine historical predecessor observations without logging device identities', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const devices = Array.from({ length: 32 }, (_, index) => ({ name: 'enterprises/e1/devices/historical-' + index }));
+    try {
+      mockQuery.mockResolvedValueOnce([{
+        id: 'env_1', workspace_id: 'ws_1', enterprise_name: 'enterprises/e1', gcp_project_id: 'proj_1',
+      }] as never).mockResolvedValueOnce([] as never).mockResolvedValueOnce([] as never);
+      mockQueryOne.mockResolvedValueOnce({ has_tombstone: false }).mockResolvedValue({
+        id: 'successor_1', amapi_name: 'enterprises/e1/devices/current',
+      } as never);
+      mockAmapiCall.mockResolvedValueOnce({ devices } as never);
+
+      const response = await handler(new Request('http://localhost/api/sync-reconcile-scheduled'));
+
+      expect(response.status).toBe(200);
+      expect(info).toHaveBeenCalledExactlyOnceWith('Reconciliation device lineage observations', {
+        historical_predecessors_skipped: 32,
+        current_rows_retained: 0,
+        multiple_predecessors_matched: 0,
+        concurrent_renames_resolved: 0,
+      });
+      expect(warn).not.toHaveBeenCalled();
+      expect(mockExecute).not.toHaveBeenCalled();
+    } finally {
+      info.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
   it('soft-deletes every stale local device after a successful empty AMAPI listing', async () => {
     mockQuery
       .mockResolvedValueOnce([

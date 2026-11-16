@@ -7,6 +7,7 @@ import {
 } from './_lib/amapi-device-network.js';
 import { enqueueOutstandingCommandReconciliations } from './_lib/command-operation-ledger.js';
 import { internalFunctionUrl } from './_lib/runtime.js';
+import { traceEvent } from './_lib/operational-trace.js';
 
 export const config = {
   schedule: '*/15 * * * *',
@@ -157,6 +158,12 @@ function isAmapiNameUniqueViolation(error: unknown): boolean {
 export default async (request: Request) => {
   console.log('Reconciliation scheduled function started');
   const stats = { environments_checked: 0, errors: 0 };
+  const lineage = {
+    historical_predecessors_skipped: 0,
+    current_rows_retained: 0,
+    multiple_predecessors_matched: 0,
+    concurrent_renames_resolved: 0,
+  };
 
   try {
     // Get all active environments with an enterprise binding
@@ -167,7 +174,7 @@ export default async (request: Request) => {
     for (const env of environments) {
       stats.environments_checked++;
       try {
-        await reconcileEnvironment(env);
+        await reconcileEnvironment(env, lineage);
       } catch (err) {
         stats.errors++;
         console.error(`Failed to reconcile environment ${env.id}:`, err);
@@ -200,6 +207,11 @@ export default async (request: Request) => {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });
+  } finally {
+    if (Object.values(lineage).some(count => count > 0)) {
+      traceEvent('sync.device_lineage', lineage);
+      console.info('Reconciliation device lineage observations', lineage);
+    }
   }
 };
 
@@ -222,7 +234,12 @@ async function listReconcilableEnvironments(): Promise<Environment[]> {
   );
 }
 
-async function reconcileEnvironment(env: Environment): Promise<void> {
+async function reconcileEnvironment(env: Environment, lineage: {
+  historical_predecessors_skipped: number;
+  current_rows_retained: number;
+  multiple_predecessors_matched: number;
+  concurrent_renames_resolved: number;
+}): Promise<void> {
   console.log(`Reconciling environment ${env.id} (${env.enterprise_name})`);
 
   const seenAmapiNames = new Set<string>();
@@ -300,12 +317,7 @@ async function reconcileEnvironment(env: Environment): Promise<void> {
             [env.id, device.name]
           );
           if (activeSuccessor) {
-            console.warn('reconciliation: skipped historical predecessor with an active successor', {
-              environment_id: env.id,
-              historical_device_amapi_name: device.name,
-              successor_device_id: activeSuccessor.id,
-              successor_amapi_name: activeSuccessor.amapi_name,
-            });
+            lineage.historical_predecessors_skipped++;
             continue;
           }
 
@@ -349,31 +361,18 @@ async function reconcileEnvironment(env: Environment): Promise<void> {
               );
 
               if (previousMatches.length > 1) {
-                console.warn('reconciliation: multiple predecessors matched; canonicalized one record', {
-                  environment_id: env.id,
-                  device_amapi_name: device.name,
-                  matched_count: previousMatches.length,
-                  canonical_device_id: canonicalPredecessor.id,
-                });
+                lineage.multiple_predecessors_matched++;
               }
             } else if (currentRow && previousMatches.length > 0) {
-              console.warn('reconciliation: retained existing current row and preserved predecessor history', {
-                environment_id: env.id,
-                device_amapi_name: device.name,
-                current_device_id: currentRow.id,
-                predecessor_count: previousMatches.length,
-              });
+              lineage.current_rows_retained++;
             }
 
             await client.query(DEVICE_UPSERT_SQL, upsertParams);
           });
         } catch (error) {
           if (!isAmapiNameUniqueViolation(error)) throw error;
-          console.warn('reconciliation: concurrent lineage update won; preserving current row', {
-            environment_id: env.id,
-            device_amapi_name: device.name,
-          });
           await execute(DEVICE_UPSERT_SQL, upsertParams);
+          lineage.concurrent_renames_resolved++;
         }
 
         seenAmapiNames.add(device.name);

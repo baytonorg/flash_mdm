@@ -24,6 +24,8 @@ Rotation occurs at 09:00 Europe/London, aligned with the daily automation. Local
 
 Writes are asynchronous and batched, with a 2 MiB queue and 8 KiB event limit. Disk-free protection starts below 256 MiB. Pressure or storage failure drops diagnostic events rather than blocking product work; health counters, protected writer summaries and rate-limited journal warnings expose the loss. The card checks fresh web and worker heartbeats. Reports assess both components over the selected interval, including late starts, early closes, heartbeat interruptions and missing evidence. A fresh heartbeat does not erase an earlier interruption. Invalid or unavailable files and lines degrade coverage. Budget eviction leaves a marker against the affected window. Logging failure is never interpreted as evidence of platform health.
 
+Scheduled device reconciliation emits one lineage summary per invocation with observations. The trace card shows each summary in the regular event view, and the report totals its four categories across the selected interval. Pagination and database failures retain their error classification.
+
 Successful empty worker polls are coalesced into minute summaries. Work, provider calls, audit writes, rejected/failed requests and retries open the detailed trace. This prevents idle polling from consuming the useful diagnostic budget. These raw traces are operational evidence, not a tamper-proof compliance ledger or a complete personal-data erasure facility.
 
 ## Daily report

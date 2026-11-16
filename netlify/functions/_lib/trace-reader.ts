@@ -405,6 +405,12 @@ export async function buildTraceReport(
     statuses: Record<string, number> = {},
     httpOutcomes: Record<string, number> = {};
   const problems: TraceRecord[] = [];
+  const reconciliationLineage = {
+    historical_predecessors_skipped: 0,
+    current_rows_retained: 0,
+    multiple_predecessors_matched: 0,
+    concurrent_renames_resolved: 0,
+  };
   const requests = new Map<string, TraceRecord["actor"]>();
   const committedTransactions = new Set<string>();
   let clientDrops = 0,
@@ -483,6 +489,13 @@ export async function buildTraceReport(
     if (record.event === "ui.collection_gap") {
       clientDrops += Number(record.data.dropped) || 0;
       clientUnconfirmed += Number(record.data.unconfirmed) || 0;
+    }
+    if (record.event === "sync.device_lineage") {
+      for (const field of Object.keys(reconciliationLineage) as Array<keyof typeof reconciliationLineage>) {
+        const count = record.data[field];
+        if (typeof count === "number" && Number.isSafeInteger(count) && count >= 0)
+          reconciliationLineage[field] += count;
+      }
     }
     if (record.event === "http.end") {
       httpCount++;
@@ -629,6 +642,7 @@ export async function buildTraceReport(
       ).length,
     },
     event_counts: eventCounts,
+    reconciliation_lineage: eventCounts["sync.device_lineage"] ? reconciliationLineage : null,
     routes,
     statuses,
     http_outcomes: httpOutcomes,
