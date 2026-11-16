@@ -232,6 +232,7 @@ export async function traceSpan<T>(
 export async function traceResponseOutcome(
   response: Response,
   pathname?: string,
+  method?: string,
 ): Promise<Record<string, unknown>> {
   if (
     !response.headers.get("content-type")?.includes("application/json") ||
@@ -264,6 +265,23 @@ export async function traceResponseOutcome(
         const errors: unknown = body?.stats?.errors;
         if (typeof errors === "number" && Number.isSafeInteger(errors) && errors >= 0)
           outcome.errors = errors;
+      }
+      const isPolicyAssignment = method === "POST" && (
+        pathname === "/api/policies/assign" ||
+        pathname === "/api/policies/unassign" ||
+        pathname === "/api/policies/locks"
+      );
+      if (isPolicyAssignment) {
+        const sync = body?.amapi_sync;
+        if (sync?.synced === false) outcome.policy_sync_failed = true;
+        if (Array.isArray(sync?.device_failures))
+          outcome.device_failures_count = sync.device_failures.length;
+      }
+      if (
+        (method === "PUT" || method === "DELETE") &&
+        pathname === "/api/policies/overrides"
+      ) {
+        if (body?.derivative_sync?.synced === false) outcome.policy_sync_failed = true;
       }
       return outcome;
     } catch {
@@ -365,7 +383,7 @@ export async function traceHttp(
       const status = response.status;
       let outcome =
         status >= 500 ? "failure" : status >= 400 ? "rejected" : "success";
-      const detail = await traceResponseOutcome(response, url.pathname).catch(
+      const detail = await traceResponseOutcome(response, url.pathname, request.method).catch(
         () => ({ detail: "unavailable" }) as Record<string, unknown>,
       );
       if (
@@ -378,6 +396,8 @@ export async function traceHttp(
           (key) => Number(detail[key]) > 0,
         ) ||
         detail.success === false ||
+        detail.policy_sync_failed === true ||
+        Number(detail.device_failures_count) > 0 ||
         detail.result_status === "failed" ||
         detail.result_status === "error" ||
         detail.result_status === "partial" || detail.result_status === "degraded";
