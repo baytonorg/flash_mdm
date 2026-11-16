@@ -109,3 +109,16 @@ Some error paths use `sanitizeErrorForLog()` before writing to process logs. Thi
   job reads one 100-item page and resumes after 5 seconds, up to 250 pages. A
   matched operation is linked to the ledger; an exhausted or passed time window
   remains explicitly `unresolved`. Neither state triggers command replay.
+
+### Read-only audit inspection
+
+The VPS operator can run `node --import tsx scripts/inspect-audit-readonly.ts`
+from the deployed release with the normal application database configuration.
+Supply the existing `FLASH_PLATFORM_HEALTH_API_KEY` to that process from
+protected configuration. Run the release code as the application user and keep
+the key inside the deployment environment.
+
+The command requires read-only PostgreSQL and applies the normal audit scope
+and visibility checks. It prints aggregate counts and HTTP-equivalent statuses.
+A key covers its environment or at most 50 environments in its workspace.
+Platform-only audit events need a separate authorised operator view.
