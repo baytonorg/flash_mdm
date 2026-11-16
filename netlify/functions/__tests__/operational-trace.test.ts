@@ -122,6 +122,37 @@ describe('correlated request evidence', () => {
       .toEqual([['partial_failure', 1], ['partial_failure', 1], ['success', 0], ['success', undefined], ['success', undefined], ['success', undefined]]);
     expect(JSON.stringify(rows)).not.toContain('fixture-private');
   });
+  it('records policy sync failures as bounded partial outcomes without changing responses', async () => {
+    process.env.FLASH_TRACE_DIR = directory;
+    const assignment = { amapi_sync: { synced: true, device_failures: ['fixture-confidential-device'] } };
+    const override = { derivative_sync: { synced: false, error: 'fixture-confidential-error' } };
+    const cases = [
+      { path: '/api/policies/assign', method: 'POST', body: assignment, expected: ['partial_failure', undefined, 1] },
+      { path: '/api/policies/unassign', method: 'POST', body: assignment, expected: ['partial_failure', undefined, 1] },
+      { path: '/api/policies/locks', method: 'POST', body: { amapi_sync: { synced: false } }, expected: ['partial_failure', true, undefined] },
+      { path: '/api/policies/overrides', method: 'PUT', body: override, expected: ['partial_failure', true, undefined] },
+      { path: '/api/policies/overrides', method: 'DELETE', body: override, expected: ['partial_failure', true, undefined] },
+      { path: '/api/policies/assign', method: 'POST', body: { amapi_sync: { synced: true, device_failures: [] } }, expected: ['success', undefined, 0] },
+      { path: '/api/policies/assign', method: 'POST', body: { amapi_sync: { skipped: true } }, expected: ['success', undefined, undefined] },
+      { path: '/api/policies/assign', method: 'POST', body: { amapi_sync: { synced: 'false', device_failures: 2 } }, expected: ['success', undefined, undefined] },
+      { path: '/api/policies/overrides', method: 'GET', body: override, expected: ['success', undefined, undefined] },
+      { path: '/api/policies/overrides', method: 'PUT', body: assignment, expected: ['success', undefined, undefined] },
+      { path: '/api/health', method: 'POST', body: assignment, expected: ['success', undefined, undefined] },
+    ];
+
+    for (const { path, method, body } of cases) {
+      const response = await traceHttp(new Request('http://localhost' + path, { method }), async () => Response.json(body));
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual(body);
+    }
+
+    await closeOperationalTrace();
+    const rows = await records();
+    expect(rows.filter(row => row.event === 'http.end').map(row => [
+      row.data.outcome, row.data.policy_sync_failed, row.data.device_failures_count,
+    ])).toEqual(cases.map(testCase => testCase.expected));
+    expect(JSON.stringify(rows)).not.toContain('fixture-confidential');
+  });
   it('cancels timed-out diagnostic inspection while preserving the product response stream', async () => {
     process.env.FLASH_TRACE_DIR = directory;
     let stream!: ReadableStreamDefaultController<Uint8Array>;
