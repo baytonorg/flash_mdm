@@ -43,7 +43,7 @@ POST-only endpoint. Designed for minimal latency to return 204 quickly.
 5. Idempotent insert into `pubsub_events` using `ON CONFLICT (environment_id, message_id) DO NOTHING`. Duplicates are acked immediately.
 6. Store raw payload to blob storage (`pubsub-raw/{environment_id}/{message_id}.json`).
 7. **Fast-path device upsert:** For ENROLLMENT and STATUS_REPORT events, immediately upsert a placeholder device row from the webhook payload so the device appears in the UI before background processing completes.
-8. Enqueue a `process_{notification_type}` job in `job_queue`. For `ENTERPRISE_UPGRADE` events, an additional dedicated `process_enterprise_upgrade` job is also enqueued.
+8. Enqueue a `process_{notification_type}` job in `job_queue`. An `ENTERPRISE_UPGRADE` event queues one `process_enterprise_upgrade` job. The worker completes that job and its matching receipt in one statement.
 9. Best-effort trigger of the background queue worker.
 10. Return 204.
 

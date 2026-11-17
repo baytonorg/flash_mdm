@@ -2040,13 +2040,33 @@ export default async (request: Request, _context: Context) => {
           }
         }
 
-        // Mark job as completed
-        await execute(
-          `UPDATE job_queue
-           SET status = 'completed', completed_at = now(), locked_at = NULL, locked_by = NULL
-           WHERE id = $1`,
-          [job.id]
-        );
+        const upgradeReceiptId = job.job_type === 'process_enterprise_upgrade'
+          ? extractPubSubEventMessageId(payload)
+          : null;
+        if (upgradeReceiptId) {
+          // Publish one outcome for the job and its receipt.
+          await execute(
+            `WITH completed_job AS (
+               UPDATE job_queue
+               SET status = 'completed', completed_at = now(), locked_at = NULL, locked_by = NULL
+               WHERE id = $1
+               RETURNING environment_id
+             )
+             UPDATE pubsub_events AS receipt
+             SET status = 'processed', processed_at = now(), error = NULL
+             FROM completed_job
+             WHERE receipt.environment_id = completed_job.environment_id
+               AND receipt.message_id = $2`,
+            [job.id, upgradeReceiptId]
+          );
+        } else {
+          await execute(
+            `UPDATE job_queue
+             SET status = 'completed', completed_at = now(), locked_at = NULL, locked_by = NULL
+             WHERE id = $1`,
+            [job.id]
+          );
+        }
         traceEvent('job.completed', { job_id: job.id, job_type: traceJobType, environment_id: job.environment_id, outcome: 'success' });
       } catch (err) {
         traceEvent('job.failure', { job_id: job.id, job_type: traceJobType, environment_id: job.environment_id, attempt: job.attempts + 1, ...traceError(err) });

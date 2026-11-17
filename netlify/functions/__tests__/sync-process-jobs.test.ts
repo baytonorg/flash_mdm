@@ -587,6 +587,10 @@ describe('sync-process-background job queue processing', () => {
         action: 'environment.enterprise_upgrade_status_synced',
       })
     );
+    expect(mockExecute).toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'processed', processed_at = now(), error = NULL"),
+      ['job_upgrade', 'msg-upgrade']
+    );
   });
 
   it('maps Lost Mode usage log events into device location history', async () => {
