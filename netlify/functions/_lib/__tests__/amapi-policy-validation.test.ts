@@ -32,6 +32,61 @@ describe('amapi-policy-validation', () => {
     expect(result.errors).toHaveLength(0);
   });
 
+  it('accepts every local device wipe capability value for a companion app role', () => {
+    const values = [
+      'LOCAL_DEVICE_WIPE_COMMAND_UNSPECIFIED',
+      'LOCAL_DEVICE_WIPE_COMMAND_DISALLOWED',
+      'LOCAL_DEVICE_WIPE_COMMAND_ALLOWED',
+    ];
+
+    for (const localDeviceWipeCommand of values) {
+      const result = validateAmapiPolicyPayload({
+        applications: [{
+          packageName: 'com.example.companion',
+          installType: 'FORCE_INSTALLED',
+          roles: [{
+            roleType: 'COMPANION_APP',
+            extraCapabilities: { localDeviceWipeCommand },
+          }],
+        }],
+      });
+
+      expect(result.errors).toHaveLength(0);
+    }
+  });
+
+  it('rejects invalid local device wipe capability values and non-companion roles', () => {
+    const invalidEnum = validateAmapiPolicyPayload({
+      applications: [{
+        packageName: 'com.example.companion',
+        installType: 'FORCE_INSTALLED',
+        roles: [{
+          roleType: 'COMPANION_APP',
+          extraCapabilities: { localDeviceWipeCommand: 'LOCAL_DEVICE_WIPE_COMMAND_INVALID' },
+        }],
+      }],
+    });
+    const invalidRole = validateAmapiPolicyPayload({
+      applications: [{
+        packageName: 'com.example.health',
+        installType: 'FORCE_INSTALLED',
+        roles: [{
+          roleType: 'SYSTEM_HEALTH_MONITORING',
+          extraCapabilities: {
+            localDeviceWipeCommand: 'LOCAL_DEVICE_WIPE_COMMAND_DISALLOWED',
+          },
+        }],
+      }],
+    });
+
+    expect(invalidEnum.errors).toEqual(expect.arrayContaining([
+      expect.stringContaining('localDeviceWipeCommand="LOCAL_DEVICE_WIPE_COMMAND_INVALID" is not a valid AMAPI value'),
+    ]));
+    expect(invalidRole.errors).toContain(
+      'applications[0].roles[0].extraCapabilities.localDeviceWipeCommand requires roleType=COMPANION_APP'
+    );
+  });
+
   it('rejects setupAction launch app when app is not REQUIRED_FOR_SETUP', () => {
     const result = validateAmapiPolicyPayload({
       applications: [{ packageName: 'com.example.app', installType: 'FORCE_INSTALLED' }],
