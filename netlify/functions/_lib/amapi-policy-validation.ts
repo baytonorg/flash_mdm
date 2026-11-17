@@ -326,6 +326,7 @@ export function validateAmapiPolicyPayload(payload: unknown): AmapiPolicyValidat
     const roles = asArray<JsonObject>(app.roles);
     roles.forEach((role, roleIdx) => {
       const roleType = asString(role.roleType);
+      const extraCapabilities = asObject(role.extraCapabilities);
       if (!roleType) {
         errors.push(`applications[${idx}].roles[${roleIdx}].roleType is required`);
         return;
@@ -335,6 +336,11 @@ export function validateAmapiPolicyPayload(payload: unknown): AmapiPolicyValidat
       }
       if (roleType === 'KIOSK') hasKioskRole = true;
       if (roleType === 'COMPANION_APP') hasCompanionAppRole = true;
+      if (extraCapabilities?.localDeviceWipeCommand !== undefined && roleType !== 'COMPANION_APP') {
+        errors.push(
+          `applications[${idx}].roles[${roleIdx}].extraCapabilities.localDeviceWipeCommand requires roleType=COMPANION_APP`
+        );
+      }
       roleTypes.push(roleType);
       const existingOwner = roleOwnerByType.get(roleType);
       if (existingOwner !== undefined && existingOwner !== idx) {
