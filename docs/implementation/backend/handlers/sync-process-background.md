@@ -20,7 +20,7 @@
 | `resolveUsageLogDeviceAmapiName` | 162-190 | Resolves device AMAPI name from usage log payloads (handles string and object device fields) |
 | `extractLostModeLocationRecords` | 192-244 | Parses lost-mode location data from batch usage log events |
 | `syncAppFeedbackFromReports` | 277-502 | Extracts keyed app states from AMAPI application reports and upserts into `app_feedback_items` |
-| `processEnterpriseUpgrade` | 504-555 | Handles enterprise upgrade completion: updates `enterprise_features.enterprise_upgrade_status`, triggers device re-import |
+| `processEnterpriseUpgrade` | 504-555 | Handles enterprise upgrade completion: updates `enterprise_features.enterprise_upgrade_status`, writes a system audit event |
 | `syncEnrollmentPolicyFromGroup` | 564-785 | Resolves the effective policy for a device (device > group hierarchy > environment) and assigns the appropriate derivative policy via AMAPI |
 | `findEnrollmentTokenMatchForDevice` | 787-820 | Looks up an enrollment token by AMAPI name or sign-in email |
 | `consumeEnrollmentTokenIfOneTime` | 822-828 | Deletes one-time-use enrollment tokens after consumption |
@@ -51,7 +51,7 @@
 - `process_status_report` -- Updates device hardware/software/state from AMAPI, syncs application reports, syncs app feedback from keyed app states, stores status report telemetry.
 - `process_command` -- Handles command completion notifications. For `START_LOST_MODE` commands that succeed, updates the device state to `LOST`. For `STOP_LOST_MODE`, updates the device state to `ACTIVE`.
 - `process_usage_log` -- Processes device usage log events. Extracts lost-mode location records from batch usage log events and inserts them into `device_locations` with source `lost_mode`.
-- `process_enterprise_upgrade` -- Handles enterprise upgrade completion: updates `enterprise_features.enterprise_upgrade_status` JSONB, triggers device re-import via `reconcileEnvironmentDeviceImport`.
+- `process_enterprise_upgrade` -- Handles enterprise upgrade completion: updates `enterprise_features.enterprise_upgrade_status` JSONB, records the system audit event and completes the matching Pub/Sub receipt with the job.
 - `bulk_command` -- Executes a command against multiple devices in sequence via AMAPI.
 
 **Retry logic:** Application/job failures increment `attempts` and are retried up

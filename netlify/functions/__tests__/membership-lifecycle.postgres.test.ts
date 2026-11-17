@@ -494,10 +494,38 @@ suite('membership lifecycle with PostgreSQL and actual handlers', () => {
     const session='fixture-onboarding-session';
     await pool.query("INSERT INTO sessions (user_id,token_hash,expires_at) VALUES ($1,$2,now()+interval '1 day')",[target,hashToken(session)]);
     const create=()=>environmentHandler(new Request('http://localhost/api/environments/create',{method:'POST',headers:{cookie:'flash_session='+session,'x-requested-with':'XMLHttpRequest','content-type':'application/json'},body:JSON.stringify({workspace_id:workspace,name:'One-shot fixture'})}),{} as never);
-    const outcomes=await Promise.all([create(),create()]);
+    const barrier = await pool.connect();
+    let requests: Promise<Response>[] = [];
+    try {
+      await barrier.query('BEGIN');
+      await barrier.query('SELECT id FROM workspaces WHERE id = $1 FOR UPDATE', [workspace]);
+      requests = [create(), create()];
+      // Both calls must pass the initial setup read and wait at the real workspace lock.
+      await expect.poll(async () => {
+        const waiters = await pool.query<{ count: number }>(
+          `SELECT count(*)::int AS count FROM pg_stat_activity
+           WHERE datname = current_database() AND pid <> pg_backend_pid()
+             AND state = 'active' AND wait_event_type = 'Lock'
+             AND query = 'SELECT id FROM workspaces WHERE id = $1 FOR UPDATE'`
+        );
+        return waiters.rows[0].count;
+      }, { interval: 10, timeout: 3_000 }).toBe(2);
+    } finally {
+      try {
+        await barrier.query('ROLLBACK');
+      } finally {
+        barrier.release();
+      }
+      await Promise.allSettled(requests);
+    }
+
+    const outcomes=await Promise.all(requests);
     expect(outcomes.map(r=>r.status).sort()).toEqual([201,409]);
-    const created=(await pool.query("SELECT id FROM environments WHERE name='One-shot fixture'")).rows[0];
+    const createdEnvironments=(await pool.query("SELECT id FROM environments WHERE name='One-shot fixture'")).rows;
+    expect(createdEnvironments).toHaveLength(1);
+    const created=createdEnvironments[0];
     expect((await pool.query('SELECT role FROM environment_memberships WHERE environment_id=$1 AND user_id=$2',[created.id,target])).rows[0].role).toBe('owner');
+    expect((await create()).status).toBe(403);
     await withSignupLinkReferenceLock(()=>transaction(c=>deleteEnvironmentData(c,created.id,false)));
     expect((await create()).status).toBe(403);
   });
