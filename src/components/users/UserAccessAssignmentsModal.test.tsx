@@ -11,17 +11,26 @@ describe('membership editor lifecycle',()=>{
   beforeEach(()=>vi.resetAllMocks());
   it('saves role and scope together, preserves child roles and refreshes its own access summary',async()=>{
     let role='viewer';
+    let resolveGroups!: () => void;
+    const groupResponse = new Promise<void>((resolve) => {
+      resolveGroups = resolve;
+    });
     vi.mocked(apiClient.get).mockImplementation(async path=>{
       if(path.startsWith('/api/workspaces/users')) return {users:[{id:'target',email:'target@fixture.invalid',role,access_scope:'scoped',environment_assignments:[{environment_id:'env',environment_name:'Fixture environment',role:'owner'}],group_assignments:[]}]} as never;
       if(path.startsWith('/api/environments')) return {environments:[{id:'env',name:'Fixture environment'}]} as never;
+      await groupResponse;
       return {groups:[]} as never;
     });
     vi.mocked(apiClient.put).mockImplementation(async (_path,body)=>{role=(body as {workspace_role:string}).workspace_role;return {message:'updated'} as never;});
     const client=new QueryClient({defaultOptions:{queries:{retry:false},mutations:{retry:false}}});
     render(<QueryClientProvider client={client}><UserAccessAssignmentsModal open workspaceId="ws" userId="target" currentUserRole="owner" isSuperadmin={false} canManageWorkspaceUsers onClose={()=>{}} /></QueryClientProvider>);
     await screen.findByText(/Workspace RBAC role:/);
+    expect(screen.queryAllByRole('combobox')).toHaveLength(0);
+    resolveGroups();
+
+    const [workspaceRole] = await screen.findAllByRole('combobox');
     const user=userEvent.setup();
-    await user.selectOptions(screen.getAllByRole('combobox')[0],'member');
+    await user.selectOptions(workspaceRole,'member');
     await user.click(screen.getByRole('button',{name:'Save Access'}));
     expect(apiClient.put).toHaveBeenCalledTimes(1);
     expect(apiClient.put).toHaveBeenCalledWith('/api/workspaces/users/access',expect.objectContaining({workspace_role:'member',environment_ids:['env'],scoped_role:undefined}));
