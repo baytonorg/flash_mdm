@@ -1,3 +1,4 @@
+import type { PoolClient } from 'pg';
 import { execute, queryOne } from './db.js';
 import { isMissingRelationError } from './db-errors.js';
 
@@ -26,9 +27,23 @@ function isMissingColumnError(err: unknown): boolean {
   );
 }
 
-export async function getPlatformSettings(): Promise<PlatformSettings> {
+export async function getPlatformSettings(client?: PoolClient): Promise<PlatformSettings> {
+  const read = client
+    ? async <T>(sql: string, params: unknown[]) => {
+      await client.query('SAVEPOINT platform_settings_read');
+      try {
+        const result = await client.query(sql, params);
+        await client.query('RELEASE SAVEPOINT platform_settings_read');
+        return result.rows[0] as T | undefined;
+      } catch (error) {
+        await client.query('ROLLBACK TO SAVEPOINT platform_settings_read');
+        await client.query('RELEASE SAVEPOINT platform_settings_read');
+        throw error;
+      }
+    }
+    : queryOne;
   try {
-    const row = await queryOne<{
+    const row = await read<{
       invite_only_registration: boolean;
       licensing_enabled: boolean;
       default_free_enabled: boolean;
@@ -51,7 +66,7 @@ export async function getPlatformSettings(): Promise<PlatformSettings> {
   } catch (err) {
     if (isMissingColumnError(err)) {
       try {
-        const legacyWithFreeTier = await queryOne<{
+        const legacyWithFreeTier = await read<{
           invite_only_registration: boolean;
           default_free_enabled: boolean;
           default_free_seat_limit: number;
@@ -70,7 +85,7 @@ export async function getPlatformSettings(): Promise<PlatformSettings> {
         };
       } catch (legacyErr) {
         if (!isMissingColumnError(legacyErr)) throw legacyErr;
-        const legacy = await queryOne<{ invite_only_registration: boolean }>(
+        const legacy = await read<{ invite_only_registration: boolean }>(
           `SELECT invite_only_registration
            FROM platform_settings
            WHERE id = 1`,

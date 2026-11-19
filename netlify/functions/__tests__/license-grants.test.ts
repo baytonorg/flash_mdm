@@ -4,6 +4,7 @@ const {
   mockRequireAuth,
   mockRequireWorkspaceResourcePermission,
   mockRequireEnvironmentPermission,
+  mockTransaction,
   mockExecute,
   mockQuery,
   mockQueryOne,
@@ -14,6 +15,7 @@ const {
   mockRequireAuth: vi.fn(),
   mockRequireWorkspaceResourcePermission: vi.fn(),
   mockRequireEnvironmentPermission: vi.fn(),
+  mockTransaction: vi.fn(),
   mockExecute: vi.fn(),
   mockQuery: vi.fn(),
   mockQueryOne: vi.fn(),
@@ -32,6 +34,7 @@ vi.mock('../_lib/rbac.js', () => ({
 }));
 
 vi.mock('../_lib/db.js', () => ({
+  transaction: mockTransaction,
   execute: mockExecute,
   query: mockQuery,
   queryOne: mockQueryOne,
@@ -54,6 +57,7 @@ beforeEach(() => {
   mockRequireAuth.mockReset();
   mockRequireWorkspaceResourcePermission.mockReset();
   mockRequireEnvironmentPermission.mockReset();
+  mockTransaction.mockReset();
   mockExecute.mockReset();
   mockQuery.mockReset();
   mockQueryOne.mockReset();
@@ -150,6 +154,14 @@ describe('license-grants', () => {
   });
 
   it('rejects invoice requests whose subtotal overflows 32-bit integer range', async () => {
+    const lockedQuery = vi.fn(async (sql: string) => {
+      if (sql.includes('FROM workspaces')) return { rows: [{ permission_matrix: null }] };
+      if (sql.includes('FROM users')) return { rows: [{ is_superadmin: true }] };
+      if (sql.includes('FROM license_plans')) return { rows: [{ id: '323e4567-e89b-12d3-a456-426614174000', name: 'Pro', stripe_price_id: null, features: { invoice_unit_amount_cents: 100_000, currency: 'usd' } }] };
+      throw new Error('Unexpected write before overflow rejection');
+    });
+    mockTransaction.mockImplementation(async fn => fn({ query: lockedQuery }));
+
     mockQueryOne
       .mockResolvedValueOnce({ id: WORKSPACE_ID })
       .mockResolvedValueOnce({
