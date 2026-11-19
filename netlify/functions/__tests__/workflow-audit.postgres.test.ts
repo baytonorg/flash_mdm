@@ -32,6 +32,12 @@ suite('primary custom workflow audit with real PostgreSQL', () => {
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
   afterAll(async () => { await closeDatabasePool(); await pool?.end(); });
 
+  it('has working primary and secondary effects before any injected database fault', async () => {
+    await execute();
+    expect((await executions())[0].status).toBe('success');
+    expect((await pool.query('SELECT 1 FROM audit_log')).rowCount).toBe(2);
+    expect((await pool.query("SELECT 1 FROM audit_log WHERE action='workflow.execution.executed'")).rowCount).toBe(1);
+  });
   it('persists a distinct primary event with authoritative provenance and sanitized details', async () => {
     expect((await execute())?.status).toBe(200);
     const [execution] = await executions(); expect(execution.status).toBe('success');
