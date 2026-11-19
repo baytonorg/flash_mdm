@@ -1,7 +1,7 @@
 import { tracedFetch } from './_lib/operational-trace.js';
 import { safeWebhookDestination, safeWebhookDeliveryError } from './_lib/outbound-webhook.js';
 import type { Context } from '@netlify/functions';
-import { queryOne, execute } from './_lib/db.js';
+import { queryOne, execute, transaction } from './_lib/db.js';
 import {
   amapiCall,
   getAmapiErrorHttpStatus,
@@ -430,34 +430,42 @@ async function executeAction(
 
     case 'audit.log': {
       const requestedAction = typeof action_config.action === 'string'
-        ? action_config.action.slice(0, 120) : 'workflow.custom_audit';
+        ? Array.from(action_config.action).slice(0, 120).join('') : 'workflow.custom_audit';
       const auditDetails = action_config.details && typeof action_config.details === 'object' && !Array.isArray(action_config.details)
         ? action_config.details as Record<string, unknown> : {};
 
       // This audit is the primary action. Secondary engine auditing stays
       // best-effort, but absence of this record must never mean success.
-      await logAudit({
-        workspace_id: envContext.workspace_id,
-        environment_id: workflow.environment_id,
-        device_id: device.id,
-        actor_type: 'system',
-        visibility_scope: 'privileged',
-        action: 'workflow.custom_audit',
-        custom_workflow_action: true,
-        resource_type: 'workflow',
-        resource_id: workflow.id,
-        details: {
-          ...auditDetails,
-          workflow_name: workflow.name,
-          device_serial: device.serial_number,
+      return transaction(async client => {
+        const result = { success: true as const, audit_logged: true, action: 'workflow.custom_audit' };
+        await logAudit({
+          workspace_id: envContext.workspace_id,
+          environment_id: workflow.environment_id,
+          device_id: device.id,
+          actor_type: 'system',
+          visibility_scope: 'privileged',
+          action: 'workflow.custom_audit',
           custom_workflow_action: true,
-          workflow_id: workflow.id,
-          execution_id: executionId,
-          requested_action: requestedAction,
-        },
-      }, undefined, { requirePersistence: true });
+          resource_type: 'workflow',
+          resource_id: workflow.id,
+          details: {
+            ...auditDetails,
+            workflow_name: workflow.name,
+            device_serial: device.serial_number,
+            custom_workflow_action: true,
+            workflow_id: workflow.id,
+            execution_id: executionId,
+            requested_action: requestedAction,
+          },
+        }, client, { requirePersistence: true });
 
-      return { success: true, audit_logged: true, action: 'workflow.custom_audit' };
+        const accepted = await client.query(
+          `UPDATE workflow_executions SET status = 'success', result = $2 WHERE id = $1`,
+          [executionId, JSON.stringify(result)],
+        );
+        if (accepted.rowCount !== 1) throw new Error('Workflow audit outcome could not be recorded');
+        return result;
+      });
     }
 
     default:
@@ -602,10 +610,14 @@ export default async (request: Request, _context: Context) => {
       const executionStatus = deliveryUncertain
         ? 'delivery_uncertain'
         : hasError ? 'failed' : 'success';
-      await execute(
-        `UPDATE workflow_executions SET status = $2, result = $3 WHERE id = $1`,
-        [executionId, executionStatus, JSON.stringify(result)]
-      );
+      // The primary custom audit and its authoritative outcome already committed
+      // together. Other actions retain their existing result-persistence path.
+      if (workflow.action_type !== 'audit.log') {
+        await execute(
+          `UPDATE workflow_executions SET status = $2, result = $3 WHERE id = $1`,
+          [executionId, executionStatus, JSON.stringify(result)]
+        );
+      }
 
       await logWorkflowExecutionAudit({
         action: deliveryUncertain
@@ -620,16 +632,53 @@ export default async (request: Request, _context: Context) => {
       });
 
       // Update last_triggered_at
-      await execute(
-        'UPDATE workflows SET last_triggered_at = now() WHERE id = $1',
-        [workflow_id]
-      );
+      let metadataUpdateFailed = false;
+      try {
+        await execute(
+          'UPDATE workflows SET last_triggered_at = now() WHERE id = $1',
+          [workflow_id]
+        );
+      } catch (error) {
+        if (workflow.action_type !== 'audit.log') throw error;
+        metadataUpdateFailed = true;
+        console.warn('Custom workflow audit persisted; last-triggered metadata update failed');
+      }
 
       console.log(`Workflow ${workflow_id} executed for device ${device_id}: ${executionStatus}`);
-      return Response.json({ status: executionStatus, execution_id: executionId });
+      return Response.json({ status: executionStatus, execution_id: executionId,
+        ...(metadataUpdateFailed ? { errors: 1, metadata_update_failed: true } : {}) });
     } catch (err) {
-      console.error(`Workflow ${workflow_id} action failed:`, err);
       const errorMessage = err instanceof Error ? err.message : String(err);
+      let customFailureRecorded = false;
+      if (workflow.action_type === 'audit.log') {
+        try {
+          const failed = await execute(
+            `UPDATE workflow_executions SET status = 'failed', result = $2
+             WHERE id = $1 AND status = 'running'`,
+            [executionId, JSON.stringify({ error: errorMessage })],
+          );
+          if (failed.rowCount === 0) {
+            const saved = await queryOne<{ status: string; result: Record<string, unknown> }>(
+              'SELECT status, result FROM workflow_executions WHERE id = $1', [executionId],
+            );
+            if (saved?.status === 'success' && saved.result?.audit_logged === true && saved.result.action === 'workflow.custom_audit') {
+              console.warn('Recovered committed custom workflow audit outcome after a write acknowledgement error');
+              await logWorkflowExecutionAudit({ action: 'workflow.execution.executed', workflow, device,
+                triggerData: trigger_data ?? {}, executionId, workspaceId: envContext.workspace_id,
+                details: { result: saved.result, outcome_recovered: true } });
+              return Response.json({ status: 'success', execution_id: executionId, errors: 1, outcome_recovered: true });
+            }
+            if (saved?.status === 'failed') return Response.json({ status: 'failed', execution_id: executionId });
+            throw new Error('Custom audit terminal outcome is unavailable');
+          }
+          customFailureRecorded = true;
+        } catch {
+          console.warn('Custom workflow audit commit outcome is unverified; automatic replay must be suppressed');
+          return Response.json({ status: 'delivery_uncertain', execution_id: executionId,
+            uncertainty_source: 'audit_commit', automatic_retry: false });
+        }
+      }
+      console.error(`Workflow ${workflow_id} action failed:`, err);
       await logWorkflowExecutionAudit({
         action: 'workflow.execution.failed',
         workflow,
@@ -639,10 +688,12 @@ export default async (request: Request, _context: Context) => {
         workspaceId: envContext.workspace_id,
         details: { error: errorMessage },
       });
-      await execute(
-        `UPDATE workflow_executions SET status = 'failed', result = $2 WHERE id = $1`,
-        [executionId, JSON.stringify({ error: errorMessage })]
-      );
+      if (!customFailureRecorded) {
+        await execute(
+          `UPDATE workflow_executions SET status = 'failed', result = $2 WHERE id = $1`,
+          [executionId, JSON.stringify({ error: errorMessage })]
+        );
+      }
       return Response.json({ status: 'failed', execution_id: executionId });
     }
   } catch (err) {

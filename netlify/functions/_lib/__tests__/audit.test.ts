@@ -105,7 +105,7 @@ describe('logAudit', () => {
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       'Failed to write audit log:',
-      expect.any(Error),
+      expect.objectContaining({ error_class: 'Error' }),
     );
   });
 
@@ -131,6 +131,8 @@ describe('logAudit', () => {
       null,
       null,
       null,
+      'user',
+      'standard',
       'policy.update',
       null,
       null,

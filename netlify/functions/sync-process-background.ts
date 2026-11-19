@@ -1850,9 +1850,10 @@ export default async (request: Request, _context: Context) => {
             const evaluation = await response.json().catch(() => null) as {
               status?: string;
               execution_id?: string;
+              uncertainty_source?: string;
             } | null;
             if (evaluation?.status === 'delivery_uncertain') {
-              await markJobDeliveryUncertain(job.id, evaluation.execution_id);
+              await markJobDeliveryUncertain(job.id, evaluation.execution_id, evaluation.uncertainty_source === 'audit_commit' ? 'audit' : 'amapi');
               continue;
             }
             break;
@@ -2263,9 +2264,12 @@ async function updateJobQueueFailure(
 
 async function markJobDeliveryUncertain(
   jobId: string,
-  executionId?: string
+  executionId?: string,
+  source: 'amapi' | 'audit' = 'amapi',
 ): Promise<void> {
-  const detail = executionId
+  const detail = source === 'audit'
+    ? `Workflow execution ${executionId ?? 'unknown'} has an unverified audit commit; automatic retry was suppressed`
+    : executionId
     ? `Workflow execution ${executionId} has uncertain AMAPI command delivery; automatic retry was suppressed`
     : 'AMAPI command delivery is uncertain; automatic retry was suppressed';
   await execute(

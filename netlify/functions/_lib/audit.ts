@@ -154,6 +154,8 @@ export async function logAudit(entry: AuditEntry, client?: PoolClient, options: 
   const traceAction = attributedEntry.custom_workflow_action ? 'workflow.custom_audit'
     : TRACE_ACTIONS.has(attributedEntry.action) ? attributedEntry.action : 'custom';
   const write = client ? async (sql: string, params: unknown[]) => client.query(sql, params) : execute;
+  const primarySavepoint = Boolean(client && options.requirePersistence);
+  if (primarySavepoint) await client!.query('SAVEPOINT flash_primary_audit_write');
   try {
     const inserted = await write(
       `INSERT INTO audit_log (
@@ -178,64 +180,51 @@ export async function logAudit(entry: AuditEntry, client?: PoolClient, options: 
       ]
     );
     if (options.requirePersistence && inserted?.rowCount !== 1) throw new Error('Requested audit record was not inserted');
+    if (primarySavepoint) await client!.query('RELEASE SAVEPOINT flash_primary_audit_write');
     const ctx = traceContext();
     if (attributedEntry.action === 'auth.login' && attributedEntry.user_id && ctx?.actor.type === 'anonymous') setTraceActor({ type: 'human', id: attributedEntry.user_id });
     traceEvent('audit.write', { action: traceAction, resource_type: TRACE_RESOURCES.has(attributedEntry.resource_type ?? '') ? attributedEntry.resource_type : undefined, resource_id: UUID_PATTERN.test(attributedEntry.resource_id ?? '') ? attributedEntry.resource_id : undefined, user_id: attributedEntry.user_id, workspace_id: attributedEntry.workspace_id, environment_id: attributedEntry.environment_id, durability: client ? 'transaction_pending' : 'committed', ...(attributedEntry.custom_workflow_action ? {} : responseOutcome(attributedEntry.details)) }, attributedEntry.actor_type === 'system' ? { type: 'system' } : ctx?.actor.type === 'anonymous' && attributedEntry.user_id ? { type: 'anonymous', id: attributedEntry.user_id } : undefined);
   } catch (err) {
     traceEvent('audit.failure', { action: traceAction, ...traceError(err) });
     // Lifecycle audit is part of the transaction: failure must roll it back.
-    if (client) throw err;
+    if (client && !options.requirePersistence) throw err;
+    if (primarySavepoint) await client!.query('ROLLBACK TO SAVEPOINT flash_primary_audit_write');
     if (isMissingAuditLogColumnError(err)) {
-      if (options.requirePersistence) {
-        // Missing key attribution can be omitted for a true system action. A
-        // legacy schema unable to retain actor/visibility cannot express it safely.
-        const missing = /column "([^"\n]+)"/.exec((err as PgLikeError).message ?? '')?.[1];
-        if (missing !== 'api_key_id' || attributedEntry.api_key_id || attributedEntry.actor_type !== 'system') throw err;
-        const result = await execute(
+      const missing = /column "([^"\n]+)"/.exec((err as PgLikeError).message ?? '')?.[1];
+      // A missing key column is compatible only without a key principal. Never
+      // downgrade actor or privileged visibility to legacy column defaults.
+      const compatible = missing === 'api_key_id' && !attributedEntry.api_key_id && attributedEntry.actor_type !== 'api_key';
+      if (!compatible) {
+        if (client || options.requirePersistence) throw err;
+        console.error('Skipped audit write: legacy schema cannot preserve its principal and visibility');
+        return;
+      }
+      try {
+        const result = await write(
           `INSERT INTO audit_log (workspace_id, environment_id, user_id, device_id,
              actor_type, visibility_scope, action, resource_type, resource_id, details, ip_address)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
           [attributedEntry.workspace_id ?? null, attributedEntry.environment_id ?? null,
             attributedEntry.user_id ?? null, attributedEntry.device_id ?? null,
-            attributedEntry.actor_type, attributedEntry.visibility_scope ?? 'standard',
+            attributedEntry.actor_type ?? 'user', attributedEntry.visibility_scope ?? 'standard',
             attributedEntry.action, attributedEntry.resource_type ?? null,
             attributedEntry.resource_id ?? null, detailsJson, attributedEntry.ip_address ?? null],
         );
-        if (result?.rowCount !== 1) throw new Error('Requested audit record was not inserted');
+        if (options.requirePersistence && result?.rowCount !== 1) throw new Error('Requested audit record was not inserted');
+        if (primarySavepoint) await client!.query('RELEASE SAVEPOINT flash_primary_audit_write');
         traceEvent('audit.write', { action: traceAction, environment_id: attributedEntry.environment_id,
           workspace_id: attributedEntry.workspace_id, resource_type: TRACE_RESOURCES.has(attributedEntry.resource_type ?? '') ? attributedEntry.resource_type : undefined,
-          resource_id: UUID_PATTERN.test(attributedEntry.resource_id ?? '') ? attributedEntry.resource_id : undefined, durability: 'committed' }, { type: 'system' });
-        return;
-      }
-      try {
-        // Compatibility path for databases that have not yet run newer audit_log migrations.
-        await execute(
-          `INSERT INTO audit_log (
-             workspace_id, environment_id, user_id, device_id,
-             action, resource_type, resource_id, details, ip_address
-           )
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-          [
-            attributedEntry.workspace_id ?? null,
-            attributedEntry.environment_id ?? null,
-            attributedEntry.user_id ?? null,
-            attributedEntry.device_id ?? null,
-            attributedEntry.action,
-            attributedEntry.resource_type ?? null,
-            attributedEntry.resource_id ?? null,
-            detailsJson,
-            attributedEntry.ip_address ?? null,
-          ]
-        );
+          resource_id: UUID_PATTERN.test(attributedEntry.resource_id ?? '') ? attributedEntry.resource_id : undefined, durability: client ? 'transaction_pending' : 'committed' }, attributedEntry.actor_type === 'system' ? { type: 'system' } : undefined);
         return;
       } catch (fallbackErr) {
-        console.error('Failed to write audit log:', fallbackErr);
+        if (client || options.requirePersistence) throw fallbackErr;
+        console.error('Failed to write audit log:', traceError(fallbackErr));
         return;
       }
     }
     if (options.requirePersistence) throw err;
     // Audit logging should never break the main flow
-    console.error('Failed to write audit log:', err);
+    console.error('Failed to write audit log:', traceError(err));
   }
 }
 
