@@ -1,3 +1,6 @@
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import RecentEventsWidget from '../../../src/components/dashboard/RecentEventsWidget';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../_lib/db.js', () => ({
@@ -35,6 +38,19 @@ describe('dashboard device report health', () => {
       if (text.includes('FROM devices')) return { count: '5' };
       return null;
     });
+  });
+
+  it('renders a schema-valid nullable resource from the actual dashboard response', async () => {
+    const event = { id: 'synthetic-null', action: 'audit_event', resource_type: null, created_at: new Date().toISOString() };
+    mockQuery.mockImplementation(async sql => String(sql).includes('FROM audit_log') ? [event] as never : [] as never);
+    const res = await handler(new Request(`http://localhost/api/dashboard/data?environment_id=${environmentId}`), {} as never);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.recent_events).toEqual([event]);
+    const html = renderToStaticMarkup(createElement(RecentEventsWidget, { events: body.recent_events }));
+    expect(html).toContain('Audit event');
+    expect(html).toContain('Event');
+    expect(html).toContain('just now');
   });
 
   it('returns stale and unknown report counts separately from AMAPI state', async () => {

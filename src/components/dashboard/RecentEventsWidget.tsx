@@ -3,7 +3,7 @@ import { Activity } from 'lucide-react';
 interface RecentEvent {
   id: string;
   action: string;
-  resource_type: string;
+  resource_type: string | null;
   created_at: string;
 }
 
@@ -34,8 +34,8 @@ function formatAction(action: string): string {
     .replace(/^\w/, (c) => c.toUpperCase());
 }
 
-function formatResourceType(type: string): string {
-  return type
+function formatResourceType(type: string | null): string {
+  return (type ?? 'event')
     .replace(/_/g, ' ')
     .toLowerCase()
     .replace(/^\w/, (c) => c.toUpperCase());

@@ -26,7 +26,7 @@ interface DashboardData {
   devices_by_security_patch: Record<string, number>;
   compliance_rate: number;
   enrollment_trend: Array<{ date: string; count: number }>;
-  recent_events: Array<{ id: string; action: string; resource_type: string; created_at: string }>;
+  recent_events: Array<{ id: string; action: string; resource_type: string | null; created_at: string }>;
   device_report_health: {
     stale_after_days: number;
     stale: number;
