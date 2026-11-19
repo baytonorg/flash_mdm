@@ -2,6 +2,7 @@ import type { Context } from '@netlify/functions';
 import type pg from 'pg';
 import { query, transaction } from './_lib/db.js';
 import { internalFunctionUrl, shouldTriggerBackgroundFunction } from './_lib/runtime.js';
+import { scheduledWorkflowInterval, WORKFLOW_SCHEDULE_ERROR } from '../../shared/workflow-schedule.js';
 
 export const config = {
   schedule: '*/5 * * * *',
@@ -64,8 +65,7 @@ async function getDevicesInScope(client: pg.PoolClient, workflow: ScheduledWorkf
   return result.rows;
 }
 
-function shouldTrigger(workflow: ScheduledWorkflow): boolean {
-  const intervalMinutes = workflow.trigger_config.interval_minutes ?? 60;
+function shouldTrigger(workflow: ScheduledWorkflow, intervalMinutes: number): boolean {
   if (!workflow.last_triggered_at) return true;
 
   const lastTriggered = new Date(workflow.last_triggered_at).getTime();
@@ -111,7 +111,10 @@ export default async (request: Request, _context: Context) => {
             [workflow.id]
           );
           const current = locked.rows[0];
-          if (!current || !shouldTrigger(current)) return 0;
+          if (!current) return 0;
+          const intervalMinutes = scheduledWorkflowInterval(current.trigger_config);
+          if (intervalMinutes === null) throw new Error(WORKFLOW_SCHEDULE_ERROR);
+          if (!shouldTrigger(current, intervalMinutes)) return 0;
 
           const devices = await getDevicesInScope(client, current);
           if (devices.length === 0) {
@@ -133,7 +136,7 @@ export default async (request: Request, _context: Context) => {
                   trigger_data: {
                     trigger_type: 'scheduled',
                     scheduled_at: new Date().toISOString(),
-                    interval_minutes: current.trigger_config.interval_minutes,
+                    interval_minutes: intervalMinutes,
                   },
                 }),
               ]

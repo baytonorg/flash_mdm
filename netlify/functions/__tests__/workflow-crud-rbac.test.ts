@@ -465,3 +465,56 @@ describe('POST /api/workflows/:id/test', () => {
     expect(mockRequireEnvironmentPermission).not.toHaveBeenCalled();
   });
 });
+
+
+describe('scheduled workflow interval contract', () => {
+  const body = { environment_id: 'env1', name: 'Scheduled', trigger_type: 'scheduled', action_type: 'audit.log', trigger_config: { interval_minutes: 60 } };
+  const request = (action: string, values: object, method = 'POST') => new Request('http://localhost/api/workflows/' + action, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values) });
+
+  it.each([null, true, '15', 0, -1, 1, 14, 15.5, 61, 1441, 1_000_000])('rejects interval %j before create or update writes', async interval => {
+    mockQueryOne.mockResolvedValue(fakeWorkflow as never);
+    for (const [action, method] of [['create', 'POST'], ['update', 'PUT']]) {
+      const response = await handler(request(action, { ...body, id: 'wf1', trigger_config: { interval_minutes: interval } }, method), {} as never);
+      expect(response.status).toBe(400);
+    }
+    expect(mockExecute).not.toHaveBeenCalled();
+    expect(mockLogAudit).not.toHaveBeenCalled();
+  });
+
+  it.each([null, [], false, 10, 'schedule'])('rejects malformed configuration %j', async trigger_config => {
+    const response = await handler(request('create', { ...body, trigger_config }), {} as never);
+    expect(response.status).toBe(400);
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
+  it.each([15, 30, 60, 360, 720, 1440])('accepts the existing %i minute preset', async interval => {
+    mockQueryOne.mockResolvedValue(fakeWorkflow as never);
+    const response = await handler(request('create', { ...body, trigger_config: { interval_minutes: interval } }), {} as never);
+    expect(response.status).toBe(201);
+    expect(mockExecute).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains the hourly default when configuration is omitted', async () => {
+    mockQueryOne.mockResolvedValue(fakeWorkflow as never);
+    const response = await handler(request('create', { ...body, trigger_config: undefined }), {} as never);
+    expect(response.status).toBe(201);
+  });
+
+  it('refuses enabling a malformed saved schedule while allowing it to be disabled', async () => {
+    mockQueryOne.mockResolvedValue({ ...fakeWorkflow, enabled: false, trigger_type: 'scheduled', trigger_config: { interval_minutes: 0 } } as never);
+    expect((await handler(request('wf1/toggle', {}), {} as never)).status).toBe(400);
+    expect(mockExecute).not.toHaveBeenCalled();
+    mockQueryOne.mockResolvedValue({ ...fakeWorkflow, enabled: true, trigger_type: 'scheduled', trigger_config: { interval_minutes: 0 } } as never);
+    expect((await handler(request('wf1/toggle', {}), {} as never)).status).toBe(200);
+    expect(mockExecute).toHaveBeenCalledWith('UPDATE workflows SET enabled = $1, updated_at = now() WHERE id = $2', [false, 'wf1']);
+  });
+
+  it('reports an invalid bulk enable as a failed item without mutation or success audit', async () => {
+    mockQueryOne.mockResolvedValue({ ...fakeWorkflow, enabled: false, trigger_type: 'scheduled', trigger_config: { interval_minutes: 0 } } as never);
+    const response = await handler(request('bulk', { environment_id: 'env1', operation: 'enable', selection: { ids: ['wf1'] } }), {} as never);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ succeeded: 0, failed: 1, results: [{ id: 'wf1', ok: false }] });
+    expect(mockExecute).not.toHaveBeenCalled();
+    expect(mockLogAudit).not.toHaveBeenCalled();
+  });
+});

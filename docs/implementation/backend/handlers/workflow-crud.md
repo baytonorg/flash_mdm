@@ -54,3 +54,13 @@
 | `POST` | `/api/workflows/:id/toggle` | `write` | Toggle workflow enabled/disabled |
 | `POST` | `/api/workflows/:id/test` | `write` | Create a dry-run test execution |
 | `POST` | `/api/workflows/bulk` | `write` | Bulk enable/disable/delete workflows |
+
+
+## Scheduled interval validation
+
+Scheduled workflows accept the existing presets of 15, 30, 60, 360, 720 and
+1440 minutes. Omitting the configuration or its interval retains the documented
+60-minute default. Explicit null, malformed configuration, strings, fractions and
+other numeric values are rejected before create or update writes. Enabling an
+invalid saved schedule is also rejected, including a failed item in a bulk enable.
+Disabling or deleting an invalid schedule remains available.
