@@ -9,10 +9,31 @@ interface ExecuteValidatedOutboundWebhookInput {
   timeoutMs?: number;
 }
 
+// Delivery still uses the full configured URL. Diagnostics keep only its public
+// origin: paths can themselves contain bearer tokens, including signed hook IDs.
+export function safeWebhookDestination(value: unknown): string {
+  try {
+    if (typeof value !== 'string') return '[redacted]';
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.origin.length <= 300 ? url.origin : '[redacted]';
+  } catch { return '[redacted]'; }
+}
+
+export function safeWebhookDeliveryError(error: unknown): string {
+  return error instanceof Error && error.name === 'AbortError'
+    ? 'Webhook delivery timed out'
+    : 'Webhook delivery failed';
+}
+
 export async function executeValidatedOutboundWebhook(
   input: ExecuteValidatedOutboundWebhookInput
 ): Promise<Response> {
-  const validation = await validateResolvedWebhookUrlForOutbound(input.url);
+  let validation: Awaited<ReturnType<typeof validateResolvedWebhookUrlForOutbound>>;
+  try {
+    validation = await validateResolvedWebhookUrlForOutbound(input.url);
+  } catch (error) {
+    throw new Error(safeWebhookDeliveryError(error));
+  }
   if (!validation.ok) {
     throw new Error(validation.error);
   }
@@ -32,6 +53,9 @@ export async function executeValidatedOutboundWebhook(
       signal: controller.signal,
       redirect: 'error',
     });
+  } catch (error) {
+    // Fetch/DNS/redirect errors can echo the full URL or credentials in a cause.
+    throw new Error(safeWebhookDeliveryError(error));
   } finally {
     clearTimeout(timeout);
   }

@@ -1,4 +1,5 @@
 import { tracedFetch } from './_lib/operational-trace.js';
+import { safeWebhookDestination, safeWebhookDeliveryError } from './_lib/outbound-webhook.js';
 import type { Context } from '@netlify/functions';
 import { queryOne, execute } from './_lib/db.js';
 import {
@@ -382,43 +383,49 @@ async function executeAction(
       const webhookUrl = action_config.url as string;
       if (!webhookUrl) return { success: false, error: 'No webhook URL specified' };
 
-      const validatedWebhookUrl = await validateResolvedWebhookUrlForOutbound(webhookUrl);
-      if (!validatedWebhookUrl.ok) {
-        return { success: false, error: validatedWebhookUrl.error };
+      try {
+        const validatedWebhookUrl = await validateResolvedWebhookUrlForOutbound(webhookUrl);
+        if (!validatedWebhookUrl.ok) {
+          return { success: false, error: validatedWebhookUrl.error };
+        }
+
+        const webhookBody = {
+          workflow_id: workflow.id,
+          workflow_name: workflow.name,
+          device_id: device.id,
+          device_serial: device.serial_number,
+          device_manufacturer: device.manufacturer,
+          device_model: device.model,
+          device_state: device.state,
+          triggered_at: new Date().toISOString(),
+          ...(action_config.extra_data as Record<string, unknown> ?? {}),
+        };
+
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+        };
+        if (action_config.secret) {
+          headers['X-Webhook-Secret'] = action_config.secret as string;
+        }
+
+        const webhookResponse = await tracedFetch('webhook', 'workflow_send', validatedWebhookUrl.url.toString(), {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(webhookBody),
+          redirect: 'error',
+        });
+
+        return {
+          success: webhookResponse.ok,
+          ...(!webhookResponse.ok ? { error: `Webhook returned HTTP ${webhookResponse.status}` } : {}),
+          webhook_url: safeWebhookDestination(webhookUrl),
+          status: webhookResponse.status,
+        };
+      } catch (error) {
+        // Sanitise before the shared execution/audit/log error handler. No cause
+        // or provider text may carry a signed destination into diagnostics.
+        throw new Error(safeWebhookDeliveryError(error));
       }
-
-      const webhookBody = {
-        workflow_id: workflow.id,
-        workflow_name: workflow.name,
-        device_id: device.id,
-        device_serial: device.serial_number,
-        device_manufacturer: device.manufacturer,
-        device_model: device.model,
-        device_state: device.state,
-        triggered_at: new Date().toISOString(),
-        ...(action_config.extra_data as Record<string, unknown> ?? {}),
-      };
-
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      };
-      if (action_config.secret) {
-        headers['X-Webhook-Secret'] = action_config.secret as string;
-      }
-
-      const webhookResponse = await tracedFetch('webhook', 'workflow_send', validatedWebhookUrl.url.toString(), {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(webhookBody),
-        redirect: 'error',
-      });
-
-      return {
-        success: webhookResponse.ok,
-        ...(!webhookResponse.ok ? { error: `Webhook returned HTTP ${webhookResponse.status}` } : {}),
-        webhook_url: webhookUrl,
-        status: webhookResponse.status,
-      };
     }
 
     case 'audit.log': {

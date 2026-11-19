@@ -37,3 +37,8 @@ FLASH_DELETION_TEST_URL="$deletion_fixture_url" \
 docker exec "$fixture_container" createdb -U postgres flash_workflow_fixture
 WORKFLOW_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/flash_workflow_fixture" \
   npx vitest run netlify/functions/__tests__/workflow-schedule.postgres.test.ts
+
+# Outbound diagnostics use only synthetic URLs and transport responses.
+docker exec "$fixture_container" createdb -U postgres flash_webhook_fixture
+WEBHOOK_PRIVACY_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/flash_webhook_fixture" \
+  npx vitest run netlify/functions/__tests__/webhook-privacy.postgres.test.ts
