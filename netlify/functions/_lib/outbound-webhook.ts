@@ -9,14 +9,10 @@ interface ExecuteValidatedOutboundWebhookInput {
   timeoutMs?: number;
 }
 
-// Delivery still uses the full configured URL. Diagnostics keep only its public
-// origin: paths can themselves contain bearer tokens, including signed hook IDs.
-export function safeWebhookDestination(value: unknown): string {
-  try {
-    if (typeof value !== 'string') return '[redacted]';
-    const url = new URL(value);
-    return url.protocol === 'https:' && url.origin.length <= 300 ? url.origin : '[redacted]';
-  } catch { return '[redacted]'; }
+// Even a hostname can be a capability. Without a trusted display-only alias,
+// workflow identity and HTTP status are the safe diagnostic context.
+export function safeWebhookDestination(): string {
+  return '[redacted]';
 }
 
 export function safeWebhookDeliveryError(error: unknown): string {

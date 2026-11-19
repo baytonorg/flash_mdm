@@ -418,7 +418,7 @@ async function executeAction(
         return {
           success: webhookResponse.ok,
           ...(!webhookResponse.ok ? { error: `Webhook returned HTTP ${webhookResponse.status}` } : {}),
-          webhook_url: safeWebhookDestination(webhookUrl),
+          webhook_url: safeWebhookDestination(),
           status: webhookResponse.status,
         };
       } catch (error) {

@@ -14,7 +14,7 @@ import workerHandler from '../sync-process-background';
 
 const url = process.env.WEBHOOK_PRIVACY_TEST_DATABASE_URL;
 const suite = url ? describe : describe.skip;
-const markers = ['SYNTHETIC_PATH_BEARER', 'SYNTHETIC_QUERY_BEARER', 'SYNTHETIC_FRAGMENT_BEARER'];
+const markers = ['SYNTHETIC_PATH_BEARER', 'SYNTHETIC_QUERY_BEARER', 'SYNTHETIC_FRAGMENT_BEARER', 'synthetic-host-bearer'];
 const destination = `https://hooks.example.test/${markers[0]}?signature=${markers[1]}#${markers[2]}`;
 
 suite('webhook output privacy with real PostgreSQL and transport boundary', () => {
@@ -43,7 +43,11 @@ suite('webhook output privacy with real PostgreSQL and transport boundary', () =
   afterAll(async () => {
     try {
       await closeOperationalTrace();
-      const trace = (await Promise.all((await readdir(directory)).filter(x => x.endsWith('.ndjson')).map(x => readFile(join(directory,x),'utf8')))).join('');
+      const traceFiles = (await readdir(directory)).filter(x => x.endsWith('.ndjson'));
+      expect(traceFiles.length).toBeGreaterThan(0);
+      const trace = (await Promise.all(traceFiles.map(x => readFile(join(directory,x),'utf8')))).join('');
+      const providers = trace.trim().split('\n').map(x => JSON.parse(x)).filter(x => x.event === 'provider.webhook');
+      expect(providers).toEqual(expect.arrayContaining([expect.objectContaining({ data: expect.objectContaining({ operation: 'workflow_send', outcome: 'success' }) }), expect.objectContaining({ data: expect.objectContaining({ operation: 'workflow_send', outcome: 'transport_failure' }) }), expect.objectContaining({ data: expect.objectContaining({ operation: 'send', outcome: 'transport_failure' }) })]));
       for (const marker of [...markers, 'SYNTHETIC_HEADER_BEARER']) expect(trace).not.toContain(marker);
     } finally {
       delete process.env.FLASH_TRACE_DIR;
@@ -63,15 +67,31 @@ suite('webhook output privacy with real PostgreSQL and transport boundary', () =
     expect(transport).toHaveBeenCalledOnce();
     expect(transport.mock.calls[0]?.[0]).toBe(destination);
     expect(transport.mock.calls[0]?.[1]).toMatchObject({ method: 'POST', redirect: 'error', headers: { 'Content-Type': 'application/json', 'X-Webhook-Secret': 'SYNTHETIC_HEADER_BEARER' } });
+    expect(JSON.parse(String(transport.mock.calls[0]?.[1]?.body))).toMatchObject({ device_id: device, workflow_id: workflow });
     const execution = (await pool.query('SELECT status,result FROM workflow_executions')).rows[0];
     expect(execution.status).toBe(outcome === 200 ? 'success' : 'failed');
     const audit = (await pool.query('SELECT details FROM audit_log')).rows;
     expect(audit).toHaveLength(1);
     const output = JSON.stringify({ execution, audit, captured });
     for (const marker of [...markers, 'SYNTHETIC_HEADER_BEARER']) expect(output).not.toContain(marker);
-    if (typeof outcome === 'number') expect(execution.result.webhook_url).toBe('https://hooks.example.test');
+    if (typeof outcome === 'number') expect(execution.result.webhook_url).toBe('[redacted]');
     else expect(execution.result.error).toBe(outcome === 'abort' ? 'Webhook delivery timed out' : 'Webhook delivery failed');
     expect((await pool.query('SELECT action_config FROM workflows')).rows[0].action_config.url).toBe(destination);
+  });
+
+  it('does not retain a capability that consists only of the destination hostname', async () => {
+    const hostCapability = 'https://synthetic-host-bearer.hooks.example.test/';
+    await pool.query('UPDATE workflows SET action_config=$1 WHERE id=$2', [JSON.stringify({ url: hostCapability }), workflow]);
+    const transport = vi.fn().mockResolvedValue(new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', transport);
+    await workflowHandler(request(), {} as never);
+    expect(transport.mock.calls[0]?.[0]).toBe(hostCapability);
+    const execution = (await pool.query('SELECT status,result FROM workflow_executions')).rows[0];
+    expect(execution).toMatchObject({ status: 'success', result: { webhook_url: '[redacted]' } });
+    const audit = (await pool.query('SELECT details FROM audit_log')).rows;
+    expect(audit).toHaveLength(1);
+    expect(JSON.stringify({ execution, audit, captured })).not.toContain('synthetic-host-bearer');
+    expect((await pool.query('SELECT action_config FROM workflows')).rows[0].action_config.url).toBe(hostCapability);
   });
 
   it('rejects a blocked configured destination without echoing it or sending', async () => {
@@ -94,6 +114,6 @@ suite('webhook output privacy with real PostgreSQL and transport boundary', () =
     expect(row).toMatchObject({ status: 'pending', attempts: 1, error: 'Error: Webhook delivery failed' });
     expect(String(transport.mock.calls[0]?.[0])).toBe(destination);
     expect(row.payload.url).toBe(destination);
-    for (const marker of markers) expect(JSON.stringify({ error: row.error, captured })).not.toContain(marker);
+    for (const marker of [...markers, 'SYNTHETIC_HEADER_BEARER']) expect(JSON.stringify({ error: row.error, captured })).not.toContain(marker);
   });
 });
