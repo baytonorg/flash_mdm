@@ -10,6 +10,19 @@ Direct environment roles precede workspace inheritance. The nearest direct group
 
 Single and bulk mutations use the shared membership lifecycle service. Workspace locks are acquired in stable ID order, then targets and permissions are re-read using the same transaction client. The eligible bulk batch is atomic, including ownership, assignments, session context and audit writes. Ineligible selections retain explicit per-target failures. A deferred database constraint also guards workspace ownership for registration and other seat writers.
 
+Migration 062 guards direct SQL changes to a membership's workspace. Current application handlers edit the role, scope or assignments within a workspace. A direct move locks both parents in UUID order and checks each surviving workspace at transaction commit. Transactions may establish the replacement owner or delete the source workspace before committing. Fixed-snapshot transactions also verify a surviving owner row and may need to retry if it changed or is locked. Multi-workspace maintenance should lock its complete set of workspaces in UUID order before changing seats.
+
+The migration replaces two trigger functions without rewriting existing memberships. Leave these functions installed on application rollback. A read-only preflight can count existing ownerless workspaces; the migration enforces future membership writes and does not assign owners to existing data.
+
+```sql
+SELECT count(*) AS workspaces_without_workspace_owner
+FROM workspaces w
+WHERE NOT EXISTS (
+  SELECT 1 FROM workspace_memberships m
+  WHERE m.workspace_id = w.id AND m.role = 'owner' AND m.access_scope = 'workspace'
+);
+```
+
 Changing the workspace role preserves independent child roles. A combined role/scope save is one operation. An explicit scoped role or bulk role override applies to selected grants. Environment managers cannot change a parent workspace grant or cancel an invitation spanning scopes outside their authority. Pending offers that could restore removed access require an explicit cancellation choice; deliberate later re-invitation remains possible.
 
 Session-only actions support leaving a workspace and transferring ownership to an existing member. Transfer includes acknowledgement that the successor agreed to workspace-wide ownership and the actor's resulting role or removal. Both changes commit together. There is no automatic choice of successor or promotion through an old invitation.

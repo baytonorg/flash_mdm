@@ -264,6 +264,168 @@ suite('membership lifecycle with PostgreSQL and actual handlers', () => {
     expect((await pool.query("SELECT 1 FROM workspace_memberships WHERE role='owner' AND access_scope='workspace'")).rowCount).toBe(1);
   });
 
+  describe('moving a membership between workspaces', () => {
+    const destination = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const destinationOwner = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    const destinationMember = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    const moveSeat = 'UPDATE workspace_memberships SET workspace_id=$3 WHERE workspace_id=$1 AND user_id=$2 RETURNING id';
+    const ownerViolation = { code: '23514', constraint: 'workspace_surviving_owner' };
+
+    beforeEach(async () => {
+      await pool.query("INSERT INTO workspaces(id,name) VALUES($1,'Destination')", [destination]);
+      await pool.query("INSERT INTO users(id,email) VALUES($1,'destination-owner@fixture.invalid'), ($2,'destination-member@fixture.invalid')",
+        [destinationOwner, destinationMember]);
+      await pool.query(`INSERT INTO workspace_memberships(workspace_id,user_id,role,access_scope)
+        VALUES($1,$2,'owner','workspace'),($1,$3,'member','workspace')`, [destination, destinationOwner, destinationMember]);
+    });
+
+    async function ownerCount(id: string) {
+      const result = await pool.query(`SELECT count(*)::int AS n FROM workspace_memberships
+        WHERE workspace_id=$1 AND role='owner' AND access_scope='workspace'`, [id]);
+      return result.rows[0].n;
+    }
+
+    async function waitForWorkspaceLocks(pids: number[]) {
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        const blocked = await pool.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE pid=ANY($1::int[]) AND wait_event_type='Lock'", [pids]);
+        if (blocked.rows[0].n === pids.length) return;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      throw new Error('Expected all fixture seat writers to be blocked');
+    }
+
+    it('retains the source seat if moving its only workspace-wide owner', async () => {
+      await pool.query("UPDATE workspace_memberships SET role='owner' WHERE user_id=$1", [target]); // scoped owner
+      await expect(pool.query(moveSeat, [workspace, owner, destination])).rejects.toMatchObject(ownerViolation);
+      expect(await ownerCount(workspace)).toBe(1);
+      expect(await ownerCount(destination)).toBe(1);
+    });
+
+    it.each([
+      { name: 'non-owner', user: other, destinationOwners: 1 },
+      { name: 'one of two workspace-wide owners', user: owner, destinationOwners: 2 },
+    ])('moves a $name when both workspaces retain an owner', async ({ user, destinationOwners }) => {
+      if (user === owner) await pool.query("UPDATE workspace_memberships SET role='owner' WHERE user_id=$1", [other]);
+      expect((await pool.query(moveSeat, [workspace, user, destination])).rowCount).toBe(1);
+      expect(await ownerCount(workspace)).toBe(1);
+      expect(await ownerCount(destination)).toBe(destinationOwners);
+    });
+
+    it('validates the destination even when the source keeps its owner', async () => {
+      const empty = crypto.randomUUID();
+      await pool.query("INSERT INTO workspaces(id,name) VALUES($1,'Empty fixture')", [empty]);
+      await expect(pool.query(moveSeat, [workspace, other, empty])).rejects.toMatchObject(ownerViolation);
+      expect((await pool.query('SELECT id FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2', [workspace, other])).rowCount).toBe(1);
+    });
+
+    it('allows a transaction to establish a replacement owner after moving the old owner', async () => {
+      await transaction(async client => {
+        await client.query(moveSeat, [workspace, owner, destination]);
+        await client.query("UPDATE workspace_memberships SET role='owner' WHERE workspace_id=$1 AND user_id=$2", [workspace, other]);
+      });
+      expect(await ownerCount(workspace)).toBe(1);
+      expect(await ownerCount(destination)).toBe(2);
+    });
+
+    it('allows a moved owner when the source is deleted in the same transaction', async () => {
+      await transaction(async client => {
+        await client.query(moveSeat, [destination, destinationOwner, workspace]);
+        await client.query('DELETE FROM workspaces WHERE id=$1', [destination]);
+      });
+      expect(await ownerCount(workspace)).toBe(2);
+      expect((await pool.query('SELECT id FROM workspaces WHERE id=$1', [destination])).rowCount).toBe(0);
+    });
+
+    it('still protects the surviving source when the destination is subsequently deleted', async () => {
+      await expect(transaction(async client => {
+        await client.query(moveSeat, [workspace, owner, destination]);
+        await client.query('DELETE FROM workspaces WHERE id=$1', [destination]);
+      })).rejects.toMatchObject(ownerViolation);
+      expect(await ownerCount(workspace)).toBe(1);
+      expect(await ownerCount(destination)).toBe(1);
+    });
+
+    it('serialises opposing moves in UUID order while allowing existing foreign-key references', async () => {
+      const blocker = await pool.connect();
+      const left = await pool.connect();
+      const right = await pool.connect();
+      const movers = [left, right];
+      let pending: Promise<PromiseSettledResult<void>[]> | undefined;
+      try {
+        await blocker.query('BEGIN');
+        await blocker.query('SELECT id FROM workspaces WHERE id=$1 FOR NO KEY UPDATE', [workspace]);
+        const pids: number[] = [];
+        for (const [index, client] of movers.entries()) {
+          await client.query('BEGIN');
+          await client.query("SET LOCAL lock_timeout='5s'");
+          pids.push((await client.query('SELECT pg_backend_pid() AS pid')).rows[0].pid);
+          await client.query("INSERT INTO environments(workspace_id,name) VALUES($1,'Fixture FK reference')",
+            [index === 0 ? workspace : destination]);
+        }
+        pending = Promise.allSettled(movers.map(async (client, index) => {
+          const parameters = index === 0 ? [workspace, other, destination] : [destination, destinationMember, workspace];
+          try {
+            expect((await client.query(moveSeat, parameters)).rowCount).toBe(1);
+            await client.query('COMMIT');
+          } catch (err) {
+            await client.query('ROLLBACK');
+            throw err;
+          }
+        }));
+        await waitForWorkspaceLocks(pids);
+        // Both movers wait on the lower UUID. Neither may already hold the higher workspace's writer lock.
+        await blocker.query('SELECT id FROM workspaces WHERE id=$1 FOR NO KEY UPDATE NOWAIT', [destination]);
+        await blocker.query('COMMIT');
+        expect(await pending).toEqual([{ status: 'fulfilled', value: undefined }, { status: 'fulfilled', value: undefined }]);
+        expect(await ownerCount(workspace)).toBe(1);
+        expect(await ownerCount(destination)).toBe(1);
+      } finally {
+        await blocker.query('ROLLBACK');
+        if (pending) await pending;
+        for (const client of movers) { await client.query('ROLLBACK'); client.release(); }
+        blocker.release();
+      }
+    }, 15000);
+
+    it('rejects a second owner move after the first owner move commits', async () => {
+      await pool.query("UPDATE workspace_memberships SET role='owner' WHERE user_id=$1", [other]);
+      const first = await pool.connect();
+      const second = await pool.connect();
+      let attempted: Promise<unknown> | undefined;
+      try {
+        await first.query('BEGIN');
+        await first.query(moveSeat, [workspace, owner, destination]);
+        const pid = (await second.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+        attempted = expect(second.query(moveSeat, [workspace, other, destination])).rejects.toMatchObject(ownerViolation);
+        await waitForWorkspaceLocks([pid]);
+        await first.query('COMMIT');
+        await attempted;
+        expect(await ownerCount(workspace)).toBe(1);
+        expect(await ownerCount(destination)).toBe(2);
+      } finally {
+        await first.query('ROLLBACK');
+        try { await attempted; } finally { first.release(); second.release(); }
+      }
+    });
+
+    it.each(['REPEATABLE READ', 'SERIALIZABLE'])('rejects stale owner evidence at %s isolation', async isolation => {
+      await pool.query("UPDATE workspace_memberships SET role='owner' WHERE user_id=$1", [other]);
+      const fixed = await pool.connect();
+      try {
+        await fixed.query('BEGIN ISOLATION LEVEL ' + isolation);
+        await fixed.query('SELECT id FROM workspace_memberships WHERE workspace_id=$1', [workspace]);
+        await pool.query("UPDATE workspace_memberships SET role='member' WHERE workspace_id=$1 AND user_id=$2", [workspace, owner]);
+        await expect((async () => {
+          await fixed.query(moveSeat, [workspace, other, destination]);
+          await fixed.query('COMMIT');
+        })()).rejects.toMatchObject({ code: '40001' });
+      } finally { await fixed.query('ROLLBACK'); fixed.release(); }
+      expect(await ownerCount(workspace)).toBe(1);
+      expect(await ownerCount(destination)).toBe(1);
+    });
+  });
+
   it('protects every SQL seat writer with the deferred ownership constraint', async () => {
     await expect(pool.query("UPDATE workspace_memberships SET role='viewer' WHERE user_id=$1",[owner])).rejects.toMatchObject({constraint:'workspace_surviving_owner'});
     // Deleting the resource itself has no transfer requirement.
