@@ -42,3 +42,8 @@ WORKFLOW_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/flas
 docker exec "$fixture_container" createdb -U postgres flash_webhook_fixture
 WEBHOOK_PRIVACY_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/flash_webhook_fixture" \
   npx vitest run netlify/functions/__tests__/webhook-privacy.postgres.test.ts
+
+# Primary workflow audit effects use a dedicated synthetic database.
+docker exec "$fixture_container" createdb -U postgres flash_workflow_audit_fixture
+WORKFLOW_AUDIT_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/flash_workflow_audit_fixture" \
+  npx vitest run netlify/functions/__tests__/workflow-audit.postgres.test.ts

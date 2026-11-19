@@ -1,3 +1,4 @@
+import { auditActionLabel } from '@/lib/audit-label';
 import { Clock, FileText } from 'lucide-react';
 
 interface AuditEntry {
@@ -36,6 +37,7 @@ function formatDate(dateStr: string): string {
 }
 
 function formatAction(action: string): string {
+  if (action === 'workflow.custom_audit') return auditActionLabel(action);
   return action
     .replace(/_/g, ' ')
     .toLowerCase()

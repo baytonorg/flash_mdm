@@ -840,7 +840,8 @@ suite('membership lifecycle with PostgreSQL and actual handlers', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       await expect(logAudit({ action: 'fixture.invalid_uuid', resource_id: 'invalid-local-id' })).resolves.toBeUndefined();
-      expect(consoleError).toHaveBeenCalledWith('Failed to write audit log:', expect.objectContaining({ code: '22P02' }));
+      expect(consoleError).toHaveBeenCalledWith('Failed to write audit log:', expect.objectContaining({ error_class: 'Error', error_code: '22P02' }));
+      expect(JSON.stringify(consoleError.mock.calls)).not.toContain('invalid-local-id');
       expect(await readAudit('fixture.invalid_uuid')).toEqual([]);
     } finally {
       consoleError.mockRestore();

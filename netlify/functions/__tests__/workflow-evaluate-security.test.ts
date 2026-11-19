@@ -10,6 +10,7 @@ vi.mock('../_lib/db.js', () => ({
   query: vi.fn(),
   queryOne: vi.fn(),
   execute: vi.fn(),
+  transaction: vi.fn(),
 }));
 
 vi.mock('../_lib/amapi.js', () => ({
@@ -61,7 +62,7 @@ vi.mock('../_lib/webhook-ssrf.js', async (importOriginal) => {
 // ─── Imports ────────────────────────────────────────────────────────────────
 
 import { requireInternalCaller } from '../_lib/internal-auth.js';
-import { queryOne, execute } from '../_lib/db.js';
+import { queryOne, execute, transaction } from '../_lib/db.js';
 import { amapiCall } from '../_lib/amapi.js';
 import { buildAmapiCommandPayload } from '../_lib/amapi-command.js';
 import { logAudit } from '../_lib/audit.js';
@@ -92,6 +93,7 @@ beforeEach(() => {
   mockValidateResolvedWebhookUrlForOutbound.mockReset();
 
   mockExecute.mockResolvedValue({ rowCount: 1 });
+  vi.mocked(transaction).mockImplementation(async fn => fn({ query: mockExecute } as never));
 });
 
 afterEach(() => {
@@ -256,8 +258,8 @@ describe('workflow-evaluate-background — security', () => {
 
     // Verify the workflow proceeded to completion (execute called for status update and last_triggered_at)
     expect(mockExecute).toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE workflow_executions SET status'),
-      expect.arrayContaining(['success'])
+      expect.stringContaining("UPDATE workflow_executions SET status = 'success'"),
+      expect.arrayContaining([expect.stringContaining('"audit_logged":true')])
     );
     expect(mockExecute).toHaveBeenCalledWith(
       'UPDATE workflows SET last_triggered_at = now() WHERE id = $1',

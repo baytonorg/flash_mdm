@@ -105,7 +105,7 @@ describe('logAudit', () => {
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       'Failed to write audit log:',
-      expect.any(Error),
+      expect.objectContaining({ error_class: 'Error' }),
     );
   });
 
@@ -131,6 +131,8 @@ describe('logAudit', () => {
       null,
       null,
       null,
+      'user',
+      'standard',
       'policy.update',
       null,
       null,
@@ -174,5 +176,29 @@ describe('logAudit', () => {
       password: '[REDACTED]',
       nested: { access_token: '[REDACTED]', keep: 'value' },
     });
+  });
+});
+
+describe('primary audit persistence', () => {
+  it('throws a primary error without changing best-effort secondary behaviour', async () => {
+    const error = new Error('synthetic unavailable');
+    mockExecute.mockRejectedValueOnce(error);
+    await expect(logAudit({ action: 'workflow.custom_audit' }, undefined, { requirePersistence: true })).rejects.toBe(error);
+  });
+  it('rejects a zero-row insert', async () => {
+    mockExecute.mockResolvedValueOnce({ rowCount: 0 });
+    await expect(logAudit({ action: 'workflow.custom_audit' }, undefined, { requirePersistence: true })).rejects.toThrow('not inserted');
+  });
+  it('preserves actor and privilege in the safe missing-key-column fallback', async () => {
+    mockExecute.mockRejectedValueOnce({ code: '42703', message: 'column "api_key_id" of relation "audit_log" does not exist' }).mockResolvedValueOnce({ rowCount: 1 });
+    await expect(logAudit({ action: 'workflow.custom_audit', actor_type: 'system', visibility_scope: 'privileged' }, undefined, { requirePersistence: true })).resolves.toBeUndefined();
+    const [sql, params] = mockExecute.mock.calls[1];
+    expect(sql).toContain('actor_type, visibility_scope');
+    expect(params).toContain('system'); expect(params).toContain('privileged');
+  });
+  it('propagates a failing compatibility write', async () => {
+    const failure = new Error('synthetic fallback failure');
+    mockExecute.mockRejectedValueOnce({ code: '42703', message: 'column "api_key_id" of relation "audit_log" does not exist' }).mockRejectedValueOnce(failure);
+    await expect(logAudit({ action: 'workflow.custom_audit', actor_type: 'system', visibility_scope: 'privileged' }, undefined, { requirePersistence: true })).rejects.toBe(failure);
   });
 });
