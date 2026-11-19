@@ -429,26 +429,35 @@ async function executeAction(
     }
 
     case 'audit.log': {
-      const auditAction = (action_config.action as string) ?? 'workflow.custom_audit';
-      const auditDetails = (action_config.details as Record<string, unknown>) ?? {};
+      const requestedAction = typeof action_config.action === 'string'
+        ? action_config.action.slice(0, 120) : 'workflow.custom_audit';
+      const auditDetails = action_config.details && typeof action_config.details === 'object' && !Array.isArray(action_config.details)
+        ? action_config.details as Record<string, unknown> : {};
 
+      // This audit is the primary action. Secondary engine auditing stays
+      // best-effort, but absence of this record must never mean success.
       await logAudit({
+        workspace_id: envContext.workspace_id,
         environment_id: workflow.environment_id,
         device_id: device.id,
         actor_type: 'system',
         visibility_scope: 'privileged',
-        action: auditAction,
+        action: 'workflow.custom_audit',
         custom_workflow_action: true,
         resource_type: 'workflow',
         resource_id: workflow.id,
         details: {
+          ...auditDetails,
           workflow_name: workflow.name,
           device_serial: device.serial_number,
-          ...auditDetails,
+          custom_workflow_action: true,
+          workflow_id: workflow.id,
+          execution_id: executionId,
+          requested_action: requestedAction,
         },
-      });
+      }, undefined, { requirePersistence: true });
 
-      return { success: true, audit_logged: true, action: auditAction };
+      return { success: true, audit_logged: true, action: 'workflow.custom_audit' };
     }
 
     default:

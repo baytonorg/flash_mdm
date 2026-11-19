@@ -1,3 +1,4 @@
+import { auditActionLabel } from '@/lib/audit-label';
 import { Activity } from 'lucide-react';
 
 interface RecentEvent {
@@ -28,6 +29,7 @@ function relativeTime(dateString: string): string {
 }
 
 function formatAction(action: string): string {
+  if (action === 'workflow.custom_audit') return auditActionLabel(action);
   return action
     .replace(/_/g, ' ')
     .toLowerCase()

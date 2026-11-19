@@ -1,3 +1,4 @@
+import { auditActionLabel } from '@/lib/audit-label';
 import { useState, useEffect } from 'react';
 import { useContextStore } from '@/stores/context';
 import { useAuditLog, type AuditEntry } from '@/api/queries/audit';
@@ -28,6 +29,7 @@ function timeAgo(dateStr: string): string {
 
 const ACTION_TYPES = [
   'All Actions',
+  'workflow.custom_audit',
   'device.enroll',
   'device.delete',
   'device.wipe',
@@ -79,7 +81,7 @@ export default function AuditLog() {
       label: 'Action',
       render: (_val, row) => (
         <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-700 font-mono">
-          {row.action}
+          {auditActionLabel(row.action)}
         </span>
       ),
     },
@@ -158,7 +160,7 @@ export default function AuditLog() {
             <option value="">All Actions</option>
             {ACTION_TYPES.filter((a) => a !== 'All Actions').map((action) => (
               <option key={action} value={action}>
-                {action}
+                {auditActionLabel(action)}
               </option>
             ))}
           </select>
