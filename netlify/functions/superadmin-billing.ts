@@ -1,8 +1,10 @@
 import type { Context } from '@netlify/functions';
-import { execute, query, queryOne, transaction } from './_lib/db.js';
+import type { PoolClient } from 'pg';
+import { query, transaction } from './_lib/db.js';
 import { requireSuperadmin } from './_lib/auth.js';
 import { jsonResponse, errorResponse, getSearchParams, parseJsonBody, isValidUuid, getClientIp } from './_lib/helpers.js';
 import { logAudit } from './_lib/audit.js';
+import { invoiceGrantSeats, VALID_INVOICE_SEAT_METADATA_SQL } from './_lib/invoice-seats.js';
 import { getWorkspaceAvailableGiftSeats, getWorkspaceLicensingSettings, isPlatformLicensingEnabled } from './_lib/licensing.js';
 
 interface ManualGrantBody {
@@ -41,91 +43,80 @@ function getRoute(pathname: string): {
   return { resource: 'unknown' };
 }
 
-async function applyGiftOffsetsToPendingInvoices(workspaceId: string): Promise<{ applied_seats: number; updated_invoices: number }> {
-  let availableSeats = await getWorkspaceAvailableGiftSeats(workspaceId);
-  if (availableSeats <= 0) return { applied_seats: 0, updated_invoices: 0 };
+type PendingInvoice = { id: string; subtotal_cents: number };
+type SeatItem = Parameters<typeof invoiceGrantSeats>[0] & { id: string };
 
-  const invoiceItems = await query<{
-    id: string;
-    invoice_id: string;
-    quantity: number;
-    metadata: Record<string, unknown> | null;
-  }>(
-    `SELECT bii.id, bii.invoice_id, bii.quantity, bii.metadata
-     FROM billing_invoice_items bii
-     JOIN billing_invoices bi ON bi.id = bii.invoice_id
-     WHERE bi.workspace_id = $1
-       AND bi.status = 'pending'
-     ORDER BY bi.created_at ASC, bii.created_at ASC, bii.id ASC`,
-    [workspaceId]
-  );
+async function applyGiftOffsetsToPendingInvoices(
+  client: PoolClient,
+  workspaceId: string,
+  invoices: PendingInvoice[],
+): Promise<{ applied_seats: number; updated_invoices: number }> {
+  let available = await getWorkspaceAvailableGiftSeats(workspaceId, client);
+  let applied = 0;
+  let updatedInvoices = 0;
+  for (const invoice of invoices) {
+    if (available <= 0) break;
+    const items = (await client.query<SeatItem>(
+      `SELECT id, quantity, metadata, unit_amount_cents,
+              (${VALID_INVOICE_SEAT_METADATA_SQL}) AS valid_seat_metadata
+       FROM billing_invoice_items WHERE invoice_id = $1 ORDER BY created_at, id FOR UPDATE`,
+      [invoice.id],
+    )).rows;
+    let seats;
+    try {
+      seats = items.map(invoiceGrantSeats);
+      if (!seats.length || seats.reduce((sum, item) => sum + item.subtotal_cents, 0) !== invoice.subtotal_cents) {
+        throw Error('Invoice subtotal needs operator review');
+      }
+    } catch {
+      throw errorResponse('Invoice billing metadata needs operator review before applying gifts', 409);
+    }
+    if (!seats.some(item => item.billable_seats > 0)) continue;
 
-  let appliedSeats = 0;
-  const touchedInvoiceIds = new Set<string>();
-
-  for (const item of invoiceItems) {
-    if (availableSeats <= 0) break;
-    const metadata = item.metadata ?? {};
-    const existingOffsetRaw = metadata.gift_offset_seats;
-    const existingOffset = Number.isFinite(Number(existingOffsetRaw))
-      ? Math.max(0, Math.trunc(Number(existingOffsetRaw)))
-      : 0;
-    const remainingBillableSeats = Math.max(0, item.quantity - existingOffset);
-    if (remainingBillableSeats <= 0) continue;
-
-    const offsetSeats = Math.min(availableSeats, remainingBillableSeats);
-    const updatedMetadata = {
-      ...metadata,
-      gift_offset_seats: existingOffset + offsetSeats,
-      gift_offset_applied_at: new Date().toISOString(),
-    };
-
-    await execute(
-      `UPDATE billing_invoice_items
-       SET metadata = $1::jsonb
-       WHERE id = $2`,
-      [JSON.stringify(updatedMetadata), item.id]
-    );
-
-    availableSeats -= offsetSeats;
-    appliedSeats += offsetSeats;
-    touchedInvoiceIds.add(item.invoice_id);
-  }
-
-  for (const invoiceId of touchedInvoiceIds) {
-    await execute(
-      `UPDATE billing_invoices bi
-       SET subtotal_cents = totals.subtotal_cents,
-           status = CASE
-             WHEN totals.subtotal_cents = 0 THEN 'paid'
-             ELSE bi.status
-           END,
-           paid_at = CASE
-             WHEN totals.subtotal_cents = 0 THEN COALESCE(bi.paid_at, now())
-             ELSE bi.paid_at
-           END,
+    let requestedTotal = 0;
+    let offsetTotal = 0;
+    for (const [index, item] of items.entries()) {
+      const previous = seats[index];
+      const extra = Math.min(available, previous.billable_seats);
+      const offset = previous.gift_offset_seats + extra;
+      const billable = previous.billable_seats - extra;
+      available -= extra;
+      applied += extra;
+      requestedTotal += previous.requested_seats;
+      offsetTotal += offset;
+      // A touched legacy invoice may also contain unallocated gross siblings.
+      // Normalise every item before summing net quantities for the invoice.
+      const metadata = {
+        ...item.metadata,
+        seat_item_format: 'requested-net-v1',
+        seat_count: previous.requested_seats,
+        gift_offset_seats: offset,
+        billable_seat_count: billable,
+        billing_intervals: previous.billing_intervals,
+        duration_months: previous.duration_months,
+        ...(extra > 0 ? { gift_offset_applied_at: new Date().toISOString() } : {}),
+      };
+      await client.query(
+        'UPDATE billing_invoice_items SET quantity = $1, metadata = $2::jsonb WHERE id = $3',
+        [billable * previous.billing_intervals, JSON.stringify(metadata), item.id],
+      );
+    }
+    const fullyGifted = requestedTotal === offsetTotal;
+    await client.query(
+      `UPDATE billing_invoices
+       SET subtotal_cents = (SELECT SUM(quantity::bigint * unit_amount_cents)
+                             FROM billing_invoice_items WHERE invoice_id = $1),
+           metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+           status = CASE WHEN $3 THEN 'paid' ELSE status END,
+           paid_at = CASE WHEN $3 THEN now() ELSE paid_at END,
            updated_at = now()
-       FROM (
-         SELECT bii.invoice_id,
-                COALESCE(SUM(
-                  GREATEST(
-                    bii.quantity - COALESCE((bii.metadata ->> 'gift_offset_seats')::integer, 0),
-                    0
-                  ) * bii.unit_amount_cents
-                ), 0) AS subtotal_cents
-         FROM billing_invoice_items bii
-         WHERE bii.invoice_id = $1
-         GROUP BY bii.invoice_id
-       ) totals
-       WHERE bi.id = totals.invoice_id`,
-      [invoiceId]
+       WHERE id = $1`,
+      [invoice.id, JSON.stringify({ seat_item_format: 'requested-net-v1', seat_count: requestedTotal,
+        gift_offset_seats: offsetTotal, billable_seat_count: requestedTotal - offsetTotal }), fullyGifted],
     );
+    updatedInvoices++;
   }
-
-  return {
-    applied_seats: appliedSeats,
-    updated_invoices: touchedInvoiceIds.size,
-  };
+  return { applied_seats: applied, updated_invoices: updatedInvoices };
 }
 
 export default async function handler(request: Request, _context: Context) {
@@ -198,8 +189,9 @@ export default async function handler(request: Request, _context: Context) {
           workspace_id: string;
           status: string;
           currency: string;
+          subtotal_cents: number;
         }>(
-          `SELECT id, workspace_id, status, currency
+          `SELECT id, workspace_id, status, currency, subtotal_cents
            FROM billing_invoices
            WHERE id = $1
            FOR UPDATE`,
@@ -211,38 +203,48 @@ export default async function handler(request: Request, _context: Context) {
         if (invoice.status !== 'pending') {
           throw new Response(JSON.stringify({ error: `Cannot mark a ${invoice.status} invoice as paid` }), { status: 409 });
         }
-        const workspaceLicensing = await getWorkspaceLicensingSettings(invoice.workspace_id);
+        const operator = (await client.query<{is_superadmin: boolean}>(
+          'SELECT is_superadmin FROM users WHERE id=$1 FOR SHARE', [auth.user.id],
+        )).rows[0];
+        if (!operator?.is_superadmin) throw errorResponse('Superadmin permission changed', 403);
+        const workspaceLicensing = await getWorkspaceLicensingSettings(invoice.workspace_id, client);
         if (!workspaceLicensing.effective_licensing_enabled) {
           throw new Response(JSON.stringify({ error: 'Licensing is disabled for this workspace' }), { status: 409 });
         }
 
-        await client.query(
-          `UPDATE billing_invoices
-           SET status = 'paid', paid_at = now(), updated_at = now()
-           WHERE id = $1`,
-          [route.invoiceId]
-        );
-
         const items = await client.query<{
+          id: string;
           quantity: number;
           metadata: Record<string, unknown> | null;
           period_end: string | null;
+          unit_amount_cents: number;
+          valid_seat_metadata: boolean;
         }>(
-          `SELECT quantity, metadata, period_end
+          `SELECT id, quantity, metadata, period_end, unit_amount_cents,
+                  (${VALID_INVOICE_SEAT_METADATA_SQL}) AS valid_seat_metadata
            FROM billing_invoice_items
-           WHERE invoice_id = $1`,
+           WHERE invoice_id = $1 ORDER BY id FOR UPDATE`,
           [route.invoiceId]
         );
 
+        let resolvedItems;
+        try {
+          resolvedItems = items.rows.map(item => ({ ...invoiceGrantSeats(item), item_id: item.id }));
+          const expectedSubtotal = resolvedItems.reduce((sum, item) => sum + item.subtotal_cents, 0);
+          if (!resolvedItems.length || !Number.isSafeInteger(expectedSubtotal) || expectedSubtotal !== invoice.subtotal_cents) throw Error('Invoice subtotal needs operator review');
+        } catch {
+          throw new Response(JSON.stringify({ error: 'Invoice billing metadata needs operator review before marking paid' }), { status: 409 });
+        }
+        await client.query(
+          `UPDATE billing_invoices SET status = 'paid', paid_at = now(), updated_at = now() WHERE id = $1`,
+          [route.invoiceId],
+        );
         let grantsCreated = 0;
-        for (const item of items.rows) {
-          const seatCountRaw = (item.metadata?.seat_count ?? item.quantity) as unknown;
-          const durationMonthsRaw = item.metadata?.duration_months as unknown;
-          const seatCount = Number.isFinite(Number(seatCountRaw)) ? Number(seatCountRaw) : item.quantity;
-          const durationMonths = Number.isFinite(Number(durationMonthsRaw))
-            ? Number(durationMonthsRaw)
-            : 1;
-          if (seatCount <= 0) continue;
+        const multipleGrants = resolvedItems.filter(item => item.billable_seats > 0).length > 1;
+        for (const item of resolvedItems) {
+          const seatCount = item.billable_seats;
+          const durationMonths = item.duration_months;
+          if (seatCount === 0) continue;
 
           await client.query(
             `INSERT INTO license_grants
@@ -253,26 +255,23 @@ export default async function handler(request: Request, _context: Context) {
               invoice.workspace_id,
               Math.trunc(seatCount),
               String(Math.max(1, Math.trunc(durationMonths))),
-              invoice.id,
-              JSON.stringify({ invoice_id: invoice.id }),
+              multipleGrants ? `${invoice.id}:${item.item_id}` : invoice.id,
+              JSON.stringify({ invoice_id: invoice.id, ...item }),
               auth.user.id,
             ]
           );
           grantsCreated += 1;
         }
 
+        await logAudit({
+          workspace_id: invoice.workspace_id, user_id: auth.user.id,
+          action: 'superadmin.billing.invoice.mark_paid', resource_type: 'invoice', resource_id: invoice.id,
+          details: { grants_created: grantsCreated, items: resolvedItems }, ip_address: getClientIp(request),
+        }, client);
         return { invoice, grantsCreated };
       });
 
-      await logAudit({
-        workspace_id: paidResult.invoice.workspace_id,
-        user_id: auth.user.id,
-        action: 'superadmin.billing.invoice.mark_paid',
-        resource_type: 'invoice',
-        resource_id: route.invoiceId,
-        details: { grants_created: paidResult.grantsCreated },
-        ip_address: getClientIp(request),
-      });
+
 
       return jsonResponse({ message: 'Invoice marked as paid', grants_created: paidResult.grantsCreated });
     }
@@ -341,13 +340,6 @@ export default async function handler(request: Request, _context: Context) {
         ? null
         : Math.min(MANUAL_GRANT_MAX_DURATION_MONTHS, body.duration_months);
 
-      const workspace = await queryOne<{ id: string }>('SELECT id FROM workspaces WHERE id = $1', [body.workspace_id]);
-      if (!workspace) return errorResponse('Workspace not found', 404);
-      const workspaceLicensing = await getWorkspaceLicensingSettings(body.workspace_id);
-      if (!workspaceLicensing.effective_licensing_enabled) {
-        return errorResponse('Licensing is disabled for this workspace', 409);
-      }
-
       const startsAt = body.starts_at ? new Date(body.starts_at) : new Date();
       if (Number.isNaN(startsAt.getTime())) return errorResponse('starts_at must be a valid ISO datetime');
       const source = body.grant_type === 'gift' ? 'gift' : 'manual';
@@ -365,44 +357,62 @@ export default async function handler(request: Request, _context: Context) {
       }
 
       const grantId = crypto.randomUUID();
-      await execute(
-        `INSERT INTO license_grants
-           (id, workspace_id, source, seat_count, starts_at, ends_at, status, metadata, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, 'active', $7::jsonb, $8)`,
-        [
-          grantId,
-          body.workspace_id,
-          source,
-          seatCount,
-          startsAt.toISOString(),
-          endsAt,
-          JSON.stringify({ note: body.note ?? null, grant_type: source }),
-          auth.user.id,
-        ]
-      );
+      const giftOffsetResult = await transaction(async client => {
+        const workspace = await client.query('SELECT id FROM workspaces WHERE id = $1 FOR NO KEY UPDATE', [body.workspace_id]);
+        if (!workspace.rowCount) throw errorResponse('Workspace not found', 404);
+        const pending = source === 'gift' ? (await client.query<PendingInvoice>(
+          `SELECT id, subtotal_cents FROM billing_invoices
+           WHERE workspace_id = $1 AND invoice_type = 'workspace_to_superadmin' AND status = 'pending'
+           ORDER BY created_at, id FOR UPDATE`,
+          [body.workspace_id],
+        )).rows : [];
+        // Recheck the actor and settings after waiting for competing invoice writers.
+        const operator = (await client.query<{ is_superadmin: boolean }>(
+          'SELECT is_superadmin FROM users WHERE id = $1 FOR SHARE', [auth.user.id],
+        )).rows[0];
+        if (!operator?.is_superadmin) throw errorResponse('Superadmin permission changed', 403);
+        const licensing = await getWorkspaceLicensingSettings(body.workspace_id, client);
+        if (!licensing.effective_licensing_enabled) throw errorResponse('Licensing is disabled for this workspace', 409);
 
-      let giftOffsetResult: { applied_seats: number; updated_invoices: number } | null = null;
-      if (source === 'gift') {
-        giftOffsetResult = await applyGiftOffsetsToPendingInvoices(body.workspace_id);
-      }
+        await client.query(
+          `INSERT INTO license_grants
+             (id, workspace_id, source, seat_count, starts_at, ends_at, status, metadata, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, 'active', $7::jsonb, $8)`,
+          [
+            grantId,
+            body.workspace_id,
+            source,
+            seatCount,
+            startsAt.toISOString(),
+            endsAt,
+            JSON.stringify({ note: body.note ?? null, grant_type: source }),
+            auth.user.id,
+          ]
+        );
 
-      await logAudit({
-        workspace_id: body.workspace_id,
-        user_id: auth.user.id,
-        action: 'superadmin.billing.grant.manual',
-        resource_type: 'license_grant',
-        resource_id: grantId,
-        details: {
-          source,
-          seat_count: seatCount,
-          duration_months: durationMonths,
-          expires_at: endsAt,
-          gift_offsets_applied: giftOffsetResult,
-          note: body.note ?? null,
-        },
-        ip_address: getClientIp(request),
+        const result = source === 'gift'
+          ? await applyGiftOffsetsToPendingInvoices(client, body.workspace_id, pending)
+          : null;
+
+        await logAudit({
+          workspace_id: body.workspace_id,
+          user_id: auth.user.id,
+          action: 'superadmin.billing.grant.manual',
+          resource_type: 'license_grant',
+          resource_id: grantId,
+          details: {
+            source,
+            seat_count: seatCount,
+            duration_months: durationMonths,
+            expires_at: endsAt,
+            gift_offsets_applied: result,
+            note: body.note ?? null,
+          },
+          ip_address: getClientIp(request),
+        }, client);
+
+        return result;
       });
-
       return jsonResponse({
         message: source === 'gift' ? 'Gift grant created' : 'Manual grant created',
         grant_id: grantId,

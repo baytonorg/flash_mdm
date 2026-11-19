@@ -1,7 +1,7 @@
 import type { Context } from '@netlify/functions';
 import { query, queryOne, transaction } from './_lib/db.js';
 import { requireAuth } from './_lib/auth.js';
-import { requireEnvironmentPermission, requireWorkspaceResourcePermission } from './_lib/rbac.js';
+import { requireEnvironmentPermission, requireWorkspaceResourcePermission, mergePermissionMatrixWithDefaults, workspaceRoleMeetsMinimum } from './_lib/rbac.js';
 import { getSearchParams, jsonResponse, errorResponse, parseJsonBody, isValidUuid, getClientIp } from './_lib/helpers.js';
 import { logAudit } from './_lib/audit.js';
 import { getWorkspaceAvailableGiftSeats, getWorkspaceLicensingSettings } from './_lib/licensing.js';
@@ -197,20 +197,35 @@ export default async function handler(request: Request, _context: Context) {
       const { unitAmountCents, currency } = await resolvePlanBilling(plan);
 
       const invoiceId = crypto.randomUUID();
-      const availableGiftSeats = await getWorkspaceAvailableGiftSeats(body.workspace_id);
-      const giftOffsetSeats = Math.min(body.seat_count, availableGiftSeats);
-      const billableSeats = Math.max(0, body.seat_count - giftOffsetSeats);
-      const planIntervalMonths = normalizePlanIntervalMonths(plan.features?.stripe_interval_months);
-      const billingIntervals = Math.max(1, Math.ceil(body.duration_months / planIntervalMonths));
-      const subtotal = billableSeats * unitAmountCents * billingIntervals;
-      if (!Number.isSafeInteger(subtotal) || subtotal > INT32_MAX) {
-        return errorResponse('invoice subtotal exceeds maximum supported value');
-      }
-      const dueDays = Math.max(1, Math.min(90, body.due_days ?? 30));
-      const dueAt = new Date(Date.now() + dueDays * 86_400_000).toISOString();
-      const invoiceStatus = subtotal === 0 ? 'paid' : 'pending';
+      const created = await transaction(async (client) => {
+        const locked = (await client.query<{permission_matrix: unknown}>(
+          "SELECT settings->'rbac'->'permission_matrix' AS permission_matrix FROM workspaces WHERE id=$1 FOR NO KEY UPDATE", [body.workspace_id],
+        )).rows[0];
+        if (!locked) throw errorResponse('Workspace not found', 404);
+        const actor = (await client.query<{is_superadmin:boolean}>('SELECT is_superadmin FROM users WHERE id=$1 FOR SHARE',[auth.user.id])).rows[0];
+        if (!actor) throw errorResponse('Workspace billing permission changed',403);
+        if (!actor.is_superadmin) {
+          const membership=(await client.query<{role:string;access_scope:string}>('SELECT role,access_scope FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2 FOR SHARE',[body.workspace_id,auth.user.id])).rows[0];
+          const matrix=mergePermissionMatrixWithDefaults(locked.permission_matrix);
+          if(membership?.access_scope!=='workspace'||!workspaceRoleMeetsMinimum(membership.role,matrix.workspace.read)||!workspaceRoleMeetsMinimum(membership.role,matrix.billing.billing_manage)) throw errorResponse('Workspace billing permission changed',403);
+        }
+        const currentPlan=(await client.query<typeof plan>('SELECT id,name,stripe_price_id,features FROM license_plans WHERE id=$1 FOR SHARE',[plan.id])).rows[0];
+        if(!currentPlan||currentPlan.features?.hidden===true||currentPlan.name!==plan.name||currentPlan.stripe_price_id!==plan.stripe_price_id||JSON.stringify(currentPlan.features)!==JSON.stringify(plan.features)) throw errorResponse('Plan changed; retry the invoice request',409);
+        const currentSettings=await getWorkspaceLicensingSettings(body.workspace_id,client);
+        if(!currentSettings.effective_licensing_enabled) throw errorResponse('Licensing is disabled for this workspace',409);
+        const availableGiftSeats = await getWorkspaceAvailableGiftSeats(body.workspace_id, client);
+        const giftOffsetSeats = Math.min(body.seat_count, availableGiftSeats);
+        const billableSeats = Math.max(0, body.seat_count - giftOffsetSeats);
+        const planIntervalMonths = normalizePlanIntervalMonths(plan.features?.stripe_interval_months);
+        const billingIntervals = Math.max(1, Math.ceil(body.duration_months / planIntervalMonths));
+        const subtotal = billableSeats * unitAmountCents * billingIntervals;
+        if (!Number.isSafeInteger(subtotal) || subtotal > INT32_MAX) {
+          throw errorResponse('invoice subtotal exceeds maximum supported value');
+        }
+        const dueDays = Math.max(1, Math.min(90, body.due_days ?? 30));
+        const dueAt = new Date(Date.now() + dueDays * 86_400_000).toISOString();
+        const invoiceStatus = billableSeats === 0 ? 'paid' : 'pending';
 
-      await transaction(async (client) => {
         await client.query(
           `INSERT INTO billing_invoices
              (id, workspace_id, invoice_type, status, subtotal_cents, currency, due_at, paid_at, source, metadata, created_by)
@@ -224,6 +239,7 @@ export default async function handler(request: Request, _context: Context) {
             invoiceStatus === 'paid' ? null : dueAt,
             invoiceStatus === 'paid' ? new Date().toISOString() : null,
             JSON.stringify({
+              seat_item_format: 'requested-net-v1',
               seat_count: body.seat_count,
               billable_seat_count: billableSeats,
               gift_offset_seats: giftOffsetSeats,
@@ -250,6 +266,7 @@ export default async function handler(request: Request, _context: Context) {
             unitAmountCents,
             String(body.duration_months),
             JSON.stringify({
+              seat_item_format: 'requested-net-v1',
               seat_count: body.seat_count,
               billable_seat_count: billableSeats,
               gift_offset_seats: giftOffsetSeats,
@@ -283,14 +300,15 @@ export default async function handler(request: Request, _context: Context) {
           },
           ip_address: getClientIp(request),
         }, client);
+        return { invoiceStatus, giftOffsetSeats, billableSeats };
       });
 
       return jsonResponse({
         message: 'Invoice request submitted',
         invoice_id: invoiceId,
-        status: invoiceStatus,
-        gift_offset_seats: giftOffsetSeats,
-        billable_seat_count: billableSeats,
+        status: created.invoiceStatus,
+        gift_offset_seats: created.giftOffsetSeats,
+        billable_seat_count: created.billableSeats,
       }, 201);
     }
 

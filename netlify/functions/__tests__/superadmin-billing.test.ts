@@ -86,6 +86,11 @@ beforeEach(() => {
 
 describe('superadmin-billing manual grants', () => {
   it('caps manual grant seat count and duration to safe upper bounds', async () => {
+    const client = { query: vi.fn()
+      .mockResolvedValueOnce({ rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ is_superadmin: true }] })
+      .mockResolvedValueOnce({ rowCount: 1 }) };
+    mockTransaction.mockImplementationOnce(callback => callback(client));
     const res = await handler(
       new Request('http://localhost/api/superadmin/billing/grants/manual', {
         method: 'POST',
@@ -100,7 +105,7 @@ describe('superadmin-billing manual grants', () => {
     );
 
     expect(res.status).toBe(201);
-    const insertParams = mockExecute.mock.calls[0][1];
+    const insertParams = client.query.mock.calls[2][1];
     expect(insertParams[2]).toBe('manual');
     expect(insertParams[3]).toBe(1_000_000);
     expect(insertParams[5]).toBeTruthy();
@@ -109,7 +114,7 @@ describe('superadmin-billing manual grants', () => {
         seat_count: 1_000_000,
         duration_months: 120,
       }),
-    }));
+    }), client);
   });
 
   it('returns empty invoices payload when platform licensing is disabled', async () => {

@@ -47,3 +47,12 @@ WEBHOOK_PRIVACY_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_por
 docker exec "$fixture_container" createdb -U postgres flash_workflow_audit_fixture
 WORKFLOW_AUDIT_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/flash_workflow_audit_fixture" \
   npx vitest run netlify/functions/__tests__/workflow-audit.postgres.test.ts
+# Mark-paid grants and gift repricer ordering use synthetic financial records only.
+docker exec "$fixture_container" createdb -U postgres flash_invoice_paid_fixture
+INVOICE_PAID_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/flash_invoice_paid_fixture" \
+  npx vitest run netlify/functions/__tests__/invoice-paid.postgres.test.ts
+
+# Prospective gift repricing uses an independent synthetic invoice database.
+docker exec "$fixture_container" createdb -U postgres flash_invoice_gift_fixture
+INVOICE_GIFT_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/flash_invoice_gift_fixture" \
+  npx vitest run netlify/functions/__tests__/invoice-gift-repricing.postgres.test.ts

@@ -1,4 +1,6 @@
+import type { PoolClient } from 'pg';
 import { execute, query, queryOne } from './db.js';
+import { errorResponse } from './helpers.js';
 import { isMissingRelationError } from './db-errors.js';
 import { getPlatformSettings } from './platform-settings.js';
 
@@ -92,10 +94,24 @@ export function getOveragePhaseForAgeDays(
   return 'warn';
 }
 
-export async function getWorkspaceLicensingSettings(workspaceId: string): Promise<WorkspaceLicensingSettings> {
+export async function getWorkspaceLicensingSettings(workspaceId: string, client?: PoolClient): Promise<WorkspaceLicensingSettings> {
+  const read = client
+    ? async <T>(sql: string, params: unknown[]) => {
+      await client.query('SAVEPOINT licensing_settings_read');
+      try {
+        const result = await client.query(sql, params);
+        await client.query('RELEASE SAVEPOINT licensing_settings_read');
+        return result.rows[0] as T | undefined;
+      } catch (error) {
+        await client.query('ROLLBACK TO SAVEPOINT licensing_settings_read');
+        await client.query('RELEASE SAVEPOINT licensing_settings_read');
+        throw error;
+      }
+    }
+    : queryOne;
   const loadWorkspaceRow = async () => {
     try {
-      return await queryOne<{
+      return await read<{
         licensing_enabled?: boolean;
         inherit_platform_free_tier?: boolean;
         free_enabled?: boolean;
@@ -117,7 +133,7 @@ export async function getWorkspaceLicensingSettings(workspaceId: string): Promis
       if (code === '42P01') return null;
       if (code !== '42703') throw err;
       try {
-        return await queryOne<{
+        return await read<{
           inherit_platform_free_tier?: boolean;
           free_enabled?: boolean;
           free_seat_limit?: number;
@@ -139,7 +155,7 @@ export async function getWorkspaceLicensingSettings(workspaceId: string): Promis
           : undefined;
         if (legacyCode === '42P01') return null;
         if (legacyCode !== '42703') throw legacyErr;
-        return queryOne<{
+        return read<{
           free_enabled?: boolean;
           free_seat_limit?: number;
           billing_method?: WorkspaceLicensingSettings['billing_method'];
@@ -158,7 +174,10 @@ export async function getWorkspaceLicensingSettings(workspaceId: string): Promis
     }
   };
 
-  const [row, platform] = await Promise.all([loadWorkspaceRow(), getPlatformSettings()]);
+  // Savepoint-backed legacy reads must be sequential on one transaction client.
+  const [row, platform] = client
+    ? [await loadWorkspaceRow(), await getPlatformSettings(client)] as const
+    : await Promise.all([loadWorkspaceRow(), getPlatformSettings()]);
 
   const platformLicensingEnabled = platform.licensing_enabled ?? DEFAULT_SETTINGS.platform_licensing_enabled;
   const platformFreeEnabled = platform.default_free_enabled ?? DEFAULT_SETTINGS.platform_default_free_enabled;
@@ -225,31 +244,44 @@ export async function getWorkspacePlatformEntitledSeats(workspaceId: string): Pr
   return paidSeats + (settings.free_enabled ? settings.free_seat_limit : 0);
 }
 
-export async function getWorkspaceAvailableGiftSeats(workspaceId: string): Promise<number> {
-  const [giftRow, consumedRow] = await Promise.all([
-    queryOne<{ seats: string }>(
-      `SELECT COALESCE(SUM(seat_count), 0) as seats
-       FROM license_grants
-       WHERE workspace_id = $1
-         AND source = 'gift'
-         AND status = 'active'
-         AND starts_at <= now()
-         AND (ends_at IS NULL OR ends_at > now())`,
-      [workspaceId]
-    ),
-    queryOne<{ seats: string }>(
-      `SELECT COALESCE(SUM(COALESCE((bii.metadata ->> 'gift_offset_seats')::integer, 0)), 0) as seats
-       FROM billing_invoice_items bii
-       JOIN billing_invoices bi ON bi.id = bii.invoice_id
-       WHERE bi.workspace_id = $1
-         AND bi.status IN ('pending', 'paid')`,
-      [workspaceId]
-    ),
-  ]);
-
-  const totalGiftSeats = parseInt(giftRow?.seats ?? '0', 10);
-  const consumedGiftSeats = parseInt(consumedRow?.seats ?? '0', 10);
-  return Math.max(0, totalGiftSeats - consumedGiftSeats);
+// Exact persisted offsets are validated before numeric casts and JSON decoding.
+// Integral legacy scales are readable; fractional, negative and malformed funds
+// require explicit reconciliation rather than silently changing availability.
+const VALID_GIFT_OFFSET = `(metadata->'gift_offset_seats' IS NULL OR
+  (jsonb_typeof(metadata->'gift_offset_seats') = 'number' AND
+   metadata->>'gift_offset_seats' ~ '^(0|[1-9][0-9]{0,5}|1000000)([.]0+)?$'))`;
+export async function getWorkspaceAvailableGiftSeats(workspaceId: string, client?: PoolClient): Promise<number> {
+  const offset = VALID_GIFT_OFFSET.replace(/\bmetadata\b/g, 'bii.metadata');
+  const consumedSql = `SELECT COALESCE(SUM(CASE WHEN ${offset}
+      THEN COALESCE((bii.metadata->>'gift_offset_seats')::numeric,0) ELSE 0 END),0) AS seats,
+      COUNT(*) FILTER (WHERE NOT COALESCE(${offset},false)) AS invalid_offsets
+    FROM billing_invoice_items bii JOIN billing_invoices bi ON bi.id=bii.invoice_id
+    WHERE bi.workspace_id=$1 AND bi.status IN ('pending','paid')`;
+  let giftSeats: string;
+  let consumed: {seats: string; invalid_offsets?: string};
+  if (client) {
+    const row = (await client.query<{gift_seats: string; seats: string; invalid_offsets: string}>(`
+      SELECT gift.seats AS gift_seats, consumed.* FROM (
+        SELECT COALESCE(SUM(seat_count),0) AS seats FROM license_grants
+        WHERE workspace_id=$1 AND source='gift' AND status='active'
+          AND starts_at<=statement_timestamp() AND (ends_at IS NULL OR ends_at>statement_timestamp())
+      ) gift CROSS JOIN (${consumedSql}) consumed`, [workspaceId])).rows[0];
+    giftSeats = row?.gift_seats ?? '0';
+    consumed = row ?? {seats:'0'};
+  } else {
+    const [giftRow, consumedRow] = await Promise.all([
+      queryOne<{seats: string}>(`SELECT COALESCE(SUM(seat_count),0) AS seats FROM license_grants
+        WHERE workspace_id=$1 AND source='gift' AND status='active'
+          AND starts_at<=now() AND (ends_at IS NULL OR ends_at>now())`, [workspaceId]),
+      queryOne<{seats: string; invalid_offsets?: string}>(consumedSql, [workspaceId]),
+    ]);
+    giftSeats = giftRow?.seats ?? '0';
+    consumed = consumedRow ?? {seats:'0'};
+  }
+  if (Number(consumed.invalid_offsets ?? 0) > 0) {
+    throw errorResponse('Invoice gift metadata needs operator review', 409);
+  }
+  return Math.max(0, Number(giftSeats) - Number(consumed.seats));
 }
 
 export async function getEnvironmentEntitledSeats(environmentId: string): Promise<number> {
