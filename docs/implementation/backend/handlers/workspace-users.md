@@ -65,6 +65,7 @@ Administrative mutations enforce the appropriate `manage_users` permission and p
 |--------|-------|------|-------------|
 | GET | `/.netlify/functions/workspace-users?workspace_id=` | Session / API key | List workspace members with environment/group assignments |
 | POST | `/.netlify/functions/workspace-users/bulk` | Session / API key | Bulk remove or overwrite access for multiple users |
+| GET | `/api/workspaces/users?workspace_id=…&view=controls&environment_id=…` | Session | Return the caller’s invite and Manage Access role ceilings. The environment parameter is optional. Group entries cover eligible visible groups in that environment. |
 | PUT | `/.netlify/functions/workspace-users/role` | Session / API key | Change a single user's workspace role |
 | PUT | `/.netlify/functions/workspace-users/access` | Session / API key | Update a user's access scope and environment/group assignments |
 | DELETE | `/.netlify/functions/workspace-users/:user_id?workspace_id=` | Session / API key | Remove a user from the workspace |

@@ -56,3 +56,7 @@ INVOICE_PAID_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/
 docker exec "$fixture_container" createdb -U postgres flash_invoice_gift_fixture
 INVOICE_GIFT_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/flash_invoice_gift_fixture" \
   npx vitest run netlify/functions/__tests__/invoice-gift-repricing.postgres.test.ts
+
+docker exec "$fixture_container" createdb -U postgres flash_user_controls_fixture
+USER_CONTROLS_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/flash_user_controls_fixture" \
+  npx vitest run netlify/functions/__tests__/user-management-controls.postgres.test.ts

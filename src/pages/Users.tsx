@@ -3,9 +3,8 @@ import TransferOwnershipModal from '@/components/users/TransferOwnershipModal';
 import { useQuery } from '@tanstack/react-query';
 import { useContextStore } from '@/stores/context';
 import { apiClient } from '@/api/client';
-import { useWorkspaceUsers, useInviteUser, useBulkWorkspaceUsersAction, type WorkspaceUser } from '@/api/queries/users';
+import { useWorkspaceUsers, useInviteUser, useBulkWorkspaceUsersAction, useUserManagementControls, type UserManagementControls, type WorkspaceUser } from '@/api/queries/users';
 import { useGroups, type Group } from '@/api/queries/groups';
-import { type WorkspaceRole, useWorkspaceRbacMatrix } from '@/api/queries/rbac';
 import { useAuthStore } from '@/stores/auth';
 import DataTable, { type ColumnDef } from '@/components/common/DataTable';
 import BulkActionBar, { type BulkAction } from '@/components/common/BulkActionBar';
@@ -96,18 +95,14 @@ function roleLevel(role: string | null | undefined): number {
   }
 }
 
-function meetsRole(userRole: string | null | undefined, requiredRole: WorkspaceRole): boolean {
-  return roleLevel(userRole) >= roleLevel(requiredRole);
-}
-
 // ---- Invite Modal ----
 
 interface InviteModalProps {
   open: boolean;
   onClose: () => void;
   workspaceId: string;
-  currentUser: WorkspaceUser | null;
-  isSuperadmin: boolean;
+  controls: UserManagementControls;
+  groups: Group[];
   activeEnvironment: { id: string; name: string } | null;
   activeGroup: { id: string; name: string; environment_id: string } | null;
 }
@@ -118,120 +113,57 @@ function InviteModal({
   open,
   onClose,
   workspaceId,
-  currentUser,
-  isSuperadmin,
+  controls,
+  groups,
   activeEnvironment,
   activeGroup,
 }: InviteModalProps) {
   const [email, setEmail] = useState('');
   const [role, setRole] = useState('member');
-  const [scopeMode, setScopeMode] = useState<InviteScopeMode>('workspace');
-  const [selectedGroupId, setSelectedGroupId] = useState('');
   const overlayRef = useRef<HTMLDivElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
   const inviteUser = useInviteUser();
-  const { data: environmentGroups = [] } = useGroups(activeEnvironment?.id ?? '');
-
-  const currentWorkspaceRole = (currentUser?.role ?? null) as string | null;
-  const currentAccessScope = (currentUser?.access_scope ?? 'workspace') as 'workspace' | 'scoped';
-  const canSendWorkspaceWideInvite = isSuperadmin || (
-    !!currentWorkspaceRole
-    && (currentWorkspaceRole === 'owner' || currentWorkspaceRole === 'admin')
-    && currentAccessScope === 'workspace'
+  const selectableGroupOptions = groups.filter(group => !!controls.group_invites[group.id]).sort((a, b) =>
+    Number(a.depth ?? 0) - Number(b.depth ?? 0) || a.name.localeCompare(b.name));
+  const currentGroup = selectableGroupOptions.find(group => group.id === activeGroup?.id);
+  const [scopeMode, setScopeMode] = useState<InviteScopeMode>(
+    currentGroup ? 'group' : controls.environment_invite ? 'environment' :
+      selectableGroupOptions.length ? 'group' : 'workspace',
   );
-  const hasActiveGroupScope = !!activeGroup?.id;
-  const hasGroupScope = !!activeEnvironment?.id;
-  const hasActiveEnvironmentScope = !!activeEnvironment?.id;
-  const preferredScopeMode: InviteScopeMode | null =
-    hasActiveGroupScope ? 'group'
-      : hasActiveEnvironmentScope ? 'environment'
-        : canSendWorkspaceWideInvite ? 'workspace'
-          : null;
-  const effectiveScopeMode: InviteScopeMode | null =
-    scopeMode === 'workspace' && !canSendWorkspaceWideInvite ? preferredScopeMode
-      : scopeMode === 'group' && !hasGroupScope ? preferredScopeMode
-        : scopeMode === 'environment' && !hasActiveEnvironmentScope ? preferredScopeMode
-          : scopeMode;
-  const environmentIds = effectiveScopeMode === 'environment' && activeEnvironment ? [activeEnvironment.id] : [];
-  const groupIds = effectiveScopeMode === 'group' && selectedGroupId ? [selectedGroupId] : [];
-  const canSubmitGroupScope = effectiveScopeMode !== 'group' || !!selectedGroupId;
-  const selectableGroupOptions = [...environmentGroups].sort((a, b) => {
-    const depthA = Number(a.depth ?? 0);
-    const depthB = Number(b.depth ?? 0);
-    if (depthA !== depthB) return depthA - depthB;
-    return String(a.name ?? '').localeCompare(String(b.name ?? ''));
-  });
-  const currentEnvironmentRole = activeEnvironment
-    ? (
-      currentUser?.environment_assignments?.find((assignment) => assignment.environment_id === activeEnvironment.id)?.role
-      ?? currentUser?.group_assignments?.find((assignment) => assignment.environment_id === activeEnvironment.id)?.role
-      ?? null
-    )
-    : null;
-  const currentGroupRole = activeGroup
-    ? (
-      currentUser?.group_assignments?.find((assignment) => assignment.group_id === activeGroup.id)?.role
-      ?? currentEnvironmentRole
-      ?? null
-    )
-    : null;
-  const canGrantOwnerInScope = isSuperadmin || (
-    effectiveScopeMode === 'workspace'
-      ? currentWorkspaceRole === 'owner'
-      : effectiveScopeMode === 'environment'
-        ? currentEnvironmentRole === 'owner'
-        : effectiveScopeMode === 'group'
-          ? currentGroupRole === 'owner'
-          : false
-  );
+  const [selectedGroupId, setSelectedGroupId] = useState(currentGroup?.id ?? selectableGroupOptions[0]?.id ?? '');
+  const selectedGroup = selectableGroupOptions.find(group => group.id === selectedGroupId);
+  const ceiling = scopeMode === 'workspace' ? controls.workspace_invite
+    : scopeMode === 'environment' ? controls.environment_invite
+    : selectedGroup ? controls.group_invites[selectedGroup.id] : null;
   const inviteRoleOptions = [
-    ...(canGrantOwnerInScope
-      ? [{ value: 'owner', label: 'Owner' }]
-      : []),
-    { value: 'admin', label: 'Admin' },
-    { value: 'member', label: 'Member' },
-    { value: 'viewer', label: 'Viewer' },
-  ];
-  const roleAllowed = inviteRoleOptions.some((opt) => opt.value === role);
+    { value: 'owner', label: 'Owner' }, { value: 'admin', label: 'Admin' },
+    { value: 'member', label: 'Member' }, { value: 'viewer', label: 'Viewer' },
+  ].filter(option => roleLevel(option.value) <= roleLevel(ceiling));
+  const roleAllowed = inviteRoleOptions.some(option => option.value === role);
+  const canSubmit = !!email.trim() && roleAllowed && !inviteUser.isPending;
+  const environmentIds = scopeMode === 'environment' && activeEnvironment ? [activeEnvironment.id] : [];
+  const groupIds = scopeMode === 'group' && selectedGroup ? [selectedGroup.id] : [];
 
   useEffect(() => {
-    if (open) {
-      setEmail('');
-      setRole('member');
-      setScopeMode(preferredScopeMode ?? 'workspace');
-      setSelectedGroupId(activeGroup?.id ?? '');
-      inviteUser.reset();
-    }
-  }, [open, preferredScopeMode, activeGroup?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (ceiling && !roleAllowed) setRole('member');
+  }, [ceiling, roleAllowed]);
 
   useEffect(() => {
-    if (!open || effectiveScopeMode !== 'group') return;
-    if (selectedGroupId) return;
-    if (activeGroup?.id && activeGroup.environment_id === activeEnvironment?.id) {
-      setSelectedGroupId(activeGroup.id);
-      return;
-    }
-    const firstGroup = selectableGroupOptions[0];
-    if (firstGroup?.id) setSelectedGroupId(firstGroup.id);
-  }, [
-    open,
-    effectiveScopeMode,
-    selectedGroupId,
-    activeGroup?.id,
-    activeGroup?.environment_id,
-    activeEnvironment?.id,
-    selectableGroupOptions,
-  ]);
-
-  useEffect(() => {
-    if (!roleAllowed) {
-      setRole(inviteRoleOptions[0]?.value ?? 'member');
-    }
-  }, [roleAllowed, inviteRoleOptions]);
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    emailRef.current?.focus();
+    return () => { if (opener?.isConnected) opener.focus(); };
+  }, []);
 
   useEffect(() => {
     if (!open) return;
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') { e.preventDefault(); onClose(); return; }
+      if (e.key !== 'Tab') return;
+      const nodes = overlayRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled)');
+      if (!nodes?.length) return;
+      const first = nodes[0], last = nodes[nodes.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     };
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
@@ -241,8 +173,7 @@ function InviteModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email.trim() || !effectiveScopeMode) return;
-    if (effectiveScopeMode === 'group' && !selectedGroupId) return;
+    if (!canSubmit) return;
     try {
       await inviteUser.mutateAsync({
         workspace_id: workspaceId,
@@ -263,21 +194,23 @@ function InviteModal({
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
       onClick={(e) => { if (e.target === overlayRef.current) onClose(); }}
     >
-      <div className="w-full max-w-md rounded-xl border border-border bg-surface p-6 shadow-xl">
+      <div role="dialog" aria-modal="true" aria-labelledby="invite-user-title" className="max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-xl border border-border bg-surface p-6 shadow-xl">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <UserPlus className="h-5 w-5 text-accent" />
-            <h3 className="text-lg font-semibold text-gray-900">Invite User</h3>
+            <h3 id="invite-user-title" className="text-lg font-semibold text-gray-900">Invite User</h3>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+          <button aria-label="Close invite" onClick={onClose} className="text-gray-400 hover:text-gray-600">
             <X className="h-5 w-5" />
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <label htmlFor="invite-email" className="block text-sm font-medium text-gray-700 mb-1">Email</label>
             <input
+              id="invite-email"
+              ref={emailRef}
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -288,8 +221,9 @@ function InviteModal({
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
+            <label htmlFor="invite-role" className="block text-sm font-medium text-gray-700 mb-1">Role</label>
             <select
+              id="invite-role"
               value={role}
               onChange={(e) => setRole(e.target.value)}
               className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
@@ -307,9 +241,9 @@ function InviteModal({
                 <input
                   type="radio"
                   name="invite_scope"
-                  checked={effectiveScopeMode === 'workspace'}
+                  checked={scopeMode === 'workspace'}
                   onChange={() => setScopeMode('workspace')}
-                  disabled={!canSendWorkspaceWideInvite || inviteUser.isPending}
+                  disabled={!controls.workspace_invite || inviteUser.isPending}
                   className="mt-0.5"
                 />
                 <span>
@@ -325,9 +259,9 @@ function InviteModal({
                   <input
                     type="radio"
                     name="invite_scope"
-                    checked={effectiveScopeMode === 'environment'}
+                    checked={scopeMode === 'environment'}
                     onChange={() => setScopeMode('environment')}
-                    disabled={inviteUser.isPending}
+                    disabled={!controls.environment_invite || inviteUser.isPending}
                     className="mt-0.5"
                   />
                   <span>
@@ -344,7 +278,7 @@ function InviteModal({
                   <input
                     type="radio"
                     name="invite_scope"
-                    checked={effectiveScopeMode === 'group'}
+                    checked={scopeMode === 'group'}
                     onChange={() => setScopeMode('group')}
                     disabled={inviteUser.isPending || selectableGroupOptions.length === 0}
                     className="mt-0.5"
@@ -352,24 +286,25 @@ function InviteModal({
                   <span>
                     Specific group (subtree)
                     <span className="block text-xs text-gray-500">
-                      {activeGroup?.id && activeGroup.environment_id === activeEnvironment.id
-                        ? `Current group preselected: ${activeGroup.name}`
+                      {currentGroup && selectedGroup?.id === currentGroup.id
+                        ? `Current group: ${currentGroup.name}`
                         : 'Choose a group in the current environment. Access includes descendants.'}
                     </span>
                   </span>
                 </label>
               )}
 
-              {effectiveScopeMode === 'group' && activeEnvironment && (
+              {scopeMode === 'group' && activeEnvironment && (
                 <div className="ml-6">
                   <select
-                    value={selectedGroupId}
+                    aria-label="Invite group"
+                    value={selectedGroup?.id ?? ''}
                     onChange={(e) => setSelectedGroupId(e.target.value)}
                     disabled={inviteUser.isPending || selectableGroupOptions.length === 0}
                     className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
                   >
-                    {selectableGroupOptions.length === 0 && (
-                      <option value="">No groups available</option>
+                    {!selectedGroup && (
+                      <option value="">{selectableGroupOptions.length ? 'Choose an available group' : 'No groups available'}</option>
                     )}
                     {selectableGroupOptions.map((group: Group) => (
                       <option key={group.id} value={group.id}>
@@ -384,33 +319,21 @@ function InviteModal({
               )}
             </div>
 
-            {!canSendWorkspaceWideInvite && (
+            {!ceiling && (
               <p className="mt-2 text-xs text-amber-700">
-                Workspace-wide invites are disabled for your scoped access. Invite into the current environment/group instead.
+                Select an available scope and group before sending the invite.
               </p>
             )}
 
-            {effectiveScopeMode === 'group' && activeEnvironment && selectableGroupOptions.length === 0 && (
-              <p className="mt-2 text-xs text-amber-700">
-                No visible groups found in this environment. Create/select a group or invite at environment scope.
-              </p>
-            )}
-
-            {!effectiveScopeMode && (
-              <p className="mt-2 text-xs text-danger">
-                No valid invite scope is available in this context. Select an environment or group before inviting.
-              </p>
-            )}
-
-            {effectiveScopeMode && (
+            {ceiling && (
               <p className="mt-2 text-xs text-gray-500">
                 Invite will be created with{' '}
                 <span className="font-medium text-gray-700">
-                  {effectiveScopeMode === 'workspace'
+                  {scopeMode === 'workspace'
                     ? 'workspace-wide'
-                    : effectiveScopeMode === 'environment'
+                    : scopeMode === 'environment'
                       ? `environment scope (${activeEnvironment?.name ?? 'current environment'})`
-                      : `group scope (${selectableGroupOptions.find((g) => g.id === selectedGroupId)?.name ?? activeGroup?.name ?? 'selected group'})`}
+                      : `group scope (${selectedGroup?.name})`}
                 </span>.
               </p>
             )}
@@ -433,7 +356,7 @@ function InviteModal({
             </button>
             <button
               type="submit"
-              disabled={inviteUser.isPending || !email.trim() || !effectiveScopeMode || !canSubmitGroupScope}
+              disabled={!canSubmit}
               className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-light transition-colors disabled:opacity-50"
             >
               {inviteUser.isPending ? 'Sending...' : 'Send Invite'}
@@ -448,6 +371,13 @@ function InviteModal({
 // ---- Main Users page ----
 
 export default function Users() {
+  const { activeWorkspace, activeEnvironment, activeGroup } = useContextStore();
+  const actorId = useAuthStore(state => state.user?.id);
+  // An open editor belongs to a particular actor and context.
+  return <WorkspaceUsers key={[actorId, activeWorkspace?.id, activeEnvironment?.id, activeGroup?.id].join('/')} />;
+}
+
+function WorkspaceUsers() {
   const [transferOwnershipOpen, setTransferOwnershipOpen] = useState(false);
   const { activeWorkspace, activeEnvironment, activeGroup } = useContextStore();
   const authUser = useAuthStore((s) => s.user);
@@ -467,27 +397,17 @@ export default function Users() {
     if (!activeEnvironment?.id) return users;
     return users.filter((user) => hasDirectEnvironmentVisibility(user, activeEnvironment.id));
   }, [users, activeEnvironment?.id]);
-  const currentUserRole = (currentUser?.role ?? activeWorkspace?.user_role ?? 'viewer') as string;
-  const activeEnvironmentRole = (activeEnvironment?.user_role ?? currentUserRole ?? null) as string | null;
-  const hideWorkspaceRoleDetails = Boolean(
-    !authUser?.is_superadmin && (currentUser?.access_scope ?? 'workspace') === 'scoped'
-  );
-  const hasWorkspaceScopedAccess = Boolean(authUser?.is_superadmin || activeWorkspace?.access_scope === 'workspace');
-  const rbacQuery = useWorkspaceRbacMatrix(
-    workspaceId && (hasWorkspaceScopedAccess || activeEnvironment?.id) ? workspaceId : undefined,
-    hasWorkspaceScopedAccess ? undefined : activeEnvironment?.id
-  );
-  const workspaceManageUsersMinRole = (rbacQuery.data?.matrix?.workspace?.manage_users ?? 'admin') as WorkspaceRole;
-  const environmentManageUsersMinRole = (rbacQuery.data?.matrix?.environment?.manage_users ?? 'admin') as WorkspaceRole;
-  const canManageWorkspaceUsers = Boolean(
-    authUser?.is_superadmin
-    || (hasWorkspaceScopedAccess && meetsRole(currentUserRole, workspaceManageUsersMinRole))
-  );
-  const canManageEnvironmentUsers = Boolean(
-    authUser?.is_superadmin
-    || (activeEnvironment?.id && meetsRole(activeEnvironmentRole, environmentManageUsersMinRole))
-  );
+  const environmentId = activeEnvironment?.workspace_id === workspaceId ? activeEnvironment.id : undefined;
+  const controlsQuery = useUserManagementControls(authUser?.id, workspaceId, environmentId);
+  const controls = controlsQuery.isError ? undefined : controlsQuery.data;
+  const groupsQuery = useGroups(environmentId ?? '');
+  const groups = groupsQuery.isError ? [] : groupsQuery.data ?? [];
+  const canManageWorkspaceUsers = !!controls?.workspace_manage;
+  const canManageEnvironmentUsers = !!controls?.environment_manage;
   const canManageUsers = canManageWorkspaceUsers || canManageEnvironmentUsers;
+  const canInvite = !!controls && (!!controls.workspace_invite || !!controls.environment_invite
+    || groups.some(group => !!controls.group_invites[group.id]));
+  const hideWorkspaceRoleDetails = !authUser?.is_superadmin && currentUser?.access_scope === 'scoped';
 
   const environmentsQuery = useQuery<{ environments: Array<{ id: string; name: string }> }>({
     queryKey: ['bulk-users-environments', workspaceId],
@@ -659,7 +579,7 @@ export default function Users() {
             window.location.assign('/');
           } catch (error) { window.alert(error instanceof Error ? error.message : 'Unable to leave workspace'); }
         }}>Leave workspace</button>
-        {canManageUsers && (
+        {canInvite && (
           <button
             onClick={() => setInviteOpen(true)}
             className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-light transition-colors"
@@ -669,6 +589,14 @@ export default function Users() {
           </button>
         )}
       </div>
+
+      {controlsQuery.isError && (
+        <p role="status" className="mb-3 text-sm text-danger">Unable to load user management permissions.</p>
+      )}
+
+      {groupsQuery.isError && controls && Object.keys(controls.group_invites).length > 0 && (
+        <p role="status" className="mb-3 text-sm text-danger">Unable to load groups available for invitations.</p>
+      )}
 
       <DataTable<WorkspaceUser>
         columns={columns}
@@ -726,13 +654,13 @@ export default function Users() {
       )}
 
       {transferOwnershipOpen && authUser?.id && <TransferOwnershipModal workspaceId={workspaceId} userId={authUser.id} onClose={()=>setTransferOwnershipOpen(false)} />}
-      {canManageUsers && (
+      {canInvite && controls && inviteOpen && (
         <InviteModal
           open={inviteOpen}
           onClose={() => setInviteOpen(false)}
           workspaceId={workspaceId}
-          currentUser={currentUser}
-          isSuperadmin={!!authUser?.is_superadmin}
+          controls={controls}
+          groups={groups}
           activeEnvironment={activeEnvironment ? { id: activeEnvironment.id, name: activeEnvironment.name } : null}
           activeGroup={activeGroup ? { id: activeGroup.id, name: activeGroup.name, environment_id: activeGroup.environment_id } : null}
         />
@@ -744,11 +672,11 @@ export default function Users() {
           workspaceName={activeWorkspace.name}
           userId={accessUser.id}
           userEmail={accessUser.email}
-          currentUserRole={currentUserRole}
-          currentEnvironmentRole={activeEnvironmentRole}
+          currentUserRole={controls?.workspace_manage ?? 'viewer'}
+          currentEnvironmentRole={controls?.environment_manage}
           isSuperadmin={!!authUser?.is_superadmin}
           canManageWorkspaceUsers={canManageWorkspaceUsers}
-          actingEnvironmentId={canManageEnvironmentUsers ? activeEnvironment?.id ?? null : null}
+          actingEnvironmentId={canManageEnvironmentUsers ? environmentId : null}
           viewerAccessScope={(currentUser?.access_scope ?? 'workspace') as 'workspace' | 'scoped'}
           onClose={() => setAccessUser(null)}
         />
