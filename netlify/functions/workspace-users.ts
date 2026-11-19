@@ -1,3 +1,4 @@
+import { getUserManagementControls } from './_lib/user-management-controls.js';
 import { changeMemberships, type MembershipRole } from './_lib/membership-lifecycle.js';
 import type { Context } from '@netlify/functions';
 import { query, queryOne } from './_lib/db.js';
@@ -46,6 +47,12 @@ export default async (request: Request, context: Context) => {
     const workspaceId = params.get('workspace_id');
     if (!workspaceId) return errorResponse('workspace_id is required');
     if (!isValidUuid(workspaceId)) return errorResponse('workspace_id must be a valid UUID');
+    if (params.get('view') === 'controls') {
+      if (auth.authType !== 'session') return errorResponse('Session required for user management controls', 403);
+      const environmentId = params.get('environment_id');
+      if (environmentId !== null && !isValidUuid(environmentId)) return errorResponse('environment_id must be a valid UUID');
+      return jsonResponse(await getUserManagementControls(auth, workspaceId, environmentId));
+    }
     let canManageUsers = true;
     let hasWorkspaceReadAccess = true;
     try {

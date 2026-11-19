@@ -28,6 +28,7 @@ vi.mock('@/stores/auth', () => ({
 }));
 
 vi.mock('@/api/queries/users', () => ({
+  useUserManagementControls: () => ({ data: { workspace_manage: 'admin', environment_manage: 'admin', group_invites: {} } }),
   useWorkspaceUsers: () => ({
     data: [
       {

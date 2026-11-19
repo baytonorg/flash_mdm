@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../client';
+import type { WorkspaceRole } from './rbac';
 
 // --- Interfaces ---
 
@@ -25,6 +26,26 @@ export interface WorkspaceUser {
   joined_at?: string;
   last_login_at?: string | null;
   [key: string]: unknown;
+}
+
+export interface UserManagementControls {
+  workspace_invite: WorkspaceRole | null;
+  environment_invite: WorkspaceRole | null;
+  workspace_manage: WorkspaceRole | null;
+  environment_manage: WorkspaceRole | null;
+  group_invites: Record<string, WorkspaceRole>;
+}
+
+export function useUserManagementControls(userId: string | undefined, workspaceId: string, environmentId?: string) {
+  return useQuery({
+    queryKey: [...userKeys.list(workspaceId), 'controls', userId, environmentId ?? null],
+    enabled: !!userId && !!workspaceId,
+    queryFn: () => {
+      const params = new URLSearchParams({ workspace_id: workspaceId, view: 'controls' });
+      if (environmentId) params.set('environment_id', environmentId);
+      return apiClient.get<UserManagementControls>(`/api/workspaces/users?${params}`);
+    },
+  });
 }
 
 interface UsersResponse {

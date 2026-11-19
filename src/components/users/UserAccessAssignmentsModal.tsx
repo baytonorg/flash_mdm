@@ -159,7 +159,7 @@ export default function UserAccessAssignmentsModal({
   const isLoading = usersQuery.isLoading || environmentsQuery.isLoading || groupsQuery.isLoading;
   const isPending = updateAccess.isPending || removeWorkspaceUser.isPending;
   const canAssignWorkspaceOwner = isSuperadmin || currentUserRole === 'owner';
-  const canAssignScopedOwner = isSuperadmin || currentUserRole === 'owner' || currentEnvironmentRole === 'owner';
+  const canAssignScopedOwner = isSuperadmin || (environmentScopedManager ? currentEnvironmentRole : currentUserRole) === 'owner';
   const workspaceRoleOptions = canAssignWorkspaceOwner
     ? ['owner', 'admin', 'member', 'viewer']
     : ['admin', 'member', 'viewer'];
