@@ -9,10 +9,27 @@ interface ExecuteValidatedOutboundWebhookInput {
   timeoutMs?: number;
 }
 
+// Even a hostname can be a capability. Without a trusted display-only alias,
+// workflow identity and HTTP status are the safe diagnostic context.
+export function safeWebhookDestination(): string {
+  return '[redacted]';
+}
+
+export function safeWebhookDeliveryError(error: unknown): string {
+  return error instanceof Error && error.name === 'AbortError'
+    ? 'Webhook delivery timed out'
+    : 'Webhook delivery failed';
+}
+
 export async function executeValidatedOutboundWebhook(
   input: ExecuteValidatedOutboundWebhookInput
 ): Promise<Response> {
-  const validation = await validateResolvedWebhookUrlForOutbound(input.url);
+  let validation: Awaited<ReturnType<typeof validateResolvedWebhookUrlForOutbound>>;
+  try {
+    validation = await validateResolvedWebhookUrlForOutbound(input.url);
+  } catch (error) {
+    throw new Error(safeWebhookDeliveryError(error));
+  }
   if (!validation.ok) {
     throw new Error(validation.error);
   }
@@ -32,6 +49,9 @@ export async function executeValidatedOutboundWebhook(
       signal: controller.signal,
       redirect: 'error',
     });
+  } catch (error) {
+    // Fetch/DNS/redirect errors can echo the full URL or credentials in a cause.
+    throw new Error(safeWebhookDeliveryError(error));
   } finally {
     clearTimeout(timeout);
   }
