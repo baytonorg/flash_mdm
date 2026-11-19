@@ -22,6 +22,7 @@ const workflow = {
   scope_type: 'device',
   scope_id: 'dev-a',
   last_triggered_at: null,
+  schedule_interval_valid: true,
 };
 
 beforeEach(() => {
@@ -82,5 +83,39 @@ describe('workflow-cron-scheduled', () => {
     expect(inserts).toBe(1);
     expect(lockQueries).toHaveLength(2);
     expect(lockQueries.every((sql) => sql.includes('FOR UPDATE'))).toBe(true);
+  });
+});
+
+
+describe('persisted scheduled interval validation', () => {
+  it.each([null, [], { interval_minutes: null }, { interval_minutes: '15' }, { interval_minutes: 0 }, { interval_minutes: -1 }, { interval_minutes: 15.5 }, { interval_minutes: Infinity }, { interval_minutes: NaN }, { interval_minutes: 10_000 }])('fails closed for %j before looking up devices', async trigger_config => {
+    const clientQuery = vi.fn(async (sql: string) => sql.includes('FOR UPDATE') ? { rows: [{ ...workflow, trigger_config }] } : { rows: [{ id: 'dev-a' }] });
+    mockTransaction.mockImplementation(async fn => fn({ query: clientQuery } as never));
+    const response = await handler(new Request('http://localhost/.netlify/functions/workflow-cron-scheduled'), {} as never);
+    expect(response.status).toBe(500);
+    expect(await response.json()).toMatchObject({ stats: { enqueued: 0, errors: 1 } });
+    expect(clientQuery).toHaveBeenCalledTimes(1);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('uses the locked configuration, so a stale valid snapshot cannot enqueue an invalid edit', async () => {
+    const clientQuery = vi.fn(async (sql: string) => sql.includes('FOR UPDATE') ? { rows: [{ ...workflow, trigger_config: { interval_minutes: 0 } }] } : { rows: [] });
+    mockTransaction.mockImplementation(async fn => fn({ query: clientQuery } as never));
+    const response = await handler(new Request('http://localhost/.netlify/functions/workflow-cron-scheduled'), {} as never);
+    expect(response.status).toBe(500);
+    expect(clientQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it('emits the effective hourly default in the queued job for an older omitted interval', async () => {
+    const clientQuery = vi.fn(async (sql: string) => {
+      if (sql.includes('FOR UPDATE')) return { rows: [{ ...workflow, trigger_config: {} }] };
+      if (sql.includes('SELECT id FROM devices')) return { rows: [{ id: 'dev-a' }] };
+      return { rows: [] };
+    });
+    mockTransaction.mockImplementation(async fn => fn({ query: clientQuery } as never));
+    const response = await handler(new Request('http://localhost/.netlify/functions/workflow-cron-scheduled'), {} as never);
+    expect(response.status).toBe(200);
+    const insert = clientQuery.mock.calls.find(([sql]) => sql.includes('INSERT INTO job_queue'));
+    expect(JSON.parse(String(insert?.[1]?.[2]))).toMatchObject({ trigger_data: { interval_minutes: 60 } });
   });
 });

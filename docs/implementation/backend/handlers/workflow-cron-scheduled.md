@@ -39,3 +39,18 @@
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
 | N/A | `/.netlify/functions/workflow-cron-scheduled` | None (scheduled) | Cron-triggered workflow evaluation dispatcher |
+
+
+## Persisted schedule safety
+
+The worker resolves and validates the interval after acquiring the workflow row
+lock. It accepts the same six presets as create/update and uses 60 minutes only
+when the interval is omitted. An invalid persisted configuration enqueues no jobs
+and does not advance `last_triggered_at` or rewrite/disable the workflow. The
+existing per-workflow error path reports the failure, continues other workflows,
+and returns HTTP 500 with a nonzero `stats.errors`. A valid workflow's job inserts
+and interval advancement commit together. Background-worker polling on VPS is
+unchanged.
+
+Use the [read-only inventory](../../../operations/workflow-schedules.md) to detect
+invalid saved schedules, including disabled rows, without invoking cron.

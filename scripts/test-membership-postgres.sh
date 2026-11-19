@@ -32,3 +32,8 @@ try {
 FLASH_DELETION_SCHEMA
 FLASH_DELETION_TEST_URL="$deletion_fixture_url" \
   npx vitest run netlify/functions/__tests__/environment-deletion.integration.test.ts
+
+# Schedule validation runs against the same migration set in its own disposable DB.
+docker exec "$fixture_container" createdb -U postgres flash_workflow_fixture
+WORKFLOW_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/flash_workflow_fixture" \
+  npx vitest run netlify/functions/__tests__/workflow-schedule.postgres.test.ts
