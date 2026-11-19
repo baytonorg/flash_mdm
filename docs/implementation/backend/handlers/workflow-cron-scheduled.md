@@ -51,3 +51,6 @@ existing per-workflow error path reports the failure, continues other workflows,
 and returns HTTP 500 with a nonzero `stats.errors`. A valid workflow's job inserts
 and interval advancement commit together. Background-worker polling on VPS is
 unchanged.
+
+Use the [read-only inventory](../../../operations/workflow-schedules.md) to detect
+invalid saved schedules, including disabled rows, without invoking cron.
