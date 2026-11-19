@@ -22,6 +22,7 @@ const workflow = {
   scope_type: 'device',
   scope_id: 'dev-a',
   last_triggered_at: null,
+  schedule_interval_valid: true,
 };
 
 beforeEach(() => {

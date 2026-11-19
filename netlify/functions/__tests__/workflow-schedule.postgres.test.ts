@@ -4,6 +4,8 @@ import pg from 'pg';
 import { MIGRATIONS } from '../migrate.js';
 import { closeDatabasePool } from '../_lib/db.js';
 import handler from '../workflow-cron-scheduled.js';
+import workflowHandler from '../workflow-crud.js';
+import { hashToken } from '../_lib/crypto.js';
 
 const url = process.env.WORKFLOW_TEST_DATABASE_URL;
 const suite = url ? describe : describe.skip;
@@ -14,7 +16,14 @@ suite('scheduled workflow eligibility with PostgreSQL', () => {
   const environment = '22222222-2222-4222-8222-222222222222';
   const device = '33333333-3333-4333-8333-333333333333';
   const workflow = '44444444-4444-4444-8444-444444444444';
+  const owner = '55555555-5555-4555-8555-555555555555';
+  const token = 'synthetic-workflow-fixture-session';
   const invoke = () => handler(new Request('http://localhost/.netlify/functions/workflow-cron-scheduled'), {} as never);
+  const change = (path: string, body: object) => workflowHandler(new Request('http://localhost/api/workflows/' + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', Cookie: `flash_session=${token}` },
+    body: JSON.stringify(body),
+  }), {} as never);
   const jobs = async () => (await pool.query('SELECT payload FROM job_queue ORDER BY created_at')).rows;
 
   beforeAll(async () => {
@@ -25,6 +34,7 @@ suite('scheduled workflow eligibility with PostgreSQL', () => {
     process.env.DATABASE_URL = url;
     process.env.NODE_ENV = 'development';
     process.env.FLASH_RUNTIME = 'vps';
+    process.env.URL = 'http://localhost';
     pool = new pg.Pool({ connectionString: url });
     for (const migration of MIGRATIONS) await pool.query(migration.sql);
   }, 30000);
@@ -34,6 +44,9 @@ suite('scheduled workflow eligibility with PostgreSQL', () => {
   beforeEach(async () => {
     await pool.query('TRUNCATE workspaces, users CASCADE');
     await pool.query("INSERT INTO workspaces(id,name) VALUES($1,'Workflow fixture')", [workspace]);
+    await pool.query("INSERT INTO users(id,email) VALUES($1,'owner@workflow-fixture.invalid')", [owner]);
+    await pool.query("INSERT INTO workspace_memberships(workspace_id,user_id,role,access_scope) VALUES($1,$2,'owner','workspace')", [workspace, owner]);
+    await pool.query("INSERT INTO sessions(user_id,token_hash,expires_at) VALUES($1,$2,now()+interval '14 days')", [owner, hashToken(token)]);
     await pool.query("INSERT INTO environments(id,workspace_id,name) VALUES($1,$2,'Fixture')", [environment, workspace]);
     await pool.query("INSERT INTO devices(id,environment_id,amapi_name) VALUES($1,$2,'fixture/devices/device')", [device, environment]);
     await pool.query(`INSERT INTO workflows(id,environment_id,name,trigger_type,trigger_config,action_type,scope_type)
@@ -67,6 +80,33 @@ suite('scheduled workflow eligibility with PostgreSQL', () => {
     expect(responses.map(r => r.status)).toEqual([200, 200]);
     expect(await jobs()).toHaveLength(1);
     expect((await jobs())[0].payload.trigger_data.interval_minutes).toBe(60);
+  });
+
+  it('rejects a persisted fraction that node-postgres rounds to a valid preset', async () => {
+    await pool.query(`UPDATE workflows SET trigger_config='{"interval_minutes":15.0000000000000001}'::jsonb WHERE id=$1`, [workflow]);
+    const row = (await pool.query("SELECT trigger_config,trigger_config->'interval_minutes'='15'::jsonb AS exact FROM workflows WHERE id=$1", [workflow])).rows[0];
+    expect(row.trigger_config.interval_minutes).toBe(15);
+    expect(row.exact).toBe(false);
+    const response = await invoke();
+    expect(response.status).toBe(500);
+    expect(await response.json()).toMatchObject({ stats: { enqueued: 0, errors: 1 } });
+    expect(await jobs()).toHaveLength(0);
+    expect((await pool.query('SELECT last_triggered_at FROM workflows WHERE id=$1', [workflow])).rows[0].last_triggered_at).toBeNull();
+  });
+
+  it('rejects a persisted fraction through actual single and bulk enable controls', async () => {
+    await pool.query(`UPDATE workflows SET enabled=false,trigger_config='{"interval_minutes":15.0000000000000001}'::jsonb WHERE id=$1`, [workflow]);
+    expect((await change(workflow + '/toggle', {})).status).toBe(400);
+    const valid = crypto.randomUUID();
+    await pool.query(`INSERT INTO workflows(id,environment_id,name,enabled,trigger_type,trigger_config,action_type,scope_type)
+      VALUES($1,$2,'Valid decimal fixture',false,'scheduled','{"interval_minutes":15.0000000000000000}','audit.log','environment')`, [valid, environment]);
+    const response = await change('bulk', { environment_id: environment, operation: 'enable', selection: { ids: [workflow, valid] } });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ succeeded: 1, failed: 1, results: [{ id: workflow, ok: false }, { id: valid, ok: true }] });
+    const rows = (await pool.query('SELECT id,enabled FROM workflows ORDER BY id')).rows;
+    expect(rows.find(row => row.id === workflow).enabled).toBe(false);
+    expect(rows.find(row => row.id === valid).enabled).toBe(true);
+    expect(await jobs()).toHaveLength(0);
   });
 
   it('continues valid workflows after rejecting another configuration', async () => {

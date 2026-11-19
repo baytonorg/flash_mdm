@@ -7,6 +7,7 @@ import { jsonResponse, errorResponse, parseJsonBody, getClientIp, getSearchParam
 import { buildAmapiCommandPayload } from './_lib/amapi-command.js';
 import { validateWorkflowCommandConfig } from '../../shared/amapi-workflow-commands.js';
 import { scheduledWorkflowInterval, WORKFLOW_SCHEDULE_ERROR } from '../../shared/workflow-schedule.js';
+import { PERSISTED_WORKFLOW_INTERVAL_VALID } from './_lib/workflow-schedule.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -45,6 +46,7 @@ interface Workflow {
   last_triggered_at: string | null;
   created_at: string;
   updated_at: string;
+  schedule_interval_valid?: boolean;
 }
 
 interface WorkflowWithStats extends Workflow {
@@ -249,7 +251,7 @@ export default async (request: Request, _context: Context) => {
     const results: Array<{ id: string; ok: boolean; error?: string }> = [];
     for (const workflowId of targetIds) {
       const workflow = await queryOne<Workflow>(
-        'SELECT * FROM workflows WHERE id = $1',
+        `SELECT *, ${PERSISTED_WORKFLOW_INTERVAL_VALID} AS schedule_interval_valid FROM workflows WHERE id = $1`,
         [workflowId]
       );
       if (!workflow) {
@@ -276,7 +278,7 @@ export default async (request: Request, _context: Context) => {
         } else {
           const nextEnabled = operation === 'enable';
           if (nextEnabled && workflow.trigger_type === 'scheduled'
-            && scheduledWorkflowInterval(workflow.trigger_config) === null) {
+            && (!workflow.schedule_interval_valid || scheduledWorkflowInterval(workflow.trigger_config) === null)) {
             results.push({ id: workflowId, ok: false, error: WORKFLOW_SCHEDULE_ERROR });
             continue;
           }
@@ -497,7 +499,7 @@ export default async (request: Request, _context: Context) => {
   if (request.method === 'POST' && segments[1] === 'toggle') {
     const workflowId = segments[0];
     const workflow = await queryOne<Workflow>(
-      'SELECT * FROM workflows WHERE id = $1',
+      `SELECT *, ${PERSISTED_WORKFLOW_INTERVAL_VALID} AS schedule_interval_valid FROM workflows WHERE id = $1`,
       [workflowId]
     );
     if (!workflow) return errorResponse('Workflow not found', 404);
@@ -505,7 +507,7 @@ export default async (request: Request, _context: Context) => {
 
     const newEnabled = !workflow.enabled;
     if (newEnabled && workflow.trigger_type === 'scheduled'
-      && scheduledWorkflowInterval(workflow.trigger_config) === null) {
+      && (!workflow.schedule_interval_valid || scheduledWorkflowInterval(workflow.trigger_config) === null)) {
       return errorResponse(WORKFLOW_SCHEDULE_ERROR);
     }
     await execute(
