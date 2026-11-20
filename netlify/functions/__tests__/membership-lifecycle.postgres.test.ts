@@ -481,6 +481,48 @@ suite('membership lifecycle with PostgreSQL and actual handlers', () => {
     expect((await pool.query("SELECT status FROM user_invites WHERE token_hash='fixture-offer'")).rows[0].status).toBe('cancelled');
   });
 
+  it('keeps workspace removal denied until invitation cancellation is explicitly confirmed over HTTP', async () => {
+    const session = 'fixture-removal-confirmation';
+    await pool.query("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,now()+interval '10 days')", [hashToken(session),owner]);
+    await pool.query("INSERT INTO user_invites(workspace_id,email,role,token_hash,invited_by,expires_at) VALUES($1,'target@fixture.invalid','member','fixture-removal-offer',$2,now()+interval '1 day')",[workspace,owner]);
+    await pool.query("INSERT INTO user_invites(workspace_id,email,role,token_hash,invited_by,expires_at) VALUES($1,'target@fixture.invalid','member','fixture-expired-offer',$2,now()-interval '1 day'),($1,'other@fixture.invalid','member','fixture-unrelated-offer',$2,now()+interval '1 day')",[workspace,owner]);
+    const remove = (confirmation: string) => workspaceHandler(new Request(
+      `http://localhost/api/workspaces/users/${target}?workspace_id=${workspace}&cancel_pending_invites=${confirmation}`,
+      {method:'DELETE',headers:{cookie:'flash_session='+session,'x-requested-with':'XMLHttpRequest'}},
+    ),{} as never);
+    expect((await remove('false')).status).toBe(409);
+    expect((await pool.query('SELECT 1 FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2',[workspace,target])).rowCount).toBe(1);
+    expect((await pool.query("SELECT status FROM user_invites WHERE token_hash='fixture-removal-offer'")).rows[0].status).toBe('pending');
+    expect((await pool.query("SELECT 1 FROM audit_log WHERE action='workspace.user_removed'")).rowCount).toBe(0);
+    expect((await remove('true')).status).toBe(200);
+    expect((await pool.query('SELECT 1 FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2',[workspace,target])).rowCount).toBe(0);
+    expect((await pool.query('SELECT 1 FROM environment_memberships WHERE user_id=$1',[target])).rowCount).toBe(0);
+    expect((await pool.query('SELECT 1 FROM group_memberships WHERE user_id=$1',[target])).rowCount).toBe(0);
+    expect((await pool.query("SELECT status FROM user_invites WHERE token_hash='fixture-removal-offer'")).rows[0].status).toBe('cancelled');
+    expect((await pool.query("SELECT status FROM user_invites WHERE token_hash IN ('fixture-expired-offer','fixture-unrelated-offer')")).rows).toEqual([{status:'pending'},{status:'pending'}]);
+    expect((await pool.query("SELECT details->>'cancelled_pending_invites' AS confirmed FROM audit_log WHERE action='workspace.user_removed'")).rows).toEqual([{confirmed:'true'}]);
+    expect((await remove('true')).status).toBe(404);
+    expect((await pool.query("SELECT 1 FROM audit_log WHERE action='workspace.user_removed'")).rowCount).toBe(1);
+  });
+
+  it.runIf(process.env.CHROME_PATH && process.env.PLAYWRIGHT_MODULE)('accepts workspace removal confirmation through the real browser, hook and PostgreSQL handler', async () => {
+    await pool.query("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,now()+interval '10 days')",[hashToken('fixture-browser-removal'),owner]);
+    await pool.query("INSERT INTO user_invites(workspace_id,email,role,token_hash,invited_by,expires_at) VALUES($1,'target@fixture.invalid','member','fixture-browser-offer',$2,now()+interval '1 day')",[workspace,owner]);
+    const { inspectWorkspaceRemoval } = await import('../../../scripts/qa/workspace-removal-browser.mjs');
+    await inspectWorkspaceRemoval({workspace,target,handler:workspaceHandler,
+      checkUnchanged:async()=>{
+        expect((await pool.query('SELECT 1 FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2',[workspace,target])).rowCount).toBe(1);
+        expect((await pool.query("SELECT status FROM user_invites WHERE token_hash='fixture-browser-offer'")).rows[0].status).toBe('pending');
+        expect((await pool.query("SELECT 1 FROM audit_log WHERE action='workspace.user_removed'")).rowCount).toBe(0);
+      },
+      checkRemoved:async()=>{
+        expect((await pool.query('SELECT 1 FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2',[workspace,target])).rowCount).toBe(0);
+        expect((await pool.query("SELECT status FROM user_invites WHERE token_hash='fixture-browser-offer'")).rows[0].status).toBe('cancelled');
+        expect((await pool.query("SELECT 1 FROM audit_log WHERE action='workspace.user_removed'")).rowCount).toBe(1);
+      },
+    });
+  },90000);
+
   it('consumes scoped offers once without downgrading existing broader grants', async () => {
     await pool.query("INSERT INTO user_invites (workspace_id,email,role,token_hash,invited_by,expires_at,environment_ids,group_ids) VALUES ($1,'owner@fixture.invalid','viewer','fixture-accept',$2,now()+interval '1 day',$3,'[]')",[workspace,owner,JSON.stringify([env])]);
     const outcomes=await Promise.all([1,2].map(()=>transaction(c=>applyInviteOffer(c,'fixture-accept',owner,'owner@fixture.invalid'))));

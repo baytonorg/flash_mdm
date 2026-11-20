@@ -175,7 +175,7 @@ export async function changeMemberships(input: {
         const offers = await client.query(`SELECT i.id FROM user_invites i JOIN users u ON lower(u.email) = lower(i.email)
           WHERE u.id = $1 AND i.workspace_id = $2 AND i.status = 'pending' AND i.expires_at > clock_timestamp() FOR UPDATE OF i`, [change.userId, workspaceId]);
         if (offers.rows.length && !change.cancelPendingInvites) throw errorResponse('Pending invitations could restore access. Explicitly confirm cancellation before removing this member.', 409);
-        if (change.cancelPendingInvites) await client.query(`UPDATE user_invites SET status = 'cancelled' WHERE workspace_id = $1 AND lower(email) = (SELECT lower(email) FROM users WHERE id = $2) AND status = 'pending'`, [workspaceId, change.userId]);
+        if (change.cancelPendingInvites && offers.rows.length) await client.query("UPDATE user_invites SET status = 'cancelled' WHERE id = ANY($1::uuid[])", [offers.rows.map(offer => offer.id)]);
         await removeWorkspaceGrants(client, workspaceId, change.userId);
       } else {
         if (change.role && !change.actingEnvironmentId) await client.query('UPDATE workspace_memberships SET role = $1 WHERE workspace_id = $2 AND user_id = $3', [change.role, workspaceId, change.userId]);

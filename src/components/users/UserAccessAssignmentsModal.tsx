@@ -248,6 +248,7 @@ export default function UserAccessAssignmentsModal({
       await removeWorkspaceUser.mutateAsync({
         workspace_id: workspaceId,
         user_id: userId,
+        cancel_pending_invites: cancelPendingInvites,
       });
       onSaved?.();
       onClose();
