@@ -94,7 +94,8 @@ export function useAuditLog(params: AuditListParams) {
         const result = await apiClient.get<AuditListResponse>(`/api/audit/log?${buildAuditQuery(params)}`);
         const denied = order.denied.get(params.environment_id);
         if (denied && requestOrder < denied.order) throw denied.error;
-        order.denied.delete(params.environment_id);
+        // Keep the denial watermark after recovery: a newer successful filter
+        // cannot authorise an older outstanding response in another filter.
         order.success.set(params.environment_id, Math.max(requestOrder, order.success.get(params.environment_id) ?? 0));
         return result;
       } catch (error) {
