@@ -141,6 +141,18 @@ describe('audit history outcomes',()=>{
     expect(screen.queryByText('Synthetic policy')).not.toBeInTheDocument();expect(live()).not.toBeInTheDocument();expect(apiClient.get).toHaveBeenCalledTimes(3);
   });
 
+  it('retains a middle denial that arrives after a newer filter has already recovered',async()=>{
+    let succeed!: (value:unknown)=>void,deny!: (reason:unknown)=>void;
+    vi.mocked(apiClient.get).mockImplementationOnce(()=>new Promise(resolve=>{succeed=resolve;})).mockImplementationOnce(()=>new Promise((_resolve,reject)=>{deny=reject;})).mockResolvedValue({entries:[],total:0});
+    show();const user=userEvent.setup(),filter=screen.getByRole('combobox',{name:'Filter audit action'});
+    await user.selectOptions(filter,'auth.login');await user.selectOptions(filter,'policy.create');
+    await screen.findByText('No audit entries found.');expect(live()).toBeInTheDocument();
+    await act(async()=>deny(new ApiError('Middle synthetic denied',403)));
+    expect(live()).toBeInTheDocument();expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    await user.selectOptions(filter,'');await act(async()=>succeed({entries:[row],total:1}));
+    expect(screen.queryByText('Synthetic policy')).not.toBeInTheDocument();
+  });
+
   it('preserves unrelated environment caches when an audit request fails',async()=>{
     const other={environment_id:'other-fixture-environment',page:1,per_page:25};
     client.setQueryData(auditKeys.list(other),{entries:[{...row,environment_id:other.environment_id}],total:1});

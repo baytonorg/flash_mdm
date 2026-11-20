@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { hashKey, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { apiClient, ApiError } from '../client';
 
 // --- Interfaces ---
@@ -90,35 +90,38 @@ export function useAuditLog(params: AuditListParams) {
         auditRequestOrder.set(client, order);
       }
       const requestOrder = ++order.next;
+      const requestKey = hashKey(auditKeys.list(params));
       try {
         const result = await apiClient.get<AuditListResponse>(`/api/audit/log?${buildAuditQuery(params)}`);
         const denied = order.denied.get(params.environment_id);
         if (denied && requestOrder < denied.order) throw denied.error;
         // Keep the denial watermark after recovery: a newer successful filter
         // cannot authorise an older outstanding response in another filter.
-        order.success.set(params.environment_id, Math.max(requestOrder, order.success.get(params.environment_id) ?? 0));
+        order.success.set(requestKey, Math.max(requestOrder, order.success.get(requestKey) ?? 0));
         return result;
       } catch (error) {
         // The current observer receives the failure. Other filter/page variants
         // must obtain a new result before redisplaying this environment's rows.
+        if (isAuditAccessDenied(error) && requestOrder > (order.denied.get(params.environment_id)?.order ?? 0)) {
+          order.denied.set(params.environment_id, { order: requestOrder, error });
+        }
+        const denied = order.denied.get(params.environment_id);
         client.removeQueries({
           queryKey: auditKeys.all,
           type: 'inactive',
           predicate: query => query.queryKey[1] === 'list'
-            && (query.queryKey[2] as AuditListParams | undefined)?.environment_id === params.environment_id,
+            && (query.queryKey[2] as AuditListParams | undefined)?.environment_id === params.environment_id
+            && (!isAuditAccessDenied(error) || (order.success.get(query.queryHash) ?? 0) < (denied?.order ?? 0)),
         });
-        if (isAuditAccessDenied(error) && requestOrder >= (order.success.get(params.environment_id) ?? 0)) {
-          if (requestOrder > (order.denied.get(params.environment_id)?.order ?? 0)) {
-            order.denied.set(params.environment_id, { order: requestOrder, error });
-          }
+        if (isAuditAccessDenied(error) && denied) {
           for (const query of client.getQueryCache().findAll({ queryKey: auditKeys.all, type: 'active' })) {
             const sibling = query.queryKey[2] as AuditListParams | undefined;
             if (query.queryKey[1] !== 'list' || sibling?.environment_id !== params.environment_id
-              || query.queryHash === client.getQueryCache().find({ queryKey: auditKeys.list(params), exact: true })?.queryHash) continue;
+              || query.queryHash === requestKey || (order.success.get(query.queryHash) ?? 0) > denied.order) continue;
             // A genuine denial is environment-wide, including a sibling that
             // became active while this request was outstanding. Preserve any
             // in-flight refresh so its later authoritative result can settle.
-            query.setState({ data: undefined, dataUpdatedAt: 0, error, errorUpdatedAt: Date.now(), status: 'error' });
+            query.setState({ data: undefined, dataUpdatedAt: 0, error: denied.error, errorUpdatedAt: Date.now(), status: 'error' });
           }
         }
         throw error;
