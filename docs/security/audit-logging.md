@@ -63,7 +63,9 @@ When a request is authenticated via API key, the audit entry automatically attri
 
 ## Retention
 
-Retention policy is operator-controlled. Flash MDM does not enforce a built-in retention period. Operators seeking SOC2 or similar compliance should define and enforce a log retention period and access control for the `audit_log` table.
+The daily `cleanup-scheduled` job hard-deletes audit rows older than `AUDIT_LOG_RETENTION_DAYS`, which defaults to 30 days when unset or invalid. It deletes up to 10,000 rows per batch and continues until the remaining batch is smaller. Operators should choose an appropriate retention period and access controls for their requirements, then monitor cleanup completion. See [Data retention & cleanup](../operations/data-retention.md).
+
+This setting applies to rows in `audit_log`. It does not expire previously generated report-export files or define backup retention. Those copies have separate lifetimes and access controls.
 
 ## Known limitations
 
