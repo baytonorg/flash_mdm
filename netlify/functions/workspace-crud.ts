@@ -5,6 +5,7 @@ import { requireWorkspacePermission, requireWorkspaceResourcePermission } from '
 import { encrypt } from './_lib/crypto.js';
 import { amapiCall, getAmapiErrorHttpStatus } from './_lib/amapi.js';
 import { logAudit } from './_lib/audit.js';
+import { workspaceResponse } from './_lib/workspace-settings-response.js';
 import { jsonResponse, errorResponse, parseJsonBody, getClientIp, getSearchParams } from './_lib/helpers.js';
 import {
   MAX_DEVICE_REPORT_STALE_AFTER_DAYS,
@@ -60,7 +61,7 @@ export default async (request: Request, context: Context) => {
           [auth.user.id]
         );
       }
-      return jsonResponse({ workspaces });
+      return jsonResponse({ workspaces: workspaces.map(workspaceResponse) });
     }
 
   // GET /api/workspaces/orphaned-enterprises?workspace_id=...
@@ -124,7 +125,7 @@ export default async (request: Request, context: Context) => {
           [action, auth.user.id]
         );
     if (!ws) return errorResponse('Workspace not found', 404);
-    return jsonResponse({ workspace: ws });
+    return jsonResponse({ workspace: workspaceResponse(ws) });
   }
 
   // POST /api/workspaces/create

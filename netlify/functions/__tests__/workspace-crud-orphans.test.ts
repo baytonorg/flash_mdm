@@ -10,7 +10,8 @@ vi.mock('../_lib/auth.js', () => ({
   requireAuth: vi.fn(),
 }));
 
-vi.mock('../_lib/rbac.js', () => ({
+vi.mock('../_lib/rbac.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../_lib/rbac.js')>(),
   requireWorkspacePermission: vi.fn(),
   requireWorkspaceResourcePermission: vi.fn(),
 }));
@@ -239,7 +240,7 @@ describe('workspace-crud API key scope handling', () => {
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({
-      workspaces: [{ id: 'ws_1', name: 'Workspace 1', user_role: 'admin', access_scope: 'workspace' }],
+      workspaces: [{ id: 'ws_1', name: 'Workspace 1', user_role: 'admin', access_scope: 'workspace', settings: {} }],
     });
     expect(mockQuery).toHaveBeenCalledWith(expect.stringContaining('WHERE w.id = $1'), ['ws_1', 'admin']);
   });
