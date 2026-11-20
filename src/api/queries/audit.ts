@@ -39,7 +39,11 @@ export function isAuditAccessDenied(error: unknown): error is ApiError {
 
 // Per-client ordering keeps a late response from an older request from
 // overriding a more recently started request that has already succeeded.
-const auditRequestOrder = new WeakMap<QueryClient, { next: number; success: Map<string, number> }>();
+const auditRequestOrder = new WeakMap<QueryClient, {
+  next: number;
+  success: Map<string, number>;
+  denied: Map<string, { order: number; error: ApiError }>;
+}>();
 
 // --- Helpers ---
 
@@ -82,12 +86,15 @@ export function useAuditLog(params: AuditListParams) {
     queryFn: async () => {
       let order = auditRequestOrder.get(client);
       if (!order) {
-        order = { next: 0, success: new Map() };
+        order = { next: 0, success: new Map(), denied: new Map() };
         auditRequestOrder.set(client, order);
       }
       const requestOrder = ++order.next;
       try {
         const result = await apiClient.get<AuditListResponse>(`/api/audit/log?${buildAuditQuery(params)}`);
+        const denied = order.denied.get(params.environment_id);
+        if (denied && requestOrder < denied.order) throw denied.error;
+        order.denied.delete(params.environment_id);
         order.success.set(params.environment_id, Math.max(requestOrder, order.success.get(params.environment_id) ?? 0));
         return result;
       } catch (error) {
@@ -100,6 +107,9 @@ export function useAuditLog(params: AuditListParams) {
             && (query.queryKey[2] as AuditListParams | undefined)?.environment_id === params.environment_id,
         });
         if (isAuditAccessDenied(error) && requestOrder >= (order.success.get(params.environment_id) ?? 0)) {
+          if (requestOrder > (order.denied.get(params.environment_id)?.order ?? 0)) {
+            order.denied.set(params.environment_id, { order: requestOrder, error });
+          }
           for (const query of client.getQueryCache().findAll({ queryKey: auditKeys.all, type: 'active' })) {
             const sibling = query.queryKey[2] as AuditListParams | undefined;
             if (query.queryKey[1] !== 'list' || sibling?.environment_id !== params.environment_id
