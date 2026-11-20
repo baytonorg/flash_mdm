@@ -93,6 +93,31 @@ describe('audit history outcomes',()=>{
     expect(screen.queryByText('Synthetic policy')).not.toBeInTheDocument();expect(live()).not.toBeInTheDocument();
   });
 
+  it('applies a delayed denial to the cached filter that became active meanwhile',async()=>{
+    let deny!: (reason: unknown)=>void;
+    vi.mocked(apiClient.get).mockResolvedValueOnce({entries:[row],total:1}).mockImplementationOnce(()=>new Promise((_resolve,reject)=>{deny=reject;}));
+    show();await screen.findByText('Synthetic policy');
+    const user=userEvent.setup(),filter=screen.getByRole('combobox',{name:'Filter audit action'});
+    await user.selectOptions(filter,'auth.login');await user.selectOptions(filter,'');
+    await screen.findByText('Synthetic policy');
+    await act(async()=>deny(new ApiError('Synthetic denied',403)));
+    await screen.findByRole('alert');expect(screen.queryByText('Synthetic policy')).not.toBeInTheDocument();expect(live()).not.toBeInTheDocument();
+    vi.mocked(apiClient.get).mockResolvedValue({entries:[row],total:1});
+    await user.click(screen.getByRole('button',{name:'Retry audit log'}));
+    await screen.findByText('Synthetic policy');expect(live()).toBeInTheDocument();
+  });
+
+  it('does not let an older denial override a newer authoritative success',async()=>{
+    let deny!: (reason: unknown)=>void;
+    vi.mocked(apiClient.get).mockResolvedValueOnce({entries:[row],total:1}).mockImplementationOnce(()=>new Promise((_resolve,reject)=>{deny=reject;})).mockResolvedValue({entries:[row],total:1});
+    show();await screen.findByText('Synthetic policy');
+    const user=userEvent.setup(),filter=screen.getByRole('combobox',{name:'Filter audit action'});
+    await user.selectOptions(filter,'auth.login');await user.selectOptions(filter,'');
+    await act(async()=>{await client.refetchQueries({queryKey:auditKeys.all,type:'active'});});
+    await act(async()=>deny(new ApiError('Older synthetic denied',403)));
+    expect(screen.getByText('Synthetic policy')).toBeInTheDocument();expect(live()).toBeInTheDocument();expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('preserves unrelated environment caches when an audit request fails',async()=>{
     const other={environment_id:'other-fixture-environment',page:1,per_page:25};
     client.setQueryData(auditKeys.list(other),{entries:[{...row,environment_id:other.environment_id}],total:1});

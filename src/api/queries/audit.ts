@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { apiClient, ApiError } from '../client';
 
 // --- Interfaces ---
@@ -36,6 +36,10 @@ export const auditKeys = {
 export function isAuditAccessDenied(error: unknown): error is ApiError {
   return error instanceof ApiError && (error.status === 401 || error.status === 403);
 }
+
+// Per-client ordering keeps a late response from an older request from
+// overriding a more recently started request that has already succeeded.
+const auditRequestOrder = new WeakMap<QueryClient, { next: number; success: Map<string, number> }>();
 
 // --- Helpers ---
 
@@ -76,8 +80,16 @@ export function useAuditLog(params: AuditListParams) {
   return useQuery({
     queryKey: auditKeys.list(params),
     queryFn: async () => {
+      let order = auditRequestOrder.get(client);
+      if (!order) {
+        order = { next: 0, success: new Map() };
+        auditRequestOrder.set(client, order);
+      }
+      const requestOrder = ++order.next;
       try {
-        return await apiClient.get<AuditListResponse>(`/api/audit/log?${buildAuditQuery(params)}`);
+        const result = await apiClient.get<AuditListResponse>(`/api/audit/log?${buildAuditQuery(params)}`);
+        order.success.set(params.environment_id, Math.max(requestOrder, order.success.get(params.environment_id) ?? 0));
+        return result;
       } catch (error) {
         // The current observer receives the failure. Other filter/page variants
         // must obtain a new result before redisplaying this environment's rows.
@@ -87,6 +99,17 @@ export function useAuditLog(params: AuditListParams) {
           predicate: query => query.queryKey[1] === 'list'
             && (query.queryKey[2] as AuditListParams | undefined)?.environment_id === params.environment_id,
         });
+        if (isAuditAccessDenied(error) && requestOrder >= (order.success.get(params.environment_id) ?? 0)) {
+          for (const query of client.getQueryCache().findAll({ queryKey: auditKeys.all, type: 'active' })) {
+            const sibling = query.queryKey[2] as AuditListParams | undefined;
+            if (query.queryKey[1] !== 'list' || sibling?.environment_id !== params.environment_id
+              || query.queryHash === client.getQueryCache().find({ queryKey: auditKeys.list(params), exact: true })?.queryHash) continue;
+            // A genuine denial is environment-wide, including a sibling that
+            // became active while this request was outstanding. Preserve any
+            // in-flight refresh so its later authoritative result can settle.
+            query.setState({ data: undefined, dataUpdatedAt: 0, error, errorUpdatedAt: Date.now(), status: 'error' });
+          }
+        }
         throw error;
       }
     },
