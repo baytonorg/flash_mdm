@@ -22,6 +22,7 @@ export interface ApiKeyRecord {
 
 const apiKeyKeys = {
   all: ['api-keys'] as const,
+  create: ['api-keys', 'create-once'] as const,
   workspace: (workspaceId: string) => [...apiKeyKeys.all, 'workspace', workspaceId] as const,
   environment: (environmentId: string) => [...apiKeyKeys.all, 'environment', environmentId] as const,
 };
@@ -47,6 +48,8 @@ export function useEnvironmentApiKeys(environmentId?: string) {
 export function useCreateApiKey() {
   const queryClient = useQueryClient();
   return useMutation({
+    mutationKey: apiKeyKeys.create,
+    retry: false,
     mutationFn: (params: {
       scope_type: 'workspace' | 'environment';
       workspace_id?: string;
@@ -55,6 +58,14 @@ export function useCreateApiKey() {
       name: string;
       expires_in_days?: number;
     }) => apiClient.post<{ api_key: ApiKeyRecord }>('/api/api-keys/create', params),
+    // Keep the one-time response with its caller, not in the shared mutation
+    // cache. Removing the completed entry never cancels or repeats a request.
+    onSettled: (_data, _error, variables) => {
+      const cache = queryClient.getMutationCache();
+      for (const mutation of cache.findAll({ mutationKey: apiKeyKeys.create, exact: true })) {
+        if (mutation.state.variables === variables) cache.remove(mutation);
+      }
+    },
     onSuccess: (data) => {
       if (data.api_key.scope_type === 'workspace') {
         queryClient.invalidateQueries({ queryKey: apiKeyKeys.workspace(data.api_key.workspace_id) });

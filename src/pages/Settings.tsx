@@ -2152,7 +2152,7 @@ function FlashiAssistantToggle({ environmentId }: { environmentId: string }) {
 
 // ---- API Tab ----
 
-function ApiKeyScopePanel(props: {
+interface ApiKeyScopePanelProps {
   title: string;
   description: string;
   scopeType: 'workspace' | 'environment';
@@ -2160,7 +2160,25 @@ function ApiKeyScopePanel(props: {
   canCreate: boolean;
   canView: boolean;
   maxRole: WorkspaceRole;
-}) {
+}
+
+export function ApiKeyScopePanel(props: ApiKeyScopePanelProps) {
+  const { user } = useAuthStore();
+  const { activeWorkspace } = useContextStore();
+  if (!user || !activeWorkspace) return null;
+  const support = user.impersonation;
+  const boundary = JSON.stringify([
+    user.id, user.is_superadmin, support?.active ?? false,
+    support?.mode ?? null, support?.by_user_id ?? null,
+    activeWorkspace.id, props.scopeType, props.scopeId,
+    props.canCreate, props.canView, props.maxRole,
+  ]);
+  // Leaving an issuing context dismisses its one-time value. An outstanding
+  // request may still complete, but it cannot populate a different instance.
+  return <ApiKeyScopePanelContent key={boundary} {...props} workspaceId={activeWorkspace.id} />;
+}
+
+function ApiKeyScopePanelContent(props: ApiKeyScopePanelProps & { workspaceId: string }) {
   const API_KEY_ROLES: Array<{ value: 'owner' | 'admin' | 'member' | 'viewer'; label: string }> = [
     { value: 'owner', label: 'Owner' },
     { value: 'admin', label: 'Admin' },
@@ -2177,11 +2195,15 @@ function ApiKeyScopePanel(props: {
   ];
   const createApiKey = useCreateApiKey();
   const revokeApiKey = useRevokeApiKey();
-  const workspaceKeys = useWorkspaceApiKeys(props.scopeType === 'workspace' ? props.scopeId : undefined);
-  const environmentKeys = useEnvironmentApiKeys(props.scopeType === 'environment' ? props.scopeId : undefined);
+  const workspaceKeys = useWorkspaceApiKeys(props.canView && props.scopeType === 'workspace' ? props.scopeId : undefined);
+  const environmentKeys = useEnvironmentApiKeys(props.canView && props.scopeType === 'environment' ? props.scopeId : undefined);
   const keys = props.scopeType === 'workspace' ? (workspaceKeys.data ?? []) : (environmentKeys.data ?? []);
   const isLoading = props.scopeType === 'workspace' ? workspaceKeys.isLoading : environmentKeys.isLoading;
   const queryError = props.scopeType === 'workspace' ? workspaceKeys.error : environmentKeys.error;
+  const active = useRef(true);
+  const creating = useRef(false);
+  const [copying, setCopying] = useState(false);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   const [name, setName] = useState('');
   const [role, setRole] = useState<'owner' | 'admin' | 'member' | 'viewer'>(props.maxRole);
   const [expiresInDays, setExpiresInDays] = useState<string>('');
@@ -2198,8 +2220,10 @@ function ApiKeyScopePanel(props: {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!props.canCreate || !name.trim()) return;
+    if (!props.canCreate || !name.trim() || creating.current) return;
+    creating.current = true;
     setFeedback({});
+    setCreatedToken(null);
     try {
       const result = await createApiKey.mutateAsync({
         scope_type: props.scopeType,
@@ -2210,6 +2234,17 @@ function ApiKeyScopePanel(props: {
         role,
         ...(expiresInDays ? { expires_in_days: Number(expiresInDays) } : {}),
       });
+      if (!active.current) return;
+      const issued = result?.api_key;
+      if (!issued || issued.scope_type !== props.scopeType || issued.workspace_id !== props.workspaceId
+        || (props.scopeType === 'workspace' ? issued.workspace_id !== props.scopeId : issued.environment_id !== props.scopeId)) {
+        setFeedback({ error: 'The creation result did not match this scope. Check the issuing key list before creating another key.' });
+        return;
+      }
+      if (typeof issued.token !== 'string' || !issued.token.trim()) {
+        setFeedback({ error: 'The API key was created, but its full value was not returned. Check the key list before creating another key.' });
+        return;
+      }
       setCreatedToken({
         name: result.api_key.name,
         token: result.api_key.token ?? '',
@@ -2222,7 +2257,9 @@ function ApiKeyScopePanel(props: {
       setName('');
       setExpiresInDays('');
     } catch (err) {
-      setFeedback({ error: err instanceof Error ? err.message : 'Failed to create API key' });
+      if (active.current) setFeedback({ error: err instanceof Error ? err.message : 'Failed to create API key' });
+    } finally {
+      creating.current = false;
     }
   };
 
@@ -2286,6 +2323,7 @@ function ApiKeyScopePanel(props: {
         </div>
       )}
 
+      {createApiKey.isPending && <p className="text-xs text-gray-500">Keep this scope open to copy the new key. Leaving dismisses its one-time value and does not cancel creation.</p>}
       <FeedbackMessage {...feedback} />
       {createdToken && (
         <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-3">
@@ -2302,14 +2340,22 @@ function ApiKeyScopePanel(props: {
             </code>
             <button
               type="button"
-              onClick={() => {
-                void navigator.clipboard.writeText(createdToken.token);
-                setFeedback({ success: `Copied API key "${createdToken.name}" to clipboard.` });
+              disabled={copying}
+              onClick={async () => {
+                setCopying(true);
+                try {
+                  await navigator.clipboard.writeText(createdToken.token);
+                  if (active.current) setFeedback({ success: `Copied API key "${createdToken.name}" to clipboard.` });
+                } catch {
+                  if (active.current) setFeedback({ error: 'Unable to copy the API key. Select and copy the value manually.' });
+                } finally {
+                  if (active.current) setCopying(false);
+                }
               }}
-              className="inline-flex items-center gap-1 rounded-md border border-green-300 bg-white px-2 py-1 text-xs text-green-800 hover:bg-green-100"
+              className="inline-flex items-center gap-1 rounded-md border border-green-300 bg-white px-2 py-1 text-xs text-green-800 hover:bg-green-100 disabled:opacity-50"
             >
-              <Copy className="h-3 w-3" />
-              Copy
+              {copying ? <Loader2 className="h-3 w-3 animate-spin" /> : <Copy className="h-3 w-3" />}
+              {copying ? 'Copying...' : 'Copy'}
             </button>
           </div>
         </div>
@@ -2388,7 +2434,7 @@ function ApiKeyScopePanel(props: {
   );
 }
 
-function ApiTab() {
+export function ApiTab() {
   const { activeWorkspace, activeEnvironment, environments } = useContextStore();
   const { user } = useAuthStore();
   const workspaceRole = activeWorkspace?.user_role ?? null;
