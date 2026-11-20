@@ -2162,23 +2162,39 @@ interface ApiKeyScopePanelProps {
   maxRole: WorkspaceRole;
 }
 
+function apiKeyPanelContext(scopeType: 'workspace' | 'environment', user: ReturnType<typeof useAuthStore.getState>['user'], context: ReturnType<typeof useContextStore.getState>) {
+  const workspace = context.activeWorkspace;
+  const environment = context.activeEnvironment;
+  const matrix = getEffectiveSettingsPermissionMatrix((workspace as { settings?: unknown } | null)?.settings);
+  return JSON.stringify([
+    user?.id, user?.is_superadmin, user?.impersonation?.active,
+    user?.impersonation?.mode, user?.impersonation?.by_user_id,
+    workspace?.id, workspace?.user_role, workspace?.access_scope,
+    ...(scopeType === 'workspace' ? [matrix.workspace?.write]
+      : [environment?.id, environment?.user_role, matrix.environment?.write, matrix.environment?.manage_settings]),
+  ]);
+}
+
 export function ApiKeyScopePanel(props: ApiKeyScopePanelProps) {
   const { user } = useAuthStore();
-  const { activeWorkspace } = useContextStore();
+  const context = useContextStore();
+  const { activeWorkspace } = context;
   if (!user || !activeWorkspace) return null;
+  const contextSnapshot = apiKeyPanelContext(props.scopeType, user, context);
   const support = user.impersonation;
   const boundary = JSON.stringify([
     user.id, user.is_superadmin, support?.active ?? false,
     support?.mode ?? null, support?.by_user_id ?? null,
     activeWorkspace.id, props.scopeType, props.scopeId,
-    props.canCreate, props.canView, props.maxRole,
+    props.canCreate, props.canView, props.maxRole, contextSnapshot,
   ]);
   // Leaving an issuing context dismisses its one-time value. An outstanding
   // request may still complete, but it cannot populate a different instance.
-  return <ApiKeyScopePanelContent key={boundary} {...props} workspaceId={activeWorkspace.id} />;
+  return <ApiKeyScopePanelContent key={boundary} {...props} workspaceId={activeWorkspace.id}
+    canDispatch={() => apiKeyPanelContext(props.scopeType, useAuthStore.getState().user, useContextStore.getState()) === contextSnapshot} />;
 }
 
-function ApiKeyScopePanelContent(props: ApiKeyScopePanelProps & { workspaceId: string }) {
+function ApiKeyScopePanelContent(props: ApiKeyScopePanelProps & { workspaceId: string; canDispatch: () => boolean }) {
   const API_KEY_ROLES: Array<{ value: 'owner' | 'admin' | 'member' | 'viewer'; label: string }> = [
     { value: 'owner', label: 'Owner' },
     { value: 'admin', label: 'Admin' },
@@ -2193,14 +2209,15 @@ function ApiKeyScopePanelContent(props: ApiKeyScopePanelProps & { workspaceId: s
     { value: '180', label: '180 days' },
     { value: '365', label: '365 days' },
   ];
-  const createApiKey = useCreateApiKey();
+  const active = useRef(true);
+  const copyingInFlight = useRef(false);
+  const createApiKey = useCreateApiKey(() => active.current && props.canDispatch());
   const revokeApiKey = useRevokeApiKey();
   const workspaceKeys = useWorkspaceApiKeys(props.canView && props.scopeType === 'workspace' ? props.scopeId : undefined);
   const environmentKeys = useEnvironmentApiKeys(props.canView && props.scopeType === 'environment' ? props.scopeId : undefined);
   const keys = props.scopeType === 'workspace' ? (workspaceKeys.data ?? []) : (environmentKeys.data ?? []);
   const isLoading = props.scopeType === 'workspace' ? workspaceKeys.isLoading : environmentKeys.isLoading;
   const queryError = props.scopeType === 'workspace' ? workspaceKeys.error : environmentKeys.error;
-  const active = useRef(true);
   const creating = useRef(false);
   const [copying, setCopying] = useState(false);
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
@@ -2220,7 +2237,7 @@ function ApiKeyScopePanelContent(props: ApiKeyScopePanelProps & { workspaceId: s
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!props.canCreate || !name.trim() || creating.current) return;
+    if (!props.canCreate || !name.trim() || creating.current || copyingInFlight.current) return;
     creating.current = true;
     setFeedback({});
     setCreatedToken(null);
@@ -2308,7 +2325,7 @@ function ApiKeyScopePanelContent(props: ApiKeyScopePanelProps & { workspaceId: s
           </div>
           <button
             type="submit"
-            disabled={createApiKey.isPending || !name.trim()}
+            disabled={createApiKey.isPending || copying || !name.trim()}
             className="inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-light transition-colors disabled:opacity-50"
           >
             {createApiKey.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Key className="h-4 w-4" />}
@@ -2342,6 +2359,8 @@ function ApiKeyScopePanelContent(props: ApiKeyScopePanelProps & { workspaceId: s
               type="button"
               disabled={copying}
               onClick={async () => {
+                if (copyingInFlight.current) return;
+                copyingInFlight.current = true;
                 setCopying(true);
                 try {
                   await navigator.clipboard.writeText(createdToken.token);
@@ -2349,6 +2368,7 @@ function ApiKeyScopePanelContent(props: ApiKeyScopePanelProps & { workspaceId: s
                 } catch {
                   if (active.current) setFeedback({ error: 'Unable to copy the API key. Select and copy the value manually.' });
                 } finally {
+                  copyingInFlight.current = false;
                   if (active.current) setCopying(false);
                 }
               }}

@@ -1,12 +1,12 @@
 import {afterEach,beforeEach,describe,it,expect,vi} from 'vitest';
 import {render,screen,fireEvent,waitFor,act} from '@testing-library/react';
-import {QueryClientProvider} from '@tanstack/react-query';
+import {QueryClientProvider,onlineManager} from '@tanstack/react-query';
 import {queryClient} from '@/lib/queryClient';
 import {ApiKeyScopePanel} from '../Settings';
 import {apiClient} from '@/api/client';
 const fixture=vi.hoisted(()=>({user:{id:'operator-one',is_superadmin:false,impersonation:undefined as undefined|{active:boolean;mode:'full'|'read_only';by_user_id:string}},workspace:{id:'workspace-one'}}));
-vi.mock('@/stores/auth',()=>({useAuthStore:()=>({user:fixture.user})}));
-vi.mock('@/stores/context',()=>({useContextStore:()=>({activeWorkspace:fixture.workspace})}));
+vi.mock('@/stores/auth',()=>({useAuthStore:Object.assign(()=>({user:fixture.user}),{getState:()=>({user:fixture.user})})}));
+vi.mock('@/stores/context',()=>({useContextStore:Object.assign(()=>({activeWorkspace:fixture.workspace}),{getState:()=>({activeWorkspace:fixture.workspace})})}));
 vi.mock('@/api/client',async original=>({...await original<typeof import('@/api/client')>(),apiClient:{get:vi.fn(),post:vi.fn()}}));
 const sentinel='inert-one-time-value';
 let clipboard:ReturnType<typeof vi.fn>;
@@ -15,12 +15,12 @@ function response(overrides:Record<string,unknown>={}){return {api_key:{id:'iner
 function show(){const tree=()=> <QueryClientProvider client={queryClient}><ApiKeyScopePanel {...props}/></QueryClientProvider>;return {...render(tree()),tree};}
 async function generate(){fireEvent.change(screen.getByPlaceholderText(/Local integration/),{target:{value:'Synthetic key'}});fireEvent.click(screen.getByRole('button',{name:'Generate API Key'}));}
 beforeEach(()=>{
- queryClient.clear();Object.assign(props,{title:'Workspace keys',scopeType:'workspace',scopeId:'workspace-one',canCreate:true,canView:true,maxRole:'owner'});fixture.workspace={id:'workspace-one'};fixture.user={id:'operator-one',is_superadmin:false,impersonation:undefined};
+ onlineManager.setOnline(true);queryClient.clear();Object.assign(props,{title:'Workspace keys',scopeType:'workspace',scopeId:'workspace-one',canCreate:true,canView:true,maxRole:'owner'});fixture.workspace={id:'workspace-one'};fixture.user={id:'operator-one',is_superadmin:false,impersonation:undefined};
  vi.mocked(apiClient.get).mockReset().mockImplementation(async url=>({api_keys:[{id:String(url),name:'Masked list row '+String(url),role:'owner',token:null,token_prefix:'inert-list',created_at:'2026-11-20T09:00:00Z',expires_at:null,last_used_at:null}]}));
  vi.mocked(apiClient.post).mockReset().mockImplementation(async()=>response());
  clipboard=vi.fn().mockResolvedValue(undefined);Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:clipboard}});
 });
-afterEach(()=>{queryClient.clear();});
+afterEach(()=>{onlineManager.setOnline(true);queryClient.clear();});
 
 describe('one-time key handoff stays in its issuing context',()=>{
  it('shows the authorised result once, copies only after success and keeps list rows masked',async()=>{
@@ -86,6 +86,21 @@ describe('one-time key handoff stays in its issuing context',()=>{
   const defaults=queryClient.getDefaultOptions();queryClient.setDefaultOptions({...defaults,mutations:{retry:2}});
   try{vi.mocked(apiClient.post).mockRejectedValue(new Error('Inert uncertain result'));show();await generate();await screen.findByText('Inert uncertain result');expect(apiClient.post).toHaveBeenCalledTimes(1);}
   finally{queryClient.setDefaultOptions(defaults);}
+ });
+ it('fails offline intent locally and never queues a first dispatch under a later actor',async()=>{
+  onlineManager.setOnline(false);const view=show();await generate();await screen.findByText('You are offline. Reconnect before generating an API key.');expect(apiClient.post).not.toHaveBeenCalled();
+  fixture.user={...fixture.user,id:'operator-two'};view.rerender(view.tree());await act(async()=>onlineManager.setOnline(true));await waitFor(()=>expect(queryClient.getMutationCache().getAll()).toHaveLength(0));expect(apiClient.post).not.toHaveBeenCalled();
+ });
+ it('does not first dispatch if identity changes between submit and the transport microtask',async()=>{
+  let release!:()=>void;const defaults=queryClient.getDefaultOptions();queryClient.setDefaultOptions({...defaults,mutations:{onMutate:()=>new Promise<void>(yes=>{release=yes;})}});
+  try{const view=show();await generate();expect(apiClient.post).not.toHaveBeenCalled();fixture.user={...fixture.user,id:'operator-two'};view.rerender(view.tree());await act(async()=>release());expect(apiClient.post).not.toHaveBeenCalled();}
+  finally{queryClient.setDefaultOptions(defaults);}
+ });
+ it('prevents replacing a handoff while its clipboard operation remains pending',async()=>{
+  let resolve!:()=>void;clipboard.mockImplementation(()=>new Promise<void>(yes=>{resolve=yes;}));show();await generate();await screen.findByText(sentinel);
+  fireEvent.click(screen.getByRole('button',{name:'Copy'}));fireEvent.change(screen.getByPlaceholderText(/Local integration/),{target:{value:'Synthetic key'}});
+  expect(screen.getByRole('button',{name:'Generate API Key'})).toBeDisabled();fireEvent.submit(screen.getByPlaceholderText(/Local integration/).closest('form')!);expect(apiClient.post).toHaveBeenCalledTimes(1);
+  await act(async()=>resolve());await screen.findByText('Copied API key "Synthetic key" to clipboard.');await generate();await screen.findByText(/API key created:/);expect(screen.queryByText(/Copied API key/)).not.toBeInTheDocument();expect(apiClient.post).toHaveBeenCalledTimes(2);
  });
  it('keeps the existing list query isolated by scope and never supplies full values through it',async()=>{
   const view=show();await screen.findByText(/Masked list row.*workspace-one/);fixture.workspace={id:'workspace-two'};props.scopeId='workspace-two';view.rerender(view.tree());await screen.findByText(/Masked list row.*workspace-two/);

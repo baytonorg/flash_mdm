@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { onlineManager, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../client';
 
 export interface ApiKeyRecord {
@@ -45,10 +45,11 @@ export function useEnvironmentApiKeys(environmentId?: string) {
   });
 }
 
-export function useCreateApiKey() {
+export function useCreateApiKey(canDispatch: () => boolean) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationKey: apiKeyKeys.create,
+    networkMode: 'always',
     retry: false,
     mutationFn: (params: {
       scope_type: 'workspace' | 'environment';
@@ -57,7 +58,11 @@ export function useCreateApiKey() {
       role?: 'owner' | 'admin' | 'member' | 'viewer';
       name: string;
       expires_in_days?: number;
-    }) => apiClient.post<{ api_key: ApiKeyRecord }>('/api/api-keys/create', params),
+    }) => {
+      if (!onlineManager.isOnline()) throw new Error('You are offline. Reconnect before generating an API key.');
+      if (!canDispatch()) throw new Error('The issuing context changed. Check the key list before generating another key.');
+      return apiClient.post<{ api_key: ApiKeyRecord }>('/api/api-keys/create', params);
+    },
     // Keep the one-time response with its caller, not in the shared mutation
     // cache. Removing the completed entry never cancels or repeats a request.
     onSettled: (_data, _error, variables) => {
@@ -67,6 +72,7 @@ export function useCreateApiKey() {
       }
     },
     onSuccess: (data) => {
+      if (!data?.api_key) return;
       if (data.api_key.scope_type === 'workspace') {
         queryClient.invalidateQueries({ queryKey: apiKeyKeys.workspace(data.api_key.workspace_id) });
       }
