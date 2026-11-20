@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { traceWindow } from "./trace-writer.js";
 import { constants } from "node:fs";
 import { mkdir, open, readdir, lstat, link, unlink } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { buildTraceReport } from "./trace-reader.js";
 
 export function traceWindowBounds(window: string): { from: Date; to: Date } {
@@ -45,11 +45,16 @@ type Checkpoint = {
   }>;
 };
 async function checkpointDirectory(directory: string) {
+  if (!directory || directory.split("/").includes(".."))
+    throw new Error("Checkpoint directory must not contain parent traversals");
+  // Remove benign terminal syntax before lstat, so link/ and link/. cannot
+  // dereference the final symlink before the ownership check.
+  const checkedDirectory = resolve(directory);
   const uid = process.geteuid?.();
-  const root = await lstat(directory);
+  const root = await lstat(checkedDirectory);
   if (uid === undefined || !root.isDirectory() || root.isSymbolicLink() || root.mode & 0o077 || root.uid !== uid)
     throw new Error("Publish checkpoints as the owner of the private trace directory");
-  const path = join(directory, "reports");
+  const path = join(checkedDirectory, "reports");
   const existing = await lstat(path).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return null;
     throw error;

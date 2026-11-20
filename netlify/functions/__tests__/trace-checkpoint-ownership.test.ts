@@ -73,11 +73,23 @@ describe('checkpoint publication ownership',()=>{
     expect((await stat(sentinel)).mtimeMs).toBe(before.mtimeMs);
   });
 
-  it('rejects a symlink root without changing the real directory',async()=>{
+  it.each(['','/','/.'])('rejects a symlink root with terminal syntax %j without changing the real directory',async suffix=>{
     const link=directory+'-link';await symlink(directory,link);
     const before=await readdir(directory);
-    try{await expect(writeTraceCheckpoint(link,window,report)).rejects.toThrow('Publish checkpoints as the owner');expect(await readdir(directory)).toEqual(before);}
+    try{await expect(writeTraceCheckpoint(link+suffix,window,report)).rejects.toThrow('Publish checkpoints as the owner');expect(await readdir(directory)).toEqual(before);}
     finally{await rm(link);}
+  });
+
+  it.each(['/','/.'])('accepts terminal syntax %j on a real same-owner directory',async suffix=>{
+    expect(await writeTraceCheckpoint(directory+suffix,window,report)).toEqual({written:true});
+    expect(await traceComparisons(directory,to)).toMatchObject({seven_days:{windows_available:1,http_requests:1}});
+  });
+
+  it('rejects parent traversal without creating report storage in either directory',async()=>{
+    const child=join(directory,'child');await mkdir(child,{mode:0o700});
+    await expect(writeTraceCheckpoint(child+'/..',window,report)).rejects.toThrow('Checkpoint directory must not contain parent traversals');
+    expect(await readdir(directory)).not.toContain('reports');
+    expect(await readdir(child)).not.toContain('reports');
   });
 
   it('rejects an existing public reports directory without changing its contents',async()=>{

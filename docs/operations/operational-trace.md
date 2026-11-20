@@ -38,7 +38,7 @@ FLASH_TRACE_DIR=<configured-private-directory> node --import tsx scripts/operati
 FLASH_TRACE_DIR=<configured-private-directory> node --import tsx scripts/operational-trace-report.ts --window YYYY-MM-DD
 ```
 
-Publish checkpoints as the active web service user, which owns the private trace directory. Check the deployed service `User`, `WorkingDirectory` and `FLASH_TRACE_DIR` first, then run the commands above under that user. Running a checkpoint as another operator, including root, is rejected before report storage is changed. Read-only reporting remains available to authorised operators with filesystem access.
+Publish checkpoints as the active web service user, which owns the private trace directory. Check the deployed service `User`, `WorkingDirectory` and `FLASH_TRACE_DIR` first, then run the commands above under that user. Use a directory path without `..` segments. Running a checkpoint as another operator, including root, is rejected before report storage is changed. Read-only reporting remains available to authorised operators with filesystem access.
 
 Normal checkpoint publication can prune weaker valid candidates for the same window and dates beyond the 35-window limit. It does not repair ownership or permissions of older inaccessible candidates. Regenerate from retained raw collection only when evidence exists, and keep inaccessible or partial history visible.
 
