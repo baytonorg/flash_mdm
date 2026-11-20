@@ -46,6 +46,7 @@ const url = process.env.WORKSPACE_SETTINGS_TEST_DATABASE_URL;
   it('projects workspace-key list without granting cross-workspace access',async()=>{
     const r=await call('/api/workspaces/list','workspace',true);expect(r.status).toBe(200);
     const body=await r.json();expect(body.workspaces).toHaveLength(1);expect(body.workspaces[0]).toMatchObject({id:workspace,settings:projected});
+    expect(body.workspaces[0].settings).toEqual(projected);
     expect((await call('/api/workspaces/'+other,'workspace',true)).status).toBe(403);
   });
   it('rejects environment-key list and detail without widening scope',async()=>{
