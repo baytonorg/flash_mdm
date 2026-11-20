@@ -1,7 +1,7 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, expect, it, vi } from 'vitest';
-vi.mock('@/api/client', () => ({ apiClient: { get: vi.fn() } }));
+vi.mock('@/api/client', async original => ({ ...await original<typeof import('@/api/client')>(), apiClient: { get: vi.fn() } }));
 vi.mock('@/stores/context', () => ({ useContextStore: () => ({ activeEnvironment: { id: 'synthetic-environment' } }) }));
 import { apiClient } from '@/api/client';
 import AuditLog from '../AuditLog';
