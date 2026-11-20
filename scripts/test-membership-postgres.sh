@@ -70,3 +70,8 @@ WORKSPACE_SETTINGS_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_
 docker exec "$fixture_container" createdb -U postgres flash_login_length_fixture
 LOGIN_LENGTH_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/flash_login_length_fixture" \
   npx vitest run netlify/functions/__tests__/auth-login-length.postgres.test.ts
+
+# Environment Roles must round-trip their scoped response without workspace authority.
+docker exec "$fixture_container" createdb -U postgres flash_roles_rbac_fixture
+ROLES_RBAC_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/flash_roles_rbac_fixture" \
+  npx vitest run netlify/functions/__tests__/roles-rbac.postgres.test.ts

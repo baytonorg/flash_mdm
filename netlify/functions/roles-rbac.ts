@@ -1,6 +1,7 @@
 import type { Context } from '@netlify/functions';
-import { execute, queryOne } from './_lib/db.js';
-import { requireAuth } from './_lib/auth.js';
+import type { PoolClient } from 'pg';
+import { execute, queryOne, transaction } from './_lib/db.js';
+import { requireAuth, type AuthContext } from './_lib/auth.js';
 import {
   clearEnvironmentPermissionMatrixCache,
   clearWorkspacePermissionMatrixCache,
@@ -22,6 +23,8 @@ import { errorResponse, getClientIp, getSearchParams, jsonResponse, parseJsonBod
 import { logAudit } from './_lib/audit.js';
 import { getWorkspaceLicensingSettings } from './_lib/licensing.js';
 import { ENVIRONMENT_RBAC_CLEAR_SQL, ENVIRONMENT_RBAC_SAVE_SQL } from './_lib/environment-features.js';
+import { lockMembershipWorkspaces } from './_lib/membership-lifecycle.js';
+import { scopeAuthority } from './_lib/scope-authority.js';
 
 interface UpdateRbacMatrixBody {
   workspace_id?: string;
@@ -58,6 +61,54 @@ function filterBillingMeta(meta: ReturnType<typeof getRbacMatrixMeta>) {
       && action !== 'billing_customer'
     )),
   };
+}
+
+function environmentMeta(licensingVisible: boolean) {
+  const meta = licensingVisible ? getRbacMatrixMeta() : filterBillingMeta(getRbacMatrixMeta());
+  return { ...meta, resource_order: meta.resource_order.filter(resource => resource !== 'workspace') };
+}
+
+async function lockOptionalSettingsRow(client: PoolClient, sql: string, params: unknown[] = []) {
+  await client.query('SAVEPOINT rbac_optional_settings_lock');
+  try {
+    await client.query(sql, params);
+  } catch (error) {
+    // The compatibility readers explicitly support an unavailable optional
+    // relation during rollout. Recover the transaction before using defaults.
+    if (!error || typeof error !== 'object' || !('code' in error) || error.code !== '42P01') throw error;
+    await client.query('ROLLBACK TO SAVEPOINT rbac_optional_settings_lock');
+  }
+  await client.query('RELEASE SAVEPOINT rbac_optional_settings_lock');
+}
+
+async function withEnvironmentRbacWrite<T>(
+  auth: AuthContext, workspaceId: string, environmentId: string,
+  write: (state: { client: PoolClient; workspace: { settings: unknown }; env: { enterprise_features: unknown }; licensingVisible: boolean }) => Promise<T>,
+): Promise<T> {
+  return transaction(async client => {
+    await client.query("SET LOCAL lock_timeout = '3s'");
+    await client.query("SET LOCAL statement_timeout = '15s'");
+    await lockMembershipWorkspaces(client, [workspaceId]);
+    const workspace = (await client.query('SELECT settings FROM workspaces WHERE id = $1', [workspaceId])).rows[0];
+    if (!workspace) throw errorResponse('Workspace no longer exists', 409);
+    const env = (await client.query(
+      'SELECT id, enterprise_features, workspace_id FROM environments WHERE id = $1 AND workspace_id = $2 FOR UPDATE',
+      [environmentId, workspaceId]
+    )).rows[0];
+    if (!env) throw errorResponse('Environment not found', 404);
+    const authority = await scopeAuthority(client, auth, environmentId);
+    if (authority.role !== 'owner') throw errorResponse('Forbidden: insufficient environment role', 403);
+    // Existing settings rows cannot change halfway through the hidden-resource
+    // decision. The parent lock also excludes a new workspace settings row.
+    await lockOptionalSettingsRow(client, 'SELECT id FROM platform_settings WHERE id = 1 FOR SHARE');
+    await lockOptionalSettingsRow(client, 'SELECT workspace_id FROM workspace_licensing_settings WHERE workspace_id = $1 FOR SHARE', [workspaceId]);
+    const licensingSettings = await getWorkspaceLicensingSettings(workspaceId, client);
+    return write({ client, workspace, env, licensingVisible: licensingSettings.effective_licensing_enabled });
+  });
+}
+
+function requireEnvironmentUpdate(result: { rowCount: number | null }) {
+  if (result.rowCount !== 1) throw errorResponse('Environment changed. Reload and try again.', 409);
 }
 
 export default async function handler(request: Request, _context: Context) {
@@ -173,55 +224,35 @@ export default async function handler(request: Request, _context: Context) {
 
       // --- Environment-level RBAC override ---
       if (environmentId) {
-        const env = await queryOne<{ id: string; enterprise_features: unknown; workspace_id: string }>(
-          'SELECT id, enterprise_features, workspace_id FROM environments WHERE id = $1 AND workspace_id = $2',
-          [environmentId, workspaceId]
-        );
-        if (!env) return errorResponse('Environment not found', 404);
-
-        await requireEnvironmentRole(auth, environmentId, 'owner');
-
-        let canonicalMatrix: PermissionMatrix;
-        const licensingSettings = await getWorkspaceLicensingSettings(workspaceId);
-        const licensingVisible = licensingSettings.effective_licensing_enabled;
-        let matrixInput: unknown = body.matrix;
-        try {
-          if (!licensingVisible && matrixInput && typeof matrixInput === 'object' && !Array.isArray(matrixInput)) {
-            const existingMatrix = getEnvironmentRbacOverridesFromFeatures(env.enterprise_features);
-            const effectiveExisting = existingMatrix ? mergePermissionMatrixWithDefaults(existingMatrix) : cloneDefaultPermissionMatrix();
-            matrixInput = { ...(matrixInput as Record<string, unknown>) };
-            if (!('billing' in (matrixInput as Record<string, unknown>))) {
-              (matrixInput as Record<string, unknown>).billing = effectiveExisting.billing;
+        const { canonicalMatrix, licensingVisible } = await withEnvironmentRbacWrite(auth, workspaceId, environmentId, async ({client, workspace, env, licensingVisible}) => {
+          let matrixInput: unknown = body.matrix;
+          let canonicalMatrix: PermissionMatrix;
+          try {
+            if (!licensingVisible && matrixInput && typeof matrixInput === 'object' && !Array.isArray(matrixInput)) {
+              const inherited = getWorkspaceRbacOverridesFromSettings(workspace?.settings) ?? cloneDefaultPermissionMatrix();
+              const effectiveExisting = getEnvironmentRbacOverridesFromFeatures(env.enterprise_features, inherited) ?? inherited;
+              matrixInput = { ...(matrixInput as Record<string, unknown>), billing: effectiveExisting.billing };
             }
+            canonicalMatrix = validateAndCanonicalizePermissionMatrix(matrixInput, 'environment');
+          } catch (err) {
+            throw errorResponse(err instanceof Error ? err.message : 'Invalid RBAC matrix', 400);
           }
-
-          canonicalMatrix = validateAndCanonicalizePermissionMatrix(matrixInput);
-        } catch (err) {
-          return errorResponse(err instanceof Error ? err.message : 'Invalid RBAC matrix', 400);
-        }
-
-        const nextFeatures = setEnvironmentRbacSettings(
-          env.enterprise_features,
-          canonicalMatrix,
-          auth.authType === 'session' ? auth.user.id : null
-        );
-
-        await execute(
-          ENVIRONMENT_RBAC_SAVE_SQL,
-          [JSON.stringify(nextFeatures.rbac), environmentId]
-        );
-        clearEnvironmentPermissionMatrixCache();
-
-        await logAudit({
-          workspace_id: workspaceId,
-          environment_id: environmentId,
-          user_id: auth.authType === 'session' ? auth.user.id : undefined,
-          action: 'rbac.environment_permission_matrix.updated',
-          resource_type: 'environment',
-          resource_id: environmentId,
-          details: { resource_count: Object.keys(canonicalMatrix).length },
-          ip_address: getClientIp(request),
+          const nextFeatures = setEnvironmentRbacSettings(env.enterprise_features, canonicalMatrix, auth.authType === 'session' ? auth.user.id : null);
+          const updated = await client.query(ENVIRONMENT_RBAC_SAVE_SQL, [JSON.stringify(nextFeatures.rbac), environmentId]);
+          requireEnvironmentUpdate(updated);
+          await logAudit({
+            workspace_id: workspaceId,
+            environment_id: environmentId,
+            user_id: auth.authType === 'session' ? auth.user.id : undefined,
+            action: 'rbac.environment_permission_matrix.updated',
+            resource_type: 'environment',
+            resource_id: environmentId,
+            details: { resource_count: Object.keys(canonicalMatrix).length },
+            ip_address: getClientIp(request),
+          }, client, { requirePersistence: true });
+          return { canonicalMatrix, licensingVisible };
         });
+        clearEnvironmentPermissionMatrixCache();
 
         return jsonResponse({
           message: 'Environment RBAC permissions updated',
@@ -229,7 +260,7 @@ export default async function handler(request: Request, _context: Context) {
           environment_id: environmentId,
           matrix: licensingVisible ? canonicalMatrix : filterOutBillingResource(canonicalMatrix),
           environment_has_override: true,
-          meta: licensingVisible ? getRbacMatrixMeta() : filterBillingMeta(getRbacMatrixMeta()),
+          meta: environmentMeta(licensingVisible),
         });
       }
 
@@ -297,60 +328,35 @@ export default async function handler(request: Request, _context: Context) {
       if (!workspaceId) return errorResponse('workspace_id is required');
       const environmentId = params.get('environment_id')?.trim();
 
-      const licensingSettings = await getWorkspaceLicensingSettings(workspaceId);
-      const licensingVisible = licensingSettings.effective_licensing_enabled;
-
       // --- Environment-level RBAC override clear ---
       if (environmentId) {
-        const env = await queryOne<{ id: string; enterprise_features: unknown }>(
-          'SELECT id, enterprise_features FROM environments WHERE id = $1 AND workspace_id = $2',
-          [environmentId, workspaceId]
-        );
-        if (!env) return errorResponse('Environment not found', 404);
-
-        await requireEnvironmentRole(auth, environmentId, 'owner');
-
-        await execute(
-          ENVIRONMENT_RBAC_CLEAR_SQL,
-          [environmentId]
-        );
-        clearEnvironmentPermissionMatrixCache();
-
-        // Resolve what the environment will now inherit from workspace
-        const workspace = await queryOne<{ settings: unknown }>(
-          'SELECT settings FROM workspaces WHERE id = $1',
-          [workspaceId]
-        );
-        const defaults = cloneDefaultPermissionMatrix();
-        const savedMatrix = getWorkspaceRbacOverridesFromSettings(workspace?.settings);
-        const inheritedMatrix = savedMatrix ? mergePermissionMatrixWithDefaults(savedMatrix) : defaults;
-        const inheritedWithFeatureGates = licensingVisible ? inheritedMatrix : filterOutBillingResource(inheritedMatrix);
-
-        await logAudit({
-          workspace_id: workspaceId,
-          environment_id: environmentId,
-          user_id: auth.authType === 'session' ? auth.user.id : undefined,
-          action: 'rbac.environment_permission_matrix.cleared',
-          resource_type: 'environment',
-          resource_id: environmentId,
-          details: {},
-          ip_address: getClientIp(request),
+        const inheritedWithFeatureGates = await withEnvironmentRbacWrite(auth, workspaceId, environmentId, async ({client, workspace, licensingVisible}) => {
+          requireEnvironmentUpdate(await client.query(ENVIRONMENT_RBAC_CLEAR_SQL, [environmentId]));
+          const savedMatrix = getWorkspaceRbacOverridesFromSettings(workspace.settings);
+          const inheritedMatrix = savedMatrix ?? cloneDefaultPermissionMatrix();
+          await logAudit({
+            workspace_id: workspaceId,
+            environment_id: environmentId,
+            user_id: auth.authType === 'session' ? auth.user.id : undefined,
+            action: 'rbac.environment_permission_matrix.cleared',
+            resource_type: 'environment', resource_id: environmentId, details: {}, ip_address: getClientIp(request),
+          }, client, { requirePersistence: true });
+          return { matrix: licensingVisible ? inheritedMatrix : filterOutBillingResource(inheritedMatrix), licensingVisible };
         });
-
+        clearEnvironmentPermissionMatrixCache();
         return jsonResponse({
-          message: 'Environment RBAC override cleared',
-          workspace_id: workspaceId,
-          environment_id: environmentId,
-          defaults: filterOutWorkspaceResource(inheritedWithFeatureGates),
-          matrix: filterOutWorkspaceResource(inheritedWithFeatureGates),
-          environment_has_override: false,
-          meta: licensingVisible ? getRbacMatrixMeta() : filterBillingMeta(getRbacMatrixMeta()),
+          message: 'Environment RBAC override cleared', workspace_id: workspaceId, environment_id: environmentId,
+          defaults: filterOutWorkspaceResource(inheritedWithFeatureGates.matrix),
+          matrix: filterOutWorkspaceResource(inheritedWithFeatureGates.matrix), environment_has_override: false,
+          meta: environmentMeta(inheritedWithFeatureGates.licensingVisible),
         });
       }
 
       // --- Workspace-level RBAC override clear (existing) ---
       await requireWorkspaceRole(auth, workspaceId, 'owner');
 
+      const licensingSettings = await getWorkspaceLicensingSettings(workspaceId);
+      const licensingVisible = licensingSettings.effective_licensing_enabled;
       const current = await queryOne<{ settings: unknown }>(
         'SELECT settings FROM workspaces WHERE id = $1',
         [workspaceId]
@@ -389,6 +395,9 @@ export default async function handler(request: Request, _context: Context) {
     return errorResponse('Method not allowed', 405);
   } catch (err) {
     if (err instanceof Response) return err;
+    if (err && typeof err === 'object' && 'code' in err && ['55P03', '40P01', '40001'].includes(String(err.code))) {
+      return errorResponse('RBAC settings are busy or have changed. Reload and try again.', 409);
+    }
     console.error('roles-rbac error:', err);
     return errorResponse('Internal server error', 500);
   }

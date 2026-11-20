@@ -3,7 +3,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../_lib/db.js', () => ({
   queryOne: vi.fn(),
   execute: vi.fn(),
+  transaction: vi.fn(async callback => {
+    const { execute, queryOne } = await import('../_lib/db.js');
+    return callback({ query: async (sql: string, params: unknown[]) => sql.startsWith('SELECT')
+      ? { rows: [await queryOne(sql, params)].filter(Boolean) }
+      : /^(SET LOCAL|SAVEPOINT|RELEASE SAVEPOINT|ROLLBACK TO SAVEPOINT)/.test(sql) ? { rows: [], rowCount: 0 } : execute(sql, params) });
+  }),
 }));
+
+vi.mock('../_lib/membership-lifecycle.js', () => ({ lockMembershipWorkspaces: vi.fn() }));
+vi.mock('../_lib/scope-authority.js', () => ({ scopeAuthority: vi.fn() }));
 
 vi.mock('../_lib/auth.js', () => ({
   requireAuth: vi.fn(),
@@ -33,6 +42,7 @@ import { clearEnvironmentPermissionMatrixCache, requireEnvironmentRole, requireW
 import { logAudit } from '../_lib/audit.js';
 import { getWorkspaceLicensingSettings } from '../_lib/licensing.js';
 import handler from '../roles-rbac.ts';
+import { scopeAuthority } from '../_lib/scope-authority.js';
 
 const mockQueryOne = vi.mocked(queryOne);
 const mockExecute = vi.mocked(execute);
@@ -55,6 +65,7 @@ function ownerAuth() {
 }
 
 beforeEach(() => {
+  vi.mocked(scopeAuthority).mockReset().mockResolvedValue({ role: 'owner' } as never);
   mockQueryOne.mockReset();
   mockExecute.mockReset();
   mockRequireAuth.mockReset();
@@ -400,6 +411,7 @@ describe('roles-rbac', () => {
   });
 
   it('saves environment-level RBAC override via PUT with environment_id', async () => {
+    mockQueryOne.mockResolvedValueOnce({ settings: {} } as never);
     mockRequireEnvironmentRole.mockResolvedValueOnce('owner' as never);
     mockQueryOne.mockResolvedValueOnce({
       id: 'env_1',
@@ -457,12 +469,13 @@ describe('roles-rbac', () => {
       action: 'rbac.environment_permission_matrix.updated',
       environment_id: 'env_1',
       workspace_id: 'ws_1',
-    }));
+    }), expect.any(Object), { requirePersistence: true });
   });
 
   it('clears environment-level RBAC override via DELETE with environment_id', async () => {
     mockRequireEnvironmentRole.mockResolvedValueOnce('owner' as never);
     mockQueryOne
+      .mockResolvedValueOnce({ settings: {} } as never)
       .mockResolvedValueOnce({
         id: 'env_1',
         enterprise_features: {
@@ -473,8 +486,7 @@ describe('roles-rbac', () => {
             updated_by_user_id: 'user_1',
           },
         },
-      } as never) // environment with override
-      .mockResolvedValueOnce({ settings: {} } as never); // workspace settings for inheritance
+      } as never); // environment with override
 
     const res = await handler(
       new Request('http://localhost/api/roles/rbac?workspace_id=ws_1&environment_id=env_1', { method: 'DELETE' }),
@@ -496,14 +508,14 @@ describe('roles-rbac', () => {
     expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({
       action: 'rbac.environment_permission_matrix.cleared',
       environment_id: 'env_1',
-    }));
+    }), expect.any(Object), { requirePersistence: true });
   });
 
   it('rejects environment PUT when user is not environment owner', async () => {
-    mockRequireEnvironmentRole.mockRejectedValueOnce(
+    vi.mocked(scopeAuthority).mockRejectedValueOnce(
       new Response(JSON.stringify({ error: 'Forbidden: insufficient environment role' }), { status: 403 })
     );
-    mockQueryOne.mockResolvedValueOnce({
+    mockQueryOne.mockResolvedValueOnce({ settings: {} } as never).mockResolvedValueOnce({
       id: 'env_1',
       enterprise_features: {},
       workspace_id: 'ws_1',
