@@ -45,10 +45,22 @@ type Checkpoint = {
   }>;
 };
 async function checkpointDirectory(directory: string) {
+  const uid = process.geteuid?.();
+  const root = await lstat(directory);
+  if (uid === undefined || !root.isDirectory() || root.isSymbolicLink() || root.mode & 0o077 || root.uid !== uid)
+    throw new Error("Publish checkpoints as the owner of the private trace directory");
   const path = join(directory, "reports");
-  await mkdir(path, { recursive: true, mode: 0o700 });
+  const existing = await lstat(path).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (existing && (!existing.isDirectory() || existing.isSymbolicLink() || existing.mode & 0o077 || existing.uid !== uid))
+    throw new Error("Checkpoint storage must be private and owned by the trace directory owner");
+  await mkdir(path, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "EEXIST") throw error;
+  });
   const stat = await lstat(path);
-  if (!stat.isDirectory() || stat.isSymbolicLink() || stat.mode & 0o077)
+  if (!stat.isDirectory() || stat.isSymbolicLink() || stat.mode & 0o077 || stat.uid !== uid)
     throw new Error("Checkpoint storage is unavailable");
   return path;
 }
