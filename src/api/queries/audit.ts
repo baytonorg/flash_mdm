@@ -1,5 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
-import { apiClient } from '../client';
+import { hashKey, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { apiClient, ApiError } from '../client';
 
 // --- Interfaces ---
 
@@ -32,6 +32,18 @@ export const auditKeys = {
   all: ['audit'] as const,
   list: (params: AuditListParams) => [...auditKeys.all, 'list', params] as const,
 };
+
+export function isAuditAccessDenied(error: unknown): error is ApiError {
+  return error instanceof ApiError && (error.status === 401 || error.status === 403);
+}
+
+// Per-client ordering keeps a late response from an older request from
+// overriding a more recently started request that has already succeeded.
+const auditRequestOrder = new WeakMap<QueryClient, {
+  next: number;
+  success: Map<string, number>;
+  denied: Map<string, { order: number; error: ApiError }>;
+}>();
 
 // --- Helpers ---
 
@@ -68,10 +80,54 @@ export async function collectEnvironmentAuditExport(environmentId: string, envir
 // --- Hooks ---
 
 export function useAuditLog(params: AuditListParams) {
+  const client = useQueryClient();
   return useQuery({
     queryKey: auditKeys.list(params),
-    queryFn: () =>
-      apiClient.get<AuditListResponse>(`/api/audit/log?${buildAuditQuery(params)}`),
+    queryFn: async () => {
+      let order = auditRequestOrder.get(client);
+      if (!order) {
+        order = { next: 0, success: new Map(), denied: new Map() };
+        auditRequestOrder.set(client, order);
+      }
+      const requestOrder = ++order.next;
+      const requestKey = hashKey(auditKeys.list(params));
+      try {
+        const result = await apiClient.get<AuditListResponse>(`/api/audit/log?${buildAuditQuery(params)}`);
+        const denied = order.denied.get(params.environment_id);
+        if (denied && requestOrder < denied.order) throw denied.error;
+        // Keep the denial watermark after recovery: a newer successful filter
+        // cannot authorise an older outstanding response in another filter.
+        order.success.set(requestKey, Math.max(requestOrder, order.success.get(requestKey) ?? 0));
+        return result;
+      } catch (error) {
+        // The current observer receives the failure. Other filter/page variants
+        // must obtain a new result before redisplaying this environment's rows.
+        if (isAuditAccessDenied(error) && requestOrder > (order.denied.get(params.environment_id)?.order ?? 0)) {
+          order.denied.set(params.environment_id, { order: requestOrder, error });
+        }
+        const denied = order.denied.get(params.environment_id);
+        client.removeQueries({
+          queryKey: auditKeys.all,
+          type: 'inactive',
+          predicate: query => query.queryKey[1] === 'list'
+            && (query.queryKey[2] as AuditListParams | undefined)?.environment_id === params.environment_id
+            && (!isAuditAccessDenied(error) || (order.success.get(query.queryHash) ?? 0) < (denied?.order ?? 0)),
+        });
+        if (isAuditAccessDenied(error) && denied) {
+          for (const query of client.getQueryCache().findAll({ queryKey: auditKeys.all, type: 'active' })) {
+            const sibling = query.queryKey[2] as AuditListParams | undefined;
+            if (query.queryKey[1] !== 'list' || sibling?.environment_id !== params.environment_id
+              || query.queryHash === requestKey || (order.success.get(query.queryHash) ?? 0) > denied.order) continue;
+            // A genuine denial is environment-wide, including a sibling that
+            // became active while this request was outstanding. Preserve any
+            // in-flight refresh so its later authoritative result can settle.
+            query.setState({ data: undefined, dataUpdatedAt: 0, error: denied.error, errorUpdatedAt: Date.now(), status: 'error' });
+          }
+        }
+        throw error;
+      }
+    },
+    retry: (failureCount, error) => !isAuditAccessDenied(error) && failureCount < 1,
     enabled: !!params.environment_id,
     refetchInterval: 30000,
     refetchIntervalInBackground: true,
