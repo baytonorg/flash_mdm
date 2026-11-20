@@ -65,3 +65,8 @@ USER_CONTROLS_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}
 docker exec "$fixture_container" createdb -U postgres flash_workspace_settings_fixture
 WORKSPACE_SETTINGS_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/flash_workspace_settings_fixture" \
   npx vitest run netlify/functions/__tests__/workspace-settings.postgres.test.ts
+
+# Account throttle namespaces must fit the schema for valid long addresses.
+docker exec "$fixture_container" createdb -U postgres flash_login_length_fixture
+LOGIN_LENGTH_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/flash_login_length_fixture" \
+  npx vitest run netlify/functions/__tests__/auth-login-length.postgres.test.ts

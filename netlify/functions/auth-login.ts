@@ -71,6 +71,17 @@ function normalizeLoginEmail(email: string): string {
   return email.toLowerCase().trim();
 }
 
+export function loginAccountRateLimitBucket(normalizedEmail: string): string {
+  // Preserve existing short-address buckets and their current throttling state.
+  // A 16-character prefix leaves 239 characters in the VARCHAR(255) bucket ID.
+  // Longer addresses previously could not create a bucket at all.
+  let characters = 0;
+  for (const _character of normalizedEmail) {
+    if (++characters > 239) return `auth:login:acct-sha256:${hashToken(normalizedEmail)}`;
+  }
+  return `auth:login:acct:${normalizedEmail}`;
+}
+
 function retryAfterHeader(retryAfterMs?: number): Record<string, string> {
   if (!retryAfterMs) return {};
   return { 'Retry-After': String(Math.max(1, Math.ceil(retryAfterMs / 1000))) };
@@ -106,7 +117,7 @@ export default async (request: Request, context: Context) => {
   }
 
   // Secondary rate limit by normalized account identifier: 5 attempts per 15 minutes
-  const accountLimit = await consumeToken(`auth:login:acct:${normalizedEmail}`, 1, 5, 5 / 900);
+  const accountLimit = await consumeToken(loginAccountRateLimitBucket(normalizedEmail), 1, 5, 5 / 900);
   if (!accountLimit.allowed) {
     return throttledLoginResponse(accountLimit.retryAfterMs);
   }
