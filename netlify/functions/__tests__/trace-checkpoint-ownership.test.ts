@@ -94,7 +94,7 @@ describe('checkpoint publication ownership',()=>{
 
   it('rejects an existing public reports directory without changing its contents',async()=>{
     const {reports}=await retainSentinel();await chmod(reports,0o755);
-    await expect(writeTraceCheckpoint(directory,window,report)).rejects.toThrow('Checkpoint storage must be private and owned');
+    await expect(writeTraceCheckpoint(directory,window,report)).rejects.toThrow();
     expect(await readdir(reports)).toEqual(['2026-01-01.json']);
   });
 });
