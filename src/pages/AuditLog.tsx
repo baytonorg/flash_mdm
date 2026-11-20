@@ -2,6 +2,7 @@ import { auditActionLabel } from '@/lib/audit-label';
 import { useState, useEffect } from 'react';
 import { useContextStore } from '@/stores/context';
 import { useAuditLog, type AuditEntry } from '@/api/queries/audit';
+import { ApiError } from '@/api/client';
 import DataTable, { type ColumnDef } from '@/components/common/DataTable';
 import Pagination from '@/components/common/Pagination';
 import LivePageIndicator from '@/components/common/LivePageIndicator';
@@ -64,7 +65,7 @@ export default function AuditLog() {
   // Reset pagination on environment switch
   useEffect(() => { setPage(1); setActionFilter(''); }, [environmentId]);
 
-  const { data, isLoading, dataUpdatedAt } = useAuditLog({
+  const { data, isLoading, isError, error, isFetching, refetch, dataUpdatedAt } = useAuditLog({
     environment_id: environmentId,
     page,
     per_page: perPage,
@@ -74,6 +75,11 @@ export default function AuditLog() {
   const entries = data?.entries ?? [];
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / perPage));
+  const errorMessage = error instanceof ApiError && error.status === 403
+    ? 'You do not have permission to view audit logs in this environment.'
+    : data !== undefined
+      ? 'Audit logs could not be refreshed. Retry to load current entries.'
+      : 'Unable to load audit logs. Please try again.';
 
   const columns: ColumnDef<AuditEntry>[] = [
     {
@@ -143,7 +149,9 @@ export default function AuditLog() {
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <h1 className="text-2xl font-bold text-gray-900">Audit Log</h1>
-          <LivePageIndicator intervalMs={LIVE_REFRESH_MS} lastUpdatedAt={dataUpdatedAt} />
+          {!isError && dataUpdatedAt > 0 && (
+            <LivePageIndicator intervalMs={LIVE_REFRESH_MS} lastUpdatedAt={dataUpdatedAt} />
+          )}
         </div>
 
         {/* Action filter */}
@@ -167,15 +175,30 @@ export default function AuditLog() {
         </div>
       </div>
 
-      <DataTable<AuditEntry>
-        columns={columns}
-        data={entries}
-        loading={isLoading}
-        emptyMessage="No audit entries found."
-      />
+      {isError ? (
+        <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <p>{errorMessage}</p>
+          <button
+            type="button"
+            onClick={() => { void refetch(); }}
+            disabled={isFetching}
+            aria-label="Retry audit log"
+            className="mt-3 rounded-lg border border-border bg-surface px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:opacity-50"
+          >
+            {isFetching ? 'Retrying...' : 'Retry'}
+          </button>
+        </div>
+      ) : (
+        <DataTable<AuditEntry>
+          columns={columns}
+          data={entries}
+          loading={isLoading}
+          emptyMessage="No audit entries found."
+        />
+      )}
 
       {/* Pagination */}
-      {total > 0 && (
+      {!isError && total > 0 && (
         <div className="mt-4">
           <Pagination
             page={page}
