@@ -124,6 +124,12 @@ const url=process.env.ROLES_RBAC_TEST_DATABASE_URL;
   finally{await blocker.query('ROLLBACK');blocker.release();}
  },10000);
 
+ for(const missing of [['workspace_licensing_settings'],['platform_settings'],['platform_settings','workspace_licensing_settings']])it('preserves optional-relation fallback for '+missing.join(' and '),async()=>{
+  for(const name of missing)await pool.query('ALTER TABLE '+name+' RENAME TO fixture_hidden_'+name);
+  try{const body=await read();body.matrix.audit.read='member';expect((await call('PUT',env,body.matrix)).status).toBe(200);expect((await call('DELETE')).status).toBe(200);expect((await read()).matrix.workspace).toBeUndefined();}
+  finally{for(const name of [...missing].reverse())await pool.query('ALTER TABLE fixture_hidden_'+name+' RENAME TO '+name);}
+ });
+
  it('clears an override and returns the same environment-scoped schema',async()=>{
   const body=await read();body.matrix.audit.read='member';expect((await call('PUT',env,body.matrix)).status).toBe(200);
   const r=await call('DELETE');expect(r.status).toBe(200);const result=await r.json();expect(result.matrix.workspace).toBeUndefined();expect(result.meta.resource_order).not.toContain('workspace');expect(result.environment_has_override).toBe(false);

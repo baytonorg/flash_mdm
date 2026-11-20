@@ -7,7 +7,7 @@ vi.mock('../_lib/db.js', () => ({
     const { execute, queryOne } = await import('../_lib/db.js');
     return callback({ query: async (sql: string, params: unknown[]) => sql.startsWith('SELECT')
       ? { rows: [await queryOne(sql, params)].filter(Boolean) }
-      : sql.startsWith('SET LOCAL') ? { rows: [], rowCount: 0 } : execute(sql, params) });
+      : /^(SET LOCAL|SAVEPOINT|RELEASE SAVEPOINT|ROLLBACK TO SAVEPOINT)/.test(sql) ? { rows: [], rowCount: 0 } : execute(sql, params) });
   }),
 }));
 

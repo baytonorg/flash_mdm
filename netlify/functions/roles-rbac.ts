@@ -68,6 +68,19 @@ function environmentMeta(licensingVisible: boolean) {
   return { ...meta, resource_order: meta.resource_order.filter(resource => resource !== 'workspace') };
 }
 
+async function lockOptionalSettingsRow(client: PoolClient, sql: string, params: unknown[] = []) {
+  await client.query('SAVEPOINT rbac_optional_settings_lock');
+  try {
+    await client.query(sql, params);
+  } catch (error) {
+    // The compatibility readers explicitly support an unavailable optional
+    // relation during rollout. Recover the transaction before using defaults.
+    if (!error || typeof error !== 'object' || !('code' in error) || error.code !== '42P01') throw error;
+    await client.query('ROLLBACK TO SAVEPOINT rbac_optional_settings_lock');
+  }
+  await client.query('RELEASE SAVEPOINT rbac_optional_settings_lock');
+}
+
 async function withEnvironmentRbacWrite<T>(
   auth: AuthContext, workspaceId: string, environmentId: string,
   write: (state: { client: PoolClient; workspace: { settings: unknown }; env: { enterprise_features: unknown }; licensingVisible: boolean }) => Promise<T>,
@@ -87,8 +100,8 @@ async function withEnvironmentRbacWrite<T>(
     if (authority.role !== 'owner') throw errorResponse('Forbidden: insufficient environment role', 403);
     // Existing settings rows cannot change halfway through the hidden-resource
     // decision. The parent lock also excludes a new workspace settings row.
-    await client.query('SELECT id FROM platform_settings WHERE id = 1 FOR SHARE');
-    await client.query('SELECT workspace_id FROM workspace_licensing_settings WHERE workspace_id = $1 FOR SHARE', [workspaceId]);
+    await lockOptionalSettingsRow(client, 'SELECT id FROM platform_settings WHERE id = 1 FOR SHARE');
+    await lockOptionalSettingsRow(client, 'SELECT workspace_id FROM workspace_licensing_settings WHERE workspace_id = $1 FOR SHARE', [workspaceId]);
     const licensingSettings = await getWorkspaceLicensingSettings(workspaceId, client);
     return write({ client, workspace, env, licensingVisible: licensingSettings.effective_licensing_enabled });
   });
