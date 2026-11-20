@@ -1,8 +1,7 @@
 import { auditActionLabel } from '@/lib/audit-label';
 import { useState, useEffect } from 'react';
 import { useContextStore } from '@/stores/context';
-import { useAuditLog, type AuditEntry } from '@/api/queries/audit';
-import { ApiError } from '@/api/client';
+import { useAuditLog, isAuditAccessDenied, type AuditEntry } from '@/api/queries/audit';
 import DataTable, { type ColumnDef } from '@/components/common/DataTable';
 import Pagination from '@/components/common/Pagination';
 import LivePageIndicator from '@/components/common/LivePageIndicator';
@@ -65,7 +64,7 @@ export default function AuditLog() {
   // Reset pagination on environment switch
   useEffect(() => { setPage(1); setActionFilter(''); }, [environmentId]);
 
-  const { data, isLoading, isError, error, isFetching, refetch, dataUpdatedAt } = useAuditLog({
+  const { data, isPending, isPaused, isError, error, failureCount, failureReason, isFetching, refetch, dataUpdatedAt } = useAuditLog({
     environment_id: environmentId,
     page,
     per_page: perPage,
@@ -75,8 +74,12 @@ export default function AuditLog() {
   const entries = data?.entries ?? [];
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / perPage));
-  const errorMessage = error instanceof ApiError && error.status === 403
-    ? 'You do not have permission to view audit logs in this environment.'
+  const hasFailure = isError || failureCount > 0;
+  const failure = error ?? failureReason;
+  const errorMessage = isAuditAccessDenied(failure)
+    ? failure.status === 401
+      ? 'Sign in again to view audit logs.'
+      : 'You do not have permission to view audit logs in this environment.'
     : data !== undefined
       ? 'Audit logs could not be refreshed. Retry to load current entries.'
       : 'Unable to load audit logs. Please try again.';
@@ -149,7 +152,7 @@ export default function AuditLog() {
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <h1 className="text-2xl font-bold text-gray-900">Audit Log</h1>
-          {!isError && dataUpdatedAt > 0 && (
+          {!hasFailure && !isPaused && dataUpdatedAt > 0 && (
             <LivePageIndicator intervalMs={LIVE_REFRESH_MS} lastUpdatedAt={dataUpdatedAt} />
           )}
         </div>
@@ -158,6 +161,7 @@ export default function AuditLog() {
         <div className="flex items-center gap-2">
           <Filter className="h-4 w-4 text-gray-400" />
           <select
+            aria-label="Filter audit action"
             value={actionFilter}
             onChange={(e) => {
               setActionFilter(e.target.value);
@@ -175,7 +179,11 @@ export default function AuditLog() {
         </div>
       </div>
 
-      {isError ? (
+      {isPaused ? (
+        <div role="status" className="rounded-lg border border-blue-100 bg-blue-50/50 px-4 py-3 text-sm text-blue-900">
+          Audit logs are waiting for a network connection.
+        </div>
+      ) : hasFailure ? (
         <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           <p>{errorMessage}</p>
           <button
@@ -192,13 +200,13 @@ export default function AuditLog() {
         <DataTable<AuditEntry>
           columns={columns}
           data={entries}
-          loading={isLoading}
+          loading={isPending}
           emptyMessage="No audit entries found."
         />
       )}
 
       {/* Pagination */}
-      {!isError && total > 0 && (
+      {!hasFailure && !isPaused && total > 0 && (
         <div className="mt-4">
           <Pagination
             page={page}

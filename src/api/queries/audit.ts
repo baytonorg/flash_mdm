@@ -1,5 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
-import { apiClient } from '../client';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { apiClient, ApiError } from '../client';
 
 // --- Interfaces ---
 
@@ -32,6 +32,10 @@ export const auditKeys = {
   all: ['audit'] as const,
   list: (params: AuditListParams) => [...auditKeys.all, 'list', params] as const,
 };
+
+export function isAuditAccessDenied(error: unknown): error is ApiError {
+  return error instanceof ApiError && (error.status === 401 || error.status === 403);
+}
 
 // --- Helpers ---
 
@@ -68,10 +72,25 @@ export async function collectEnvironmentAuditExport(environmentId: string, envir
 // --- Hooks ---
 
 export function useAuditLog(params: AuditListParams) {
+  const client = useQueryClient();
   return useQuery({
     queryKey: auditKeys.list(params),
-    queryFn: () =>
-      apiClient.get<AuditListResponse>(`/api/audit/log?${buildAuditQuery(params)}`),
+    queryFn: async () => {
+      try {
+        return await apiClient.get<AuditListResponse>(`/api/audit/log?${buildAuditQuery(params)}`);
+      } catch (error) {
+        // The current observer receives the failure. Other filter/page variants
+        // must obtain a new result before redisplaying this environment's rows.
+        client.removeQueries({
+          queryKey: auditKeys.all,
+          type: 'inactive',
+          predicate: query => query.queryKey[1] === 'list'
+            && (query.queryKey[2] as AuditListParams | undefined)?.environment_id === params.environment_id,
+        });
+        throw error;
+      }
+    },
+    retry: (failureCount, error) => !isAuditAccessDenied(error) && failureCount < 1,
     enabled: !!params.environment_id,
     refetchInterval: 30000,
     refetchIntervalInBackground: true,

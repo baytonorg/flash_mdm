@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
+import { queryClient } from '@/lib/queryClient';
 import AuditLog from '../AuditLog';
 import { apiClient, ApiError } from '@/api/client';
 import { auditKeys } from '@/api/queries/audit';
@@ -21,9 +22,9 @@ async function refresh() {
 }
 beforeEach(()=>{
   vi.mocked(apiClient.get).mockReset();fixture.environment='fixture-environment';
-  client=new QueryClient({defaultOptions:{queries:{retry:false,gcTime:0}}});
+  client=queryClient;client.clear();onlineManager.setOnline(true);
 });
-afterEach(()=>client.clear());
+afterEach(()=>{onlineManager.setOnline(true);client.clear();});
 
 describe('audit history outcomes',()=>{
   it.each([403,503])('does not describe an initial %s as healthy empty history',async status=>{
@@ -31,7 +32,8 @@ describe('audit history outcomes',()=>{
     show();await screen.findByRole('alert');
     expect(screen.queryByText('No audit entries found.')).not.toBeInTheDocument();
     expect(live()).not.toBeInTheDocument();
-    expect(screen.getByRole('button',{name:'Retry audit log'})).toBeEnabled();
+    await waitFor(()=>expect(screen.getByRole('button',{name:'Retry audit log'})).toBeEnabled());
+    expect(apiClient.get).toHaveBeenCalledTimes(status===403?1:2);
     expect(screen.getByRole('alert')).toHaveTextContent(status===403?'You do not have permission':'Unable to load audit logs');
   });
 
@@ -61,6 +63,41 @@ describe('audit history outcomes',()=>{
     show();const retry=await screen.findByRole('button',{name:'Retry audit log'});
     retry.focus();await userEvent.setup().keyboard('{Enter}');
     await screen.findByText('Synthetic policy');expect(live()).toBeInTheDocument();expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('describes an offline paused initial request without claiming empty or live history',async()=>{
+    onlineManager.setOnline(false);show();
+    expect(await screen.findByRole('status')).toHaveTextContent('waiting for a network connection');
+    expect(apiClient.get).not.toHaveBeenCalled();expect(live()).not.toBeInTheDocument();
+    expect(screen.queryByText('No audit entries found.')).not.toBeInTheDocument();
+  });
+
+  it('hides cached rows on the first failed refresh while a transient automatic retry waits',async()=>{
+    vi.mocked(apiClient.get).mockResolvedValueOnce({entries:[row],total:1}).mockRejectedValue(new ApiError('Synthetic transient',503));
+    show();await screen.findByText('Synthetic policy');
+    await act(async()=>{void client.invalidateQueries({queryKey:auditKeys.all});});
+    await screen.findByRole('alert');
+    expect(client.getQueryCache().find({queryKey:auditKeys.list({environment_id:fixture.environment,page:1,per_page:25,action:undefined})})?.state.fetchFailureCount).toBe(1);
+    expect(screen.queryByText('Synthetic policy')).not.toBeInTheDocument();expect(live()).not.toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'Retry audit log'})).toBeDisabled();
+  });
+
+  it('requires a fresh request when returning to a cached filter after permission denial',async()=>{
+    vi.mocked(apiClient.get).mockResolvedValueOnce({entries:[row],total:1}).mockRejectedValue(new ApiError('Synthetic denied',403));
+    show();await screen.findByText('Synthetic policy');
+    const user=userEvent.setup();const filter=screen.getByRole('combobox',{name:'Filter audit action'});
+    await user.selectOptions(filter,'auth.login');await screen.findByRole('alert');
+    expect(apiClient.get).toHaveBeenCalledTimes(2);
+    await user.selectOptions(filter,'');await screen.findByRole('alert');
+    expect(apiClient.get).toHaveBeenCalledTimes(3);
+    expect(screen.queryByText('Synthetic policy')).not.toBeInTheDocument();expect(live()).not.toBeInTheDocument();
+  });
+
+  it('preserves unrelated environment caches when an audit request fails',async()=>{
+    const other={environment_id:'other-fixture-environment',page:1,per_page:25};
+    client.setQueryData(auditKeys.list(other),{entries:[{...row,environment_id:other.environment_id}],total:1});
+    vi.mocked(apiClient.get).mockRejectedValue(new ApiError('Synthetic denied',403));show();await screen.findByRole('alert');
+    expect(client.getQueryData(auditKeys.list(other))).toEqual({entries:[{...row,environment_id:other.environment_id}],total:1});
   });
 
   it('does not show the prior environment rows while the new environment is loading',async()=>{

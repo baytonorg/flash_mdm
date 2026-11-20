@@ -20,11 +20,13 @@ const fixture = await createServer({
     load(id) {
       if (id !== 'virtual:audit-outcomes') return;
       return `import React from 'react';import {createRoot} from 'react-dom/client';
-        import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
+        import {QueryClientProvider,onlineManager} from '@tanstack/react-query';
+        import {queryClient as client} from '/src/lib/queryClient.ts';
         import AuditLog from '/src/pages/AuditLog.tsx';import {useContextStore} from '/src/stores/context.ts';
         import '/src/index.css';
         useContextStore.setState({activeEnvironment:{id:'fixture-a',name:'Synthetic environment'}});
-        const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
+        window.auditFixtureOnline=value=>onlineManager.setOnline(value);
+        if(new URL(location.href).searchParams.has('offline'))onlineManager.setOnline(false);
         window.auditFixtureRefresh=()=>client.invalidateQueries({queryKey:['audit']});
         window.auditFixtureScope=id=>useContextStore.setState({activeEnvironment:{id,name:'Synthetic environment'}});
         createRoot(document.querySelector('#app')).render(React.createElement(QueryClientProvider,{client},React.createElement(AuditLog)));`;
@@ -86,12 +88,18 @@ try {
       await page.getByRole('alert').waitFor();
       assert.equal(await page.getByText('Synthetic policy fixture-a', { exact: true }).count(), 0); assert.equal(await live.count(), 0);
       assert.match(await page.getByRole('alert').innerText(), /do not have permission/); await capture('denied');
+      const filter=page.getByRole('combobox');
+      await filter.selectOption('auth.login');await page.getByRole('alert').waitFor();
+      await filter.selectOption('');await page.getByRole('alert').waitFor();
+      assert.equal(await page.getByText('Synthetic policy fixture-a', { exact: true }).count(),0);assert.equal(await live.count(),0);
       setMode('success'); await page.getByRole('button', { name: 'Retry audit log' }).focus(); await page.keyboard.press('Enter');
       await page.getByText('Synthetic policy fixture-a', { exact: true }).waitFor(); assert.equal(await live.count(), 1);
-      setMode('unavailable'); await page.evaluate(() => window.auditFixtureRefresh());
-      await page.getByRole('alert').waitFor(); assert.match(await page.getByRole('alert').innerText(), /could not be refreshed/);
+      setMode('unavailable'); await page.evaluate(() => {void window.auditFixtureRefresh();});
+      await page.getByRole('alert').waitFor();
+      await page.waitForFunction(() => document.querySelector('button[aria-label="Retry audit log"]')?.disabled === true); assert.match(await page.getByRole('alert').innerText(), /could not be refreshed/);
       assert.equal(await live.count(), 0); assert.equal(await page.getByText('Synthetic policy fixture-a', { exact: true }).count(), 0);
       await capture('refresh-failed');
+      await page.waitForFunction(() => document.querySelector('button[aria-label="Retry audit log"]')?.disabled === false);
       setMode('hold'); await page.getByRole('button', { name: 'Retry audit log' }).focus(); await page.keyboard.press('Enter');
       await page.waitForFunction(() => document.querySelector('button[aria-label="Retry audit log"]')?.disabled === true);
       await page.getByRole('button', { name: 'Retry audit log' }).isDisabled().then(disabled => assert.equal(disabled, true));
@@ -104,9 +112,13 @@ try {
       setMode('unavailable'); await page.reload(); await page.getByRole('alert').waitFor();
       assert.match(await page.getByRole('alert').innerText(), /Unable to load/); assert.equal(await page.getByText('No audit entries found.').count(), 0); assert.equal(await live.count(), 0);
       await capture('initial-failed');
-      cases.push({ width, loading: true, empty: true, denied_refresh: true, retry_keyboard: true, transient_refresh: true, pending_retry: true, environment_switch: true, initial_unavailable: true });
+      setMode('empty');await page.goto(new URL('/fixture?offline=1',fixture.resolvedUrls.local[0]).href);
+      await page.getByRole('status').filter({hasText:'waiting for a network connection'}).waitFor();
+      assert.equal(await live.count(),0);assert.equal(await page.getByText('No audit entries found.').count(),0);await capture('offline');
+      await page.evaluate(()=>window.auditFixtureOnline(true));await page.getByText('No audit entries found.').waitFor();assert.equal(await live.count(),1);
+      cases.push({ width, loading: true, empty: true, denied_refresh: true, retry_keyboard: true, transient_refresh: true, pending_retry: true, environment_switch: true, initial_unavailable: true, denied_cache_variants:true, automatic_retry:true, offline_pause:true, online_recovery:true });
       await page.close();
     }
     console.log(JSON.stringify({ synthetic_transport: true, real_chrome: true, cases, verified_at: new Date().toISOString() }));
   }
-} finally { await browser?.close(); await fixture.close(); await rm(cacheDir, { recursive: true, force: true }); }
+} finally { release?.(); await browser?.close(); await fixture.close(); await rm(cacheDir, { recursive: true, force: true }); }
