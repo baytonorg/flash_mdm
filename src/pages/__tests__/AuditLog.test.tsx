@@ -10,7 +10,10 @@ const mocks = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock('@/api/queries/audit', () => ({ useAuditLog: mocks.useAuditLog }));
+vi.mock('@/api/queries/audit', async original => ({
+  ...await original<typeof import('@/api/queries/audit')>(),
+  useAuditLog: mocks.useAuditLog,
+}));
 vi.mock('@/components/common/DataTable', () => ({
   default: () => <div data-testid="audit-table" />,
 }));
