@@ -57,19 +57,22 @@ export function resolvePolicyAssignmentMinimum(workspaceRaw: unknown, environmen
     : workspace.policy.assign;
 }
 
-export function validateAndCanonicalizePermissionMatrix(value: unknown): PermissionMatrix {
+export function validateAndCanonicalizePermissionMatrix(value: unknown, scope: 'workspace' | 'environment' = 'workspace'): PermissionMatrix {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('matrix must be an object');
   }
 
   const input = value as JsonObject;
-  const resources = Object.keys(DEFAULT_PERMISSION_MATRIX);
-  const unknownResources = Object.keys(input).filter((resource) => !resources.includes(resource));
+  const resources = Object.keys(DEFAULT_PERMISSION_MATRIX).filter(resource => scope !== 'environment' || resource !== 'workspace');
+  // Older API clients send a complete matrix. Environment writes ignore its
+  // workspace resource, which never grants authority or becomes an override.
+  const unknownResources = Object.keys(input).filter((resource) => !resources.includes(resource) && !(scope === 'environment' && resource === 'workspace'));
   if (unknownResources.length > 0) {
     throw new Error(`Unknown resource(s): ${unknownResources.join(', ')}`);
   }
 
   const output: PermissionMatrix = cloneDefaultPermissionMatrix();
+  if (scope === 'environment') delete output.workspace;
 
   for (const resource of resources) {
     const expectedActions = Object.keys(DEFAULT_PERMISSION_MATRIX[resource] ?? {});
