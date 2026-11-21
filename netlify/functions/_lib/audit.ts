@@ -3,6 +3,7 @@ import { execute, withExclusiveClientOperation } from './db.js';
 import { getCurrentAuditAuthContext } from './request-auth-context.js';
 import { captureAuditCommitReceipt, traceEvent, traceError, traceContext, setTraceActor, type TraceActor } from './operational-trace.js';
 import { hasTransactionAuditTrace, prepareTransactionAuditTrace, queueTransactionAuditTrace } from './transaction-audit-trace.js';
+import { DEVICE_COMMAND_TYPES, BULK_DEVICE_COMMAND_TYPES } from './device-commands.js';
 import { UUID_PATTERN, responseOutcome } from '../../../shared/trace-contract.js';
 
 interface AuditEntry {
@@ -68,6 +69,12 @@ workspace_billing.entitlement.manual_granted workspace_billing.entitlement.renew
 workspace_billing.environment.updated workspace_billing.portal.created workspace_billing.pricing.deleted
 workspace_licensing.settings.updated`.split(/\s+/),
 );
+// These labels are dynamic only at their validated product entry points. Do
+// not accept arbitrary prefixes, normalise caller text or expose workflow text.
+for (const command of DEVICE_COMMAND_TYPES) TRACE_ACTIONS.add(`device.command.${command.toLowerCase()}`);
+for (const command of BULK_DEVICE_COMMAND_TYPES) TRACE_ACTIONS.add(`device.bulk.${command.toLowerCase()}`);
+TRACE_ACTIONS.add('geofence.device_enter');
+TRACE_ACTIONS.add('geofence.device_exit');
 const TRACE_RESOURCES = new Set(
   `api_key app app_deployment app_scope_config certificate command_operation deployment_job device
 enrollment_token environment environment_entitlement flashagent geofence group invite invoice license
@@ -157,17 +164,15 @@ export async function logAudit(entry: AuditEntry, client?: PoolClient, options: 
   const traceAction = attributed.custom_workflow_action ? 'workflow.custom_audit' : TRACE_ACTIONS.has(attributed.action) ? attributed.action : 'custom';
   const captured = client && hasTransactionAuditTrace(client) ? captureAuditCommitReceipt({ action: traceAction }, actor) : undefined;
   if (client && hasTransactionAuditTrace(client)) {
-    return withExclusiveClientOperation(client, () => writeAudit(attributed, client, options, actor, captured));
+    return withExclusiveClientOperation(client, () => writeAudit(attributed, client, options, traceAction, actor, captured));
   }
-  return writeAudit(attributed, client, options, actor);
+  return writeAudit(attributed, client, options, traceAction, actor);
 }
 
-async function writeAudit(attributedEntry: AuditEntry, client: PoolClient | undefined, options: { requirePersistence?: boolean }, originalActor?: TraceActor, captured?: ReturnType<typeof captureAuditCommitReceipt>): Promise<void> {
+async function writeAudit(attributedEntry: AuditEntry, client: PoolClient | undefined, options: { requirePersistence?: boolean }, traceAction: string, originalActor?: TraceActor, captured?: ReturnType<typeof captureAuditCommitReceipt>): Promise<void> {
   const safeDetails = sanitizeAuditValue(attributedEntry.details ?? {}) as Record<string, unknown>;
   const detailsJson = JSON.stringify(safeDetails);
 
-  const traceAction = attributedEntry.custom_workflow_action ? 'workflow.custom_audit'
-    : TRACE_ACTIONS.has(attributedEntry.action) ? attributedEntry.action : 'custom';
   const write = client ? async (sql: string, params: unknown[]) => client.query(sql, params) : execute;
   const returning = client && await prepareTransactionAuditTrace(client) ? ' RETURNING id' : '';
   const recordWrite = (inserted: unknown, metadata: Record<string, unknown>, actor?: TraceActor) => {
