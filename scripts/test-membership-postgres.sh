@@ -75,3 +75,8 @@ LOGIN_LENGTH_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/
 docker exec "$fixture_container" createdb -U postgres flash_roles_rbac_fixture
 ROLES_RBAC_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/flash_roles_rbac_fixture" \
   npx vitest run netlify/functions/__tests__/roles-rbac.postgres.test.ts
+
+# Prospective notice content uses only synthetic recipients and an inert transport.
+docker exec "$fixture_container" createdb -U postgres flash_licensing_notice_fixture
+LICENSING_NOTICE_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/flash_licensing_notice_fixture" \
+  npx vitest run netlify/functions/__tests__/licensing-notice.postgres.test.ts

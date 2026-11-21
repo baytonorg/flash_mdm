@@ -198,6 +198,9 @@ function buildNotificationHtml(
   const activeDeviceCount = Number(payload.active_device_count ?? 0);
   const entitledSeats = Number(payload.entitled_seats ?? 0);
   const overageAgeDays = Number(payload.overage_age_days ?? 0);
+  const guidance = notificationKey === 'phase:resolved'
+    ? "Current seat usage is within this environment's entitlement."
+    : 'Action required: purchase additional seats or reduce active devices to return to compliance.';
 
   return `
     <p>Workspace: <strong>${safeWorkspaceName}</strong></p>
@@ -205,7 +208,7 @@ function buildNotificationHtml(
     <p>Notification: <strong>${safeNotificationKey}</strong></p>
     <p>Overage: <strong>${overageCount}</strong> (active devices ${activeDeviceCount}, entitled seats ${entitledSeats})</p>
     <p>Overage age (days): <strong>${overageAgeDays}</strong></p>
-    <p>Action required: purchase additional seats or reduce active devices to return to compliance.</p>
+    <p>${guidance}</p>
   `;
 }
 
@@ -244,6 +247,7 @@ async function queueOverageNotification(
   payload: Record<string, unknown>,
   stats: LicensingReconcileStats
 ): Promise<void> {
+  const notificationId = crypto.randomUUID();
   let insertResult: { rowCount?: number } = {};
   try {
     insertResult = await execute(
@@ -251,7 +255,7 @@ async function queueOverageNotification(
          (id, case_id, workspace_id, environment_id, notification_key, status, payload, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, 'queued', $6::jsonb, now(), now())
        ON CONFLICT (case_id, notification_key) DO NOTHING`,
-      [crypto.randomUUID(), caseId, workspaceId, environmentId, notificationKey, JSON.stringify(payload)]
+      [notificationId, caseId, workspaceId, environmentId, notificationKey, JSON.stringify(payload)]
     );
   } catch (err) {
     if (isMissingRelationError(err)) return;
@@ -267,8 +271,8 @@ async function queueOverageNotification(
     visibility_scope: 'privileged',
     action: 'license.overage.notification.queued',
     resource_type: 'license_overage_notification',
-    resource_id: caseId,
-    details: { notification_key: notificationKey, ...payload },
+    resource_id: notificationId,
+    details: { ...payload, case_id: caseId, notification_key: notificationKey },
   });
 
   try {
@@ -299,8 +303,8 @@ async function queueOverageNotification(
       visibility_scope: 'privileged',
       action: 'license.overage.notification.sent',
       resource_type: 'license_overage_notification',
-      resource_id: caseId,
-      details: { notification_key: notificationKey, recipient_count: context.recipients.length },
+      resource_id: notificationId,
+      details: { case_id: caseId, notification_key: notificationKey, recipient_count: context.recipients.length },
     });
   } catch {
     const message = 'Overage notice delivery failed';
@@ -318,8 +322,8 @@ async function queueOverageNotification(
       visibility_scope: 'privileged',
       action: 'license.overage.notification.failed',
       resource_type: 'license_overage_notification',
-      resource_id: caseId,
-      details: { notification_key: notificationKey, error: message },
+      resource_id: notificationId,
+      details: { case_id: caseId, notification_key: notificationKey, error: message },
     });
   }
 }

@@ -473,6 +473,7 @@ describe('runLicensingReconcile', () => {
     expect(subjects.some((subject) => subject.includes('Overage day 7'))).toBe(true);
     expect(subjects.some((subject) => subject.includes('Enrollment blocked'))).toBe(true);
     const htmlPayloads = mockSendEmail.mock.calls.map(([payload]) => (payload as { html?: string }).html ?? '');
+    expect(htmlPayloads.every(html => html.includes('Action required: purchase additional seats or reduce active devices to return to compliance.'))).toBe(true);
     expect(htmlPayloads.some((html) => html.includes('&lt;script&gt;alert(1)&lt;/script&gt;'))).toBe(true);
     expect(htmlPayloads.some((html) => html.includes('&lt;b&gt;Fleet&lt;/b&gt;'))).toBe(true);
     expect(htmlPayloads.some((html) => html.includes('&quot;A&quot;'))).toBe(true);
@@ -550,6 +551,10 @@ describe('runLicensingReconcile', () => {
     expect(stats.enable_actions_queued).toBe(2);
     expect(stats.notifications_queued).toBe(1);
     expect(stats.notifications_sent).toBe(0);
+    const resolvedMail = mockSendEmail.mock.calls[0][0];
+    expect(resolvedMail.subject).toContain('Overage resolved');
+    expect(resolvedMail.html).toContain("Current seat usage is within this environment's entitlement.");
+    expect(resolvedMail.html).not.toContain('purchase additional seats');
 
     expect(
       mockExecute.mock.calls.some(([sql]) =>
