@@ -16,7 +16,7 @@ export async function applyInviteOffer(client: PoolClient, tokenHash: string, us
   const invite = result.rows[0];
   if (!invite) throw errorResponse('Invalid invite link', 404);
   if (invite.email.toLowerCase() !== email.toLowerCase()) throw errorResponse('Invite email does not match the signed-in account', 403);
-  if (invite.status === 'accepted') return { id: invite.id, alreadyAccepted: true };
+  if (invite.status === 'accepted') return { id: invite.id, alreadyAccepted: true, workspaceId: invite.workspace_id as string | null };
   if (invite.status !== 'pending' || new Date(invite.expires_at).getTime() <= Date.now()) throw errorResponse('This invite is no longer available', 409);
   const user = await client.query('SELECT id FROM users WHERE id = $1 AND lower(email) = lower($2) FOR KEY SHARE', [userId, email]);
   if (!user.rows.length) throw errorResponse('The signed-in account no longer exists', 409);
@@ -89,5 +89,5 @@ export async function applyInviteOffer(client: PoolClient, tokenHash: string, us
     }
   }
   await client.query("UPDATE user_invites SET status = 'accepted', accepted_at = now() WHERE id = $1", [invite.id]);
-  return { id: invite.id, alreadyAccepted: false };
+  return { id: invite.id, alreadyAccepted: false, workspaceId: invite.workspace_id as string | null };
 }

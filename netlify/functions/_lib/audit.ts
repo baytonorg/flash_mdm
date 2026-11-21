@@ -28,7 +28,7 @@ const TRACE_ACTIONS = new Set(
 app.imported app.scope_config_deleted app.web_token_created auth.backup_code_used auth.login
 auth.login_failed auth.magic_link_sent auth.password_change_failed auth.password_changed
 auth.password_reset_completed auth.password_reset_requested auth.profile_updated
-auth.register.signup_link auth.totp_disabled auth.totp_enabled auth.totp_setup_initiated
+auth.register auth.register.signup_link auth.totp_disabled auth.totp_enabled auth.totp_setup_initiated
 certificate.deleted certificate.uploaded component.assigned component.created component.deleted
 component.unassigned component.updated deployment.cancel deployment.create
 device.command.delivery_uncertain device.command.reconciled device.command.reconciliation_unresolved

@@ -202,29 +202,32 @@ export default async (request: Request, _context: Context) => {
       [userId, email, passwordHash, first_name, last_name, confirmedFirstUser]
     );
 
+    let appliedInviteWorkspaceId: string | null | undefined;
     if (pendingInvite && inviteTokenHash) {
       const applied = await applyInviteOffer(client, inviteTokenHash, userId, email);
       if (applied.alreadyAccepted) throw errorResponse('Invitation has already been used', 409);
+      // This comes from the offer actually locked and applied, rather than the
+      // preflight hint or a user-supplied redirect. Multi-scope offers stay at
+      // workspace level; no first environment is selected for their audit.
+      appliedInviteWorkspaceId = applied.workspaceId;
     }
     if (isWorkspaceInviteOnboardingRegistration) {
-      // Audit
-      await client.query(
-        `INSERT INTO audit_log (user_id, action, resource_type, resource_id, details, ip_address)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [
-          userId,
-          'auth.register',
-          'user',
-          userId,
-          JSON.stringify({
+      await logAudit({
+          workspace_id: appliedInviteWorkspaceId ?? undefined,
+          user_id: userId,
+          actor_type: 'user',
+          action: 'auth.register',
+          resource_type: 'user',
+          resource_id: userId,
+          details: {
             is_superadmin: confirmedFirstUser,
             invited_onboarding: true,
-            invite_type: pendingInviteType,
+            invite_type: appliedInviteWorkspaceId === null ? 'platform_access' : 'workspace_access',
             invite_auto_accepted: true,
-          }),
-          getClientIp(request),
-        ]
-      );
+            registration_route: appliedInviteWorkspaceId === null ? 'platform_invite' : 'workspace_invite',
+          },
+          ip_address: getClientIp(request),
+      }, client);
       const sessionToken = generateToken();
       const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MILLISECONDS);
       await client.query(`INSERT INTO sessions (token_hash, user_id, workspace_id, ip_address, user_agent, expires_at)
@@ -354,6 +357,7 @@ export default async (request: Request, _context: Context) => {
         resource_id: userId,
         details: {
           is_superadmin: confirmedFirstUser,
+          registration_route: resolvedSignupLink.scope_type === 'environment' ? 'environment_signup_link' : 'workspace_signup_link',
           signup_link_id: resolvedSignupLink.id,
           scope_type: resolvedSignupLink.scope_type,
           scope_id: resolvedSignupLink.scope_id,
@@ -409,13 +413,18 @@ export default async (request: Request, _context: Context) => {
       [groupId, userId, 'admin', JSON.stringify({ devices: true, policies: true, apps: true, reports: true, settings: true, users: true })]
     );
 
-    // Audit
-    await client.query(
-      `INSERT INTO audit_log (workspace_id, environment_id, user_id, action, resource_type, resource_id, details, ip_address)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [workspaceId, environmentId, userId, 'auth.register', 'user', userId,
-       JSON.stringify({ is_superadmin: confirmedFirstUser, workspace_name: workspaceName }), getClientIp(request)]
-    );
+    await logAudit({
+      workspace_id: workspaceId, environment_id: environmentId, user_id: userId,
+      actor_type: 'user', action: 'auth.register', resource_type: 'user', resource_id: userId,
+      details: {
+        is_superadmin: confirmedFirstUser, workspace_name: workspaceName,
+        registration_route: appliedInviteWorkspaceId === undefined ? 'self_registration'
+          : appliedInviteWorkspaceId === null ? 'platform_invite' : 'workspace_invite',
+        ...(appliedInviteWorkspaceId === undefined ? {} : { invited_onboarding: true, invite_auto_accepted: true,
+          invite_type: appliedInviteWorkspaceId === null ? 'platform_access' : 'workspace_access' }),
+      },
+      ip_address: getClientIp(request),
+    }, client);
     return { userId };
   });
 

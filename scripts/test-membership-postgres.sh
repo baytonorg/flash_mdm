@@ -93,3 +93,8 @@ GROUP_READ_SCOPE_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_po
 docker exec "$fixture_container" createdb -U postgres flash_transaction_audit_trace_fixture
 TRANSACTION_AUDIT_TRACE_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/flash_transaction_audit_trace_fixture" \
   npx vitest run netlify/functions/__tests__/transaction-audit-trace.postgres.test.ts
+
+# Registration attribution uses isolated accounts and intercepted mail only.
+docker exec "$fixture_container" createdb -U postgres flash_registration_audit_fixture
+REGISTRATION_AUDIT_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/flash_registration_audit_fixture" \
+  npx vitest run netlify/functions/__tests__/registration-audit.postgres.test.ts
