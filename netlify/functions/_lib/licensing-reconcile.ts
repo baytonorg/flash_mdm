@@ -198,6 +198,9 @@ function buildNotificationHtml(
   const activeDeviceCount = Number(payload.active_device_count ?? 0);
   const entitledSeats = Number(payload.entitled_seats ?? 0);
   const overageAgeDays = Number(payload.overage_age_days ?? 0);
+  const guidance = notificationKey === 'phase:resolved'
+    ? "Current seat usage is within this environment's entitlement."
+    : 'Action required: purchase additional seats or reduce active devices to return to compliance.';
 
   return `
     <p>Workspace: <strong>${safeWorkspaceName}</strong></p>
@@ -205,7 +208,7 @@ function buildNotificationHtml(
     <p>Notification: <strong>${safeNotificationKey}</strong></p>
     <p>Overage: <strong>${overageCount}</strong> (active devices ${activeDeviceCount}, entitled seats ${entitledSeats})</p>
     <p>Overage age (days): <strong>${overageAgeDays}</strong></p>
-    <p>Action required: purchase additional seats or reduce active devices to return to compliance.</p>
+    <p>${guidance}</p>
   `;
 }
 
