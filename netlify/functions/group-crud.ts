@@ -225,7 +225,7 @@ export default async (request: Request, context: Context) => {
       return errorResponse('Forbidden: no access to this group', 403);
     }
 
-    const descendants = await query(
+    const descendants = await query<{ id: string; name: string; parent_group_id: string | null; parent_id: string | null; depth: number }>(
       `SELECT g.id, g.name, g.parent_group_id, g.parent_group_id AS parent_id, gc.depth
        FROM group_closures gc
        JOIN groups g ON g.id = gc.descendant_id
@@ -237,7 +237,11 @@ export default async (request: Request, context: Context) => {
         : [groupId]
     );
 
-    return jsonResponse({ groups: descendants, descendants });
+    const visible = new Set(envScope.accessible_group_ids ?? []);
+    const projected = envScope.mode === 'group'
+      ? descendants.map(group => visible.has(group.parent_group_id ?? '') ? group : { ...group, parent_group_id: null, parent_id: null })
+      : descendants;
+    return jsonResponse({ groups: projected, descendants: projected });
   }
 
   // POST /api/groups/create

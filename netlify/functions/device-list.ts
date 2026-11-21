@@ -74,7 +74,10 @@ export default async (request: Request, _context: Context) => {
     scopeWhereClause += ` AND d.group_id IN (SELECT descendant_id FROM group_closures WHERE ancestor_id = $${scopeParamIdx})`;
     scopeParams.push(groupId);
     scopeParamIdx++;
-  } else if (envScope.mode === 'group') {
+  }
+  // An explicitly selected ancestor may contain descendants with weaker direct
+  // grants. Apply the authorised set to facets, counts and rows in both paths.
+  if (envScope.mode === 'group') {
     const accessibleGroupIds = envScope.accessible_group_ids ?? [];
     if (accessibleGroupIds.length === 0) {
       return jsonResponse({
