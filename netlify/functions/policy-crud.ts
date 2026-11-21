@@ -227,6 +227,7 @@ export default async (request: Request, context: Context) => {
                ) epa ON TRUE
                WHERE d.environment_id = $1
                  AND d.deleted_at IS NULL
+                 AND d.group_id = ANY($2::uuid[])
                  AND COALESCE(dpa.policy_id, gpa.policy_id, epa.policy_id, d.policy_id) = p.id
              ) AS device_count
            FROM policies p

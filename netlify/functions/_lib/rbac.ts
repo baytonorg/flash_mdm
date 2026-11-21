@@ -665,14 +665,15 @@ export async function requireEnvironmentAccessScope(
   }
 
   const groupRows = await query<{ role: WorkspaceRole; descendant_id: string }>(
-    `SELECT gm.role, gc.descendant_id
+    `SELECT DISTINCT ON (gc.descendant_id) gm.role, gc.descendant_id
      FROM group_memberships gm
      JOIN groups g_direct ON g_direct.id = gm.group_id
      JOIN group_closures gc ON gc.ancestor_id = gm.group_id
      JOIN groups g_desc ON g_desc.id = gc.descendant_id
      WHERE gm.user_id = $1
        AND g_direct.environment_id = $2
-       AND g_desc.environment_id = $2`,
+       AND g_desc.environment_id = $2
+     ORDER BY gc.descendant_id, gc.depth ASC`,
     [auth.user.id, environmentId]
   );
 
@@ -686,6 +687,9 @@ export async function requireEnvironmentAccessScope(
   let maxRole: WorkspaceRole | null = null;
   const accessibleGroupIds = new Set<string>();
   for (const row of groupRows) {
+    // A closer grant replaces an ancestor grant, even when it is weaker.
+    // Choose that effective grant in SQL, then apply this resource's threshold.
+    if (!meetsMinimumRole(row.role, minRole)) continue;
     accessibleGroupIds.add(row.descendant_id);
     if (!maxRole || roleLevel(row.role) > roleLevel(maxRole)) {
       maxRole = row.role;
