@@ -528,7 +528,7 @@ export async function buildTraceReport(
       ? requests.get(record.request_id)
       : undefined;
     const actor =
-      record.event !== "audit.committed" && record.actor?.type === "anonymous" && established?.type !== "anonymous"
+      !["audit.committed", "audit.write"].includes(record.event) && record.actor?.type === "anonymous" && established?.type !== "anonymous"
         ? (established ?? record.actor)
         : record.actor;
     const key = `${actor?.type ?? "unknown"}:${actor?.id ?? actor?.email ?? "unattributed"}`;
