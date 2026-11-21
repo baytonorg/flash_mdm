@@ -65,7 +65,7 @@ beforeEach(() => {
 describe('environment-crud delete hardening', () => {
   it.each(['has_keys', 'has_signup_links'])('blocks %s without issuing deletion statements', async (dependency) => {
     mockQueryOne.mockResolvedValueOnce({ workspace_id: '22222222-2222-4222-8222-222222222222' } as never);
-    const client = { query: vi.fn().mockResolvedValue({ rows: [{ [dependency]: true }] }) };
+    const client = { query: vi.fn().mockImplementation(async (sql: string) => ({ rows: [sql.includes('AS reviewed_relations') ? { enrollment: false, configuration: false, verification: false, reviewed_relations: true } : { [dependency]: true }] })) };
     mockTransaction.mockImplementationOnce(async (fn) => fn(client as never));
     const res = await handler(new Request('http://localhost/api/environments/33333333-3333-4333-8333-333333333333', { method: 'DELETE' }), {} as never);
     expect(res.status).toBe(409);
@@ -79,6 +79,7 @@ describe('environment-crud delete hardening', () => {
 
     const client = {
       query: vi.fn().mockImplementation(async (sql: string) => {
+        if (sql.includes('AS configuration') && sql.includes('AS verification')) return { rows: [{ enrollment: false, configuration: false, verification: false, reviewed_relations: true }] };
         if (sql.startsWith('UPDATE audit_log SET details') && sql.includes('deleted_environment_id')) throw { code: '42P01' };
         if (sql.startsWith('DELETE FROM pubsub_events')) throw { code: '42703' };
         if (sql.startsWith('SELECT id FROM workspaces')) return { rows: [{ id: '22222222-2222-4222-8222-222222222222' }], rowCount: 1 };

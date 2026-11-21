@@ -7,6 +7,28 @@ export async function deleteEnvironmentData(client: PoolClient, environmentId: s
   // Lock the parent before checking credentials so new FK-backed keys
   // cannot appear between the preflight and the cascade.
   await client.query('SELECT id FROM environments WHERE id = $1 FOR UPDATE', [environmentId]);
+  // These records have separate credential ownership and retirement semantics.
+  // Parent locking also serialises their immediate FK-backed insertions. Do not
+  // infer retirement authority from expiry, empty values or the key/link flag.
+  const carriers = await client.query<{ enrollment: boolean; configuration: boolean; verification: boolean; enrollment_rls: boolean; configuration_rls: boolean; verification_rls: boolean; reviewed_relations: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM public.enrollment_tokens WHERE environment_id = $1) AS enrollment,
+            EXISTS (SELECT 1 FROM public.signin_configurations WHERE environment_id = $1) AS configuration,
+            EXISTS (SELECT 1 FROM public.signin_verifications WHERE environment_id = $1) AS verification,
+            row_security_active('public.enrollment_tokens') AS enrollment_rls,
+            row_security_active('public.signin_configurations') AS configuration_rls,
+            row_security_active('public.signin_verifications') AS verification_rls,
+            (to_regclass('environments') = to_regclass('public.environments')
+             AND to_regclass('enrollment_tokens') = to_regclass('public.enrollment_tokens')
+             AND to_regclass('signin_configurations') = to_regclass('public.signin_configurations')
+             AND to_regclass('signin_verifications') = to_regclass('public.signin_verifications')) AS reviewed_relations`,
+    [environmentId]
+  );
+  if (!carriers.rows[0]?.reviewed_relations || carriers.rows[0].enrollment_rls || carriers.rows[0].configuration_rls || carriers.rows[0].verification_rls) {
+    throw errorResponse('Credential preservation could not be verified. Environment deletion is blocked.', 503);
+  }
+  if (carriers.rows[0].enrollment || carriers.rows[0].configuration || carriers.rows[0].verification) {
+    throw errorResponse('Environment deletion is blocked because preserved enrolment or sign-in records are present.', 409);
+  }
   const dependencies = await client.query<{ has_keys: boolean; has_signup_links: boolean }>(
     `SELECT EXISTS (SELECT 1 FROM api_keys WHERE environment_id = $1) AS has_keys,
             EXISTS (SELECT 1 FROM signup_links

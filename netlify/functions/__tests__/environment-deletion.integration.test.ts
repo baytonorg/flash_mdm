@@ -58,7 +58,7 @@ const post = (id: string, action: string) => bind(new Request('http://localhost/
 }), {} as never);
 const remove = (id: string, confirm = false) => crud(new Request(`http://localhost/api/environments/${id}?confirm_access_cleanup=${confirm}`, { method: 'DELETE' }), {} as never);
 
-async function fixture() {
+async function fixture({ enrollment = true } = {}) {
   const q = (sql: string, values: unknown[] = []) => database.pool!.query(sql, values);
   const ws = (await q("INSERT INTO workspaces (name, gcp_project_id) VALUES ('Deletion fixture', 'fixture-project') RETURNING id")).rows[0].id;
   const env = (await q("INSERT INTO environments (workspace_id, name, enterprise_name) VALUES ($1, 'Fixture', 'enterprises/fixture') RETURNING id", [ws])).rows[0].id;
@@ -66,7 +66,7 @@ async function fixture() {
   const device = (await q("INSERT INTO devices (environment_id, amapi_name, policy_id, last_policy_sync_name) VALUES ($1, $2, $3, 'old-sync') RETURNING id", [env, `enterprises/fixture/devices/${env}`, policy])).rows[0].id;
   await q("INSERT INTO policy_assignments (policy_id, scope_type, scope_id) VALUES ($1, 'environment', $2)", [policy, env]);
   await q("INSERT INTO policy_derivatives (policy_id, environment_id, scope_type, scope_id, payload_hash) VALUES ($1, $2, 'environment', $2, 'fixture')", [policy, env]);
-  await q("INSERT INTO enrollment_tokens (environment_id, name, amapi_name, amapi_value) VALUES ($1, 'Synthetic token', 'remote-token', 'synthetic-no-access')", [env]);
+  if (enrollment) await q("INSERT INTO enrollment_tokens (environment_id, name, amapi_name, amapi_value) VALUES ($1, 'Synthetic token', 'remote-token', 'synthetic-no-access')", [env]);
   await q("INSERT INTO audit_log (workspace_id, environment_id, action) VALUES ($1, $2, 'fixture')", [ws, env]);
   return { q, ws, env, policy, device };
 }
@@ -136,7 +136,7 @@ describe.skipIf(!connectionString)('deletion against disposable PostgreSQL with 
   });
 
   it.each(['key', 'environment_link', 'environment_assignment', 'group_link', 'group_assignment'])('requires confirmation then cleans up %s dependencies', async (dependency) => {
-    const f = await fixture();
+    const f = await fixture({ enrollment: false });
     const user = (await f.q("INSERT INTO users (email) VALUES ($1) RETURNING id", [`${f.env}@example.invalid`])).rows[0].id;
     const otherEnv = (await f.q("INSERT INTO environments (workspace_id, name) VALUES ($1, 'Other') RETURNING id", [f.ws])).rows[0].id;
     const otherGroup = (await f.q("INSERT INTO groups (environment_id, name) VALUES ($1, 'Other group') RETURNING id", [otherEnv])).rows[0].id;
@@ -165,7 +165,7 @@ describe.skipIf(!connectionString)('deletion against disposable PostgreSQL with 
   });
 
   it('deletes environment data while retaining audit history and workspace, never calls Google', async () => {
-    const f = await fixture();
+    const f = await fixture({ enrollment: false });
     expect((await remove(f.env)).status).toBe(200);
     for (const table of ['environments', 'devices', 'policies', 'enrollment_tokens']) {
       const column = table === 'environments' ? 'id' : 'environment_id';
@@ -177,7 +177,7 @@ describe.skipIf(!connectionString)('deletion against disposable PostgreSQL with 
   });
 
   it('retains device-linked audit history while detaching deleted entity references', async () => {
-    const f = await fixture();
+    const f = await fixture({ enrollment: false });
     await f.q('UPDATE audit_log SET device_id=$1 WHERE environment_id=$2', [f.device, f.env]);
     expect((await remove(f.env)).status).toBe(200);
     expect((await f.q('SELECT environment_id, device_id FROM audit_log WHERE workspace_id=$1', [f.ws])).rows).toEqual([{ environment_id: null, device_id: null }]);
@@ -231,7 +231,7 @@ describe.skipIf(!connectionString)('deletion against disposable PostgreSQL with 
   });
 
   it('recovers from missing legacy relation through savepoints', async () => {
-    const f = await fixture();
+    const f = await fixture({ enrollment: false });
     await f.q('ALTER TABLE pubsub_events RENAME TO fixture_hidden_pubsub_events');
     try {
       expect((await remove(f.env)).status).toBe(200);
@@ -243,7 +243,7 @@ describe.skipIf(!connectionString)('deletion against disposable PostgreSQL with 
   });
 
   it('rolls back all local cleanup on a later environment-delete failure', async () => {
-    const f = await fixture();
+    const f = await fixture({ enrollment: false });
     const user = (await f.q('INSERT INTO users (email) VALUES ($1) RETURNING id', [`${f.env}@example.invalid`])).rows[0].id;
     await f.q("INSERT INTO api_keys (name, scope_type, workspace_id, environment_id, token_hash, token_enc, token_prefix, created_by_user_id) VALUES ('Synthetic', 'environment', $1, $2, $4, 'synthetic-no-access', 'fixture', $3)", [f.ws, f.env, user, f.env]);
     await f.q("INSERT INTO signup_links (scope_type, scope_id, token_hash) VALUES ('environment', $1, $2)", [f.env, f.env]);
@@ -262,7 +262,7 @@ describe.skipIf(!connectionString)('deletion against disposable PostgreSQL with 
   });
 
   it('does not allow a signup-link write to land after environment cleanup has passed', async () => {
-    const f = await fixture();
+    const f = await fixture({ enrollment: false });
     await f.q(`CREATE FUNCTION fixture_pause_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.5); RETURN OLD; END $$`);
     await f.q('CREATE TRIGGER fixture_pause_delete BEFORE DELETE ON environments FOR EACH ROW EXECUTE FUNCTION fixture_pause_delete()');
     try {
