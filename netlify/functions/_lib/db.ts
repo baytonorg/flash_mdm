@@ -1,11 +1,25 @@
 import pg from 'pg';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { normalizePostgresConnectionString } from './postgres-connection.js';
 import { markDatabaseError } from './db-errors.js';
 import { traceSpan, traceEvent } from './operational-trace.js';
+import { beginTransactionAuditTrace, confirmTransactionAuditTrace, discardTransactionAuditTrace } from './transaction-audit-trace.js';
+import { isDatabaseDiagnostic } from './database-diagnostic-context.js';
 
 const { Pool } = pg;
 
 let pool: InstanceType<typeof Pool> | null = null;
+const discardClients = new WeakSet<pg.PoolClient>();
+const exclusiveClient = new AsyncLocalStorage<pg.PoolClient>();
+const clientOperations = new WeakMap<pg.PoolClient, <T>(fn: () => Promise<T>) => Promise<T>>();
+
+// Diagnostic savepoint/probe/insert work is one client operation. Otherwise a
+// concurrent statement could be rolled back by the optional probe's savepoint.
+export async function withExclusiveClientOperation<T>(client: pg.PoolClient, fn: () => Promise<T>): Promise<T> {
+  const schedule = clientOperations.get(client);
+  if (!schedule || exclusiveClient.getStore() === client) return fn();
+  return schedule(() => exclusiveClient.run(client, fn));
+}
 
 function getPool(): InstanceType<typeof Pool> {
   if (!pool) {
@@ -78,23 +92,35 @@ export async function withClient<T>(
     throw markDatabaseError(err);
   }
 
+  let tail: Promise<unknown> = Promise.resolve();
+  const schedule = <T>(fn: () => Promise<T>): Promise<T> => {
+    const result = tail.then(fn);
+    tail = result.catch(() => undefined);
+    return result;
+  };
   const databaseClient = new Proxy(client, {
     get(target, property, receiver) {
       if (property !== 'query') return Reflect.get(target, property, receiver);
       return async (...args: unknown[]) => {
+       const run = async () => {
         try {
           return await tracedQuery(() => Reflect.apply(target.query, target, args), typeof args[0] === 'string' ? args[0] : 'unknown');
         } catch (err) {
           throw markDatabaseError(err);
         }
+       };
+       return exclusiveClient.getStore() === databaseClient ? run() : schedule(run);
       };
     },
   }) as pg.PoolClient;
+  clientOperations.set(databaseClient, schedule);
 
   try {
     return await fn(databaseClient);
   } finally {
-    client.release();
+    clientOperations.delete(databaseClient);
+    if (discardClients.has(databaseClient)) client.release(true);
+    else client.release();
   }
 }
 
@@ -102,20 +128,37 @@ export async function transaction<T>(
   fn: (client: pg.PoolClient) => Promise<T>
 ): Promise<T> {
   return traceSpan('db.transaction', {}, () => withClient(async (client) => {
+    let result: T;
+    let committed = false;
+    let commitAttempted = false;
+    let commitObservedAt = '';
     try {
       await client.query('BEGIN');
-      const result = await fn(client);
+      beginTransactionAuditTrace(client);
+      result = await fn(client);
+      commitAttempted = true;
       const completion = await client.query('COMMIT');
       // A swallowed statement error leaves PostgreSQL in an aborted transaction.
       // COMMIT then resolves with the ROLLBACK command tag.
-      if (completion?.command === 'COMMIT') traceEvent('db.transaction.committed');
+      if (completion?.command === 'COMMIT') {
+        committed = true;
+        commitObservedAt = new Date().toISOString();
+        traceEvent('db.transaction.committed');
+      }
       else traceEvent('db.transaction.rolled_back', { outcome: 'failure' });
-      return result;
     } catch (err) {
-      await client.query('ROLLBACK');
-      traceEvent('db.transaction.rolled_back');
+      discardTransactionAuditTrace(client);
+      try { await client.query('ROLLBACK'); } catch { discardClients.add(client); }
+      // A lost COMMIT acknowledgement cannot establish rollback. The caller's
+      // existing recovery path still receives the original database exception.
+      traceEvent(commitAttempted ? 'db.transaction.outcome_unknown' : 'db.transaction.rolled_back',
+        commitAttempted ? { outcome: 'delivery_uncertain' } : {});
       throw err;
     }
+    if (committed) {
+      if (!await confirmTransactionAuditTrace(client, commitObservedAt)) discardClients.add(client);
+    } else discardTransactionAuditTrace(client);
+    return result;
   }));
 }
 
@@ -136,6 +179,7 @@ workspace_licensing_settings workspace_memberships workspace_pricing_catalog wor
 );
 
 async function tracedQuery<T extends { rowCount?: number | null }>(fn: () => Promise<T>, sql: string): Promise<T> {
+  if (isDatabaseDiagnostic()) return fn();
   const operation = /^\s*(SELECT|INSERT|UPDATE|DELETE|BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE|WITH|ALTER|CREATE|DROP|TRUNCATE)/i.exec(sql)?.[1]?.toUpperCase() ?? 'OTHER';
   const candidate = /\b(?:FROM|INTO|UPDATE|TABLE)\s+([a-z_][a-z0-9_]*)/i.exec(sql)?.[1]?.toLowerCase();
   const table = candidate && TRACE_TABLES.has(candidate) ? candidate : undefined;

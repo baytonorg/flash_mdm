@@ -88,3 +88,8 @@ AUDIT_FILTER_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/
 docker exec "$fixture_container" createdb -U postgres flash_group_read_scope_fixture
 GROUP_READ_SCOPE_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/flash_group_read_scope_fixture" \
   npx vitest run netlify/functions/__tests__/group-read-scope.postgres.test.ts
+
+# Audit durability is verified after commit using synthetic records and traces.
+docker exec "$fixture_container" createdb -U postgres flash_transaction_audit_trace_fixture
+TRANSACTION_AUDIT_TRACE_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/flash_transaction_audit_trace_fixture" \
+  npx vitest run netlify/functions/__tests__/transaction-audit-trace.postgres.test.ts

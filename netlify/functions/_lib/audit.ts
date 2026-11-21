@@ -1,7 +1,8 @@
 import type { PoolClient } from 'pg';
-import { execute } from './db.js';
+import { execute, withExclusiveClientOperation } from './db.js';
 import { getCurrentAuditAuthContext } from './request-auth-context.js';
-import { traceEvent, traceError, traceContext, setTraceActor } from './operational-trace.js';
+import { captureAuditCommitReceipt, traceEvent, traceError, traceContext, setTraceActor, type TraceActor } from './operational-trace.js';
+import { hasTransactionAuditTrace, prepareTransactionAuditTrace, queueTransactionAuditTrace } from './transaction-audit-trace.js';
 import { UUID_PATTERN, responseOutcome } from '../../../shared/trace-contract.js';
 
 interface AuditEntry {
@@ -147,13 +148,35 @@ function applyRequestAuthAttribution(entry: AuditEntry): AuditEntry {
 }
 
 export async function logAudit(entry: AuditEntry, client?: PoolClient, options: { requirePersistence?: boolean } = {}): Promise<void> {
-  const attributedEntry = applyRequestAuthAttribution(entry);
+  const attributed = applyRequestAuthAttribution(entry);
+  const current = traceContext()?.actor;
+  const actor: TraceActor | undefined = attributed.actor_type === 'system' ? { type: 'system' }
+    : attributed.action === 'auth.login' && attributed.user_id && current?.type === 'anonymous' ? { type: 'human', id: attributed.user_id }
+    : current?.type === 'anonymous' && attributed.user_id ? { type: 'anonymous', id: attributed.user_id }
+    : current ? { ...current } : undefined;
+  const traceAction = attributed.custom_workflow_action ? 'workflow.custom_audit' : TRACE_ACTIONS.has(attributed.action) ? attributed.action : 'custom';
+  const captured = client && hasTransactionAuditTrace(client) ? captureAuditCommitReceipt({ action: traceAction }, actor) : undefined;
+  if (client && hasTransactionAuditTrace(client)) {
+    return withExclusiveClientOperation(client, () => writeAudit(attributed, client, options, actor, captured));
+  }
+  return writeAudit(attributed, client, options, actor);
+}
+
+async function writeAudit(attributedEntry: AuditEntry, client: PoolClient | undefined, options: { requirePersistence?: boolean }, originalActor?: TraceActor, captured?: ReturnType<typeof captureAuditCommitReceipt>): Promise<void> {
   const safeDetails = sanitizeAuditValue(attributedEntry.details ?? {}) as Record<string, unknown>;
   const detailsJson = JSON.stringify(safeDetails);
 
   const traceAction = attributedEntry.custom_workflow_action ? 'workflow.custom_audit'
     : TRACE_ACTIONS.has(attributedEntry.action) ? attributedEntry.action : 'custom';
   const write = client ? async (sql: string, params: unknown[]) => client.query(sql, params) : execute;
+  const returning = client && await prepareTransactionAuditTrace(client) ? ' RETURNING id' : '';
+  const recordWrite = (inserted: unknown, metadata: Record<string, unknown>, actor?: TraceActor) => {
+    const rowId = (inserted as { rows?: Array<{ id?: unknown }> } | undefined)?.rows?.[0]?.id;
+    const attribution = originalActor ?? actor;
+    const receiptId = client ? queueTransactionAuditTrace(client, rowId, metadata, attribution, captured) : undefined;
+    traceEvent('audit.write', { ...metadata, durability: client ? 'transaction_pending' : 'committed',
+      ...(receiptId ? { receipt_id: receiptId, receipt_method: 'row_receipt_v1' } : {}) }, attribution);
+  };
   const primarySavepoint = Boolean(client && options.requirePersistence);
   if (primarySavepoint) await client!.query('SAVEPOINT flash_primary_audit_write');
   try {
@@ -163,7 +186,7 @@ export async function logAudit(entry: AuditEntry, client?: PoolClient, options: 
          actor_type, visibility_scope,
          action, resource_type, resource_id, details, ip_address
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)${returning}`,
       [
         attributedEntry.workspace_id ?? null,
         attributedEntry.environment_id ?? null,
@@ -183,7 +206,7 @@ export async function logAudit(entry: AuditEntry, client?: PoolClient, options: 
     if (primarySavepoint) await client!.query('RELEASE SAVEPOINT flash_primary_audit_write');
     const ctx = traceContext();
     if (attributedEntry.action === 'auth.login' && attributedEntry.user_id && ctx?.actor.type === 'anonymous') setTraceActor({ type: 'human', id: attributedEntry.user_id });
-    traceEvent('audit.write', { action: traceAction, resource_type: TRACE_RESOURCES.has(attributedEntry.resource_type ?? '') ? attributedEntry.resource_type : undefined, resource_id: UUID_PATTERN.test(attributedEntry.resource_id ?? '') ? attributedEntry.resource_id : undefined, user_id: attributedEntry.user_id, workspace_id: attributedEntry.workspace_id, environment_id: attributedEntry.environment_id, durability: client ? 'transaction_pending' : 'committed', ...(attributedEntry.custom_workflow_action ? {} : responseOutcome(attributedEntry.details)) }, attributedEntry.actor_type === 'system' ? { type: 'system' } : ctx?.actor.type === 'anonymous' && attributedEntry.user_id ? { type: 'anonymous', id: attributedEntry.user_id } : undefined);
+    recordWrite(inserted, { action: traceAction, resource_type: TRACE_RESOURCES.has(attributedEntry.resource_type ?? '') ? attributedEntry.resource_type : undefined, resource_id: UUID_PATTERN.test(attributedEntry.resource_id ?? '') ? attributedEntry.resource_id : undefined, user_id: attributedEntry.user_id, workspace_id: attributedEntry.workspace_id, environment_id: attributedEntry.environment_id, ...(attributedEntry.custom_workflow_action ? {} : responseOutcome(attributedEntry.details)) }, attributedEntry.actor_type === 'system' ? { type: 'system' } : ctx?.actor.type === 'anonymous' && attributedEntry.user_id ? { type: 'anonymous', id: attributedEntry.user_id } : undefined);
   } catch (err) {
     traceEvent('audit.failure', { action: traceAction, ...traceError(err) });
     // Lifecycle audit is part of the transaction: failure must roll it back.
@@ -203,7 +226,7 @@ export async function logAudit(entry: AuditEntry, client?: PoolClient, options: 
         const result = await write(
           `INSERT INTO audit_log (workspace_id, environment_id, user_id, device_id,
              actor_type, visibility_scope, action, resource_type, resource_id, details, ip_address)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)${returning}`,
           [attributedEntry.workspace_id ?? null, attributedEntry.environment_id ?? null,
             attributedEntry.user_id ?? null, attributedEntry.device_id ?? null,
             attributedEntry.actor_type ?? 'user', attributedEntry.visibility_scope ?? 'standard',
@@ -212,9 +235,9 @@ export async function logAudit(entry: AuditEntry, client?: PoolClient, options: 
         );
         if (options.requirePersistence && result?.rowCount !== 1) throw new Error('Requested audit record was not inserted');
         if (primarySavepoint) await client!.query('RELEASE SAVEPOINT flash_primary_audit_write');
-        traceEvent('audit.write', { action: traceAction, environment_id: attributedEntry.environment_id,
+        recordWrite(result, { action: traceAction, environment_id: attributedEntry.environment_id,
           workspace_id: attributedEntry.workspace_id, resource_type: TRACE_RESOURCES.has(attributedEntry.resource_type ?? '') ? attributedEntry.resource_type : undefined,
-          resource_id: UUID_PATTERN.test(attributedEntry.resource_id ?? '') ? attributedEntry.resource_id : undefined, durability: client ? 'transaction_pending' : 'committed' }, attributedEntry.actor_type === 'system' ? { type: 'system' } : undefined);
+          resource_id: UUID_PATTERN.test(attributedEntry.resource_id ?? '') ? attributedEntry.resource_id : undefined }, attributedEntry.actor_type === 'system' ? { type: 'system' } : undefined);
         return;
       } catch (fallbackErr) {
         if (client || options.requirePersistence) throw fallbackErr;

@@ -104,12 +104,13 @@ export function traceEvent(
   event: string,
   data: Record<string, unknown> = {},
   actor?: TraceActor,
+  observedAt?: Date,
 ): void {
   try {
     const target = sink();
     if (!target) return;
     const ctx = storage.getStore();
-    const time = new Date().toISOString();
+    const time = (observedAt ?? new Date()).toISOString();
     const page =
       event.startsWith("ui.") && typeof data.page === "string"
         ? normaliseTracePath(data.page)
@@ -167,6 +168,35 @@ export function traceEvent(
   } catch {
     /* Diagnostic failure must not change the product result. */
   }
+}
+
+// Capture instrumentation-owned attribution now. A later authenticated action
+// on the same request must not relabel an earlier database audit write.
+export function captureAuditCommitReceipt(data: Record<string, unknown>, actor?: TraceActor) {
+  const current = storage.getStore();
+  const minimumActor = (value: TraceActor): TraceActor => ({ type: value.type,
+    ...(value.id ? { id: value.id } : {}),
+    ...(value.type === 'support' && value.operator_id ? { operator_id: value.operator_id } : {}) });
+  const scope = Object.fromEntries(['workspace_id', 'environment_id'].flatMap(key =>
+    current?.scope[key] && UUID_PATTERN.test(current.scope[key]) ? [[key, current.scope[key]]] : []));
+  const context = current ? { ...current, actor: minimumActor(current.actor), scope } : undefined;
+  const attribution = actor ? minimumActor(actor) : undefined;
+  const receiptId = randomUUID();
+  const attemptedAt = new Date().toISOString();
+  // The attempt retains resource diagnostics. Receipts need only the product
+  // action and opaque diagnostic identity, never a second copy of device IDs.
+  const metadata = { action: data.action, receipt_id: receiptId, attempted_at: attemptedAt, durability: "committed" };
+  let emitted = false;
+  return {
+    id: receiptId,
+    emit(observedAt: Date, commitObservedAt: string) {
+      if (emitted) return;
+      emitted = true;
+      const emit = () => traceEvent("audit.committed", { ...metadata, commit_observed_at: commitObservedAt }, attribution, observedAt);
+      if (context) storage.run(context, emit);
+      else emit();
+    },
+  };
 }
 const TRACE_ERROR_NAMES = new Set(["Error", "TypeError", "RangeError", "ReferenceError", "SyntaxError", "AbortError", "AggregateError", "AmapiDeliveryUncertainError"]);
 const TRACE_ERROR_CODES = new Set("23502 23503 23505 23514 22P02 25P02 40001 40P01 42501 42601 42703 42P01 53300 53400 57014 57P01 57P02 57P03 08000 08001 08003 08004 08006 08007 08P01 ECONNREFUSED ECONNRESET EAI_AGAIN EHOSTUNREACH ENETDOWN ENETUNREACH ENOTFOUND EPIPE ETIMEDOUT AMAPI_DELIVERY_UNCERTAIN".split(" "));
