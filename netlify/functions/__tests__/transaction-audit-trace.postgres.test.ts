@@ -143,4 +143,34 @@ const url=process.env.TRANSACTION_AUDIT_TRACE_TEST_DATABASE_URL;
   const reports=join(directory,'reports'),name=(await readdir(reports)).find(n=>n.endsWith('.v2.json'))!;const checkpoint=JSON.parse(await readFile(join(reports,name),'utf8'));delete checkpoint.coverage.audit_durability_method;
   const legacyPath=join(reports,'2026-11-19.json'),legacy=JSON.stringify(checkpoint);await writeFile(legacyPath,legacy,{mode:0o600});await rm(join(reports,name));const comparison=await traceComparisons(directory,new Date('2026-11-20T09:00:00Z'));expect(comparison.available&&comparison.seven_days.audit_durability_mixed_history).toBe(true);expect(comparison.available&&comparison.seven_days.partial_history).toBe(true);expect(await readFile(legacyPath,'utf8')).toBe(legacy);
  });
+ const nativeActions = [
+  'device.command.lock','device.command.reset_password','device.command.reboot','device.command.relinquish_ownership',
+  'device.command.clear_app_data','device.command.start_lost_mode','device.command.stop_lost_mode','device.command.add_esim',
+  'device.command.remove_esim','device.command.request_device_info','device.command.wipe','device.command.disable','device.command.enable',
+  'device.bulk.lock','device.bulk.reset_password','device.bulk.reboot','device.bulk.relinquish_ownership',
+  'device.bulk.clear_app_data','device.bulk.start_lost_mode','device.bulk.stop_lost_mode','device.bulk.add_esim',
+  'device.bulk.remove_esim','device.bulk.request_device_info','device.bulk.wipe','device.bulk.disable','device.bulk.enable','device.bulk.delete',
+  'geofence.device_enter','geofence.device_exit',
+ ];
+ it('classifies all29 finite native labels in autocommit attempts and managed durable receipts, preserving database rows',async()=>{
+  expect(nativeActions).toHaveLength(29);
+  await run(async()=>{for(const label of nativeActions)await action(undefined,label,label.startsWith('geofence.')?'system':'user');await transaction(async c=>{for(const label of nativeActions)await action(c,label,label.startsWith('geofence.')?'system':'user');});});
+  expect((await pool.query('SELECT action,count(*)::int AS count FROM audit_log GROUP BY action')).rows).toEqual(expect.arrayContaining(nativeActions.map(action=>({action,count:2}))));
+  const r=await report();for(const label of nativeActions){const actor=r.actors.find(a=>a.actor.type===(label.startsWith('geofence.')?'system':'human'));expect(actor?.actions[label]).toBe(2);expect(actor?.attempted_actions[label]).toBe(2);}
+  expect((await rows()).filter(r=>r.event==='audit.committed')).toHaveLength(29);expect(fetch).not.toHaveBeenCalled();
+ });
+ it('keeps workflow provenance and arbitrary lookalike labels out of both native action series',async()=>{
+  const unknown=['device.command.delete','device.command.LOCK',' device.command.lock','device.command.lock ','device.command.lock.sibling','device.command.lоck','device.bulk.private_fixture_secret','geofence.device_enter.private_fixture_secret'];
+  await run(async()=>{await transaction(async c=>{for(const label of nativeActions)await logAudit({user_id:user,action:label,custom_workflow_action:true,details:{requested_action:label}},c);for(const label of unknown)await logAudit({user_id:user,action:label,details:{private:'private_fixture_secret'}},c);});});
+  const r=await report(),a=r.actors.find(a=>a.actor.id===user)!;expect(a.actions['workflow.custom_audit']).toBe(29);expect(a.actions.custom).toBe(unknown.length);for(const label of nativeActions)expect(a.actions[label]).toBeUndefined();
+  const trace=JSON.stringify(await rows());expect(trace).not.toContain('private_fixture_secret');expect((await pool.query('SELECT count(*)::int AS count FROM audit_log WHERE action=ANY($1::text[])',[nativeActions])).rows[0].count).toBe(29);expect(fetch).not.toHaveBeenCalled();
+ });
+ it('preserves native failure labels without claiming a rolled-back action or exposing geofence details',async()=>{
+  await run(async()=>{await transaction(async c=>{await logAudit({actor_type:'system',action:'geofence.device_enter',details:{geofence_name:'PrivateFenceSentinel',device_latitude:55.123456789,device_longitude:-1.987654321}},c);});});
+  for(const label of ['device.command.reboot','device.bulk.delete','geofence.device_exit']){
+   await pool.query("CREATE FUNCTION native_fixture_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'private_fixture_secret'; END $$; CREATE TRIGGER native_fixture_failure BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION native_fixture_failure()");
+   try{await expect(run(()=>transaction(c=>logAudit({user_id:user,action:label},c,{requirePersistence:true})))).rejects.toThrow('private_fixture_secret');}finally{await pool.query('DROP TRIGGER native_fixture_failure ON audit_log; DROP FUNCTION native_fixture_failure()');}
+  }
+  const r=await report();expect(durable(r)).toBe(1);const events=await rows();expect(events.filter(r=>r.event==='audit.failure').map(r=>r.data.action)).toEqual(['device.command.reboot','device.bulk.delete','geofence.device_exit']);for(const value of ['PrivateFenceSentinel','55.123456789','-1.987654321','private_fixture_secret'])expect(JSON.stringify(events)).not.toContain(value);expect(fetch).not.toHaveBeenCalled();
+ });
 });
