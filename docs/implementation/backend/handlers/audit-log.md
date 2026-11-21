@@ -27,6 +27,9 @@ GET-only endpoint scoped to a single environment. Requires `environment_id` quer
 - `visibility_scope` (standard or privileged)
 - `actor_type` (user, system, or api_key)
 - `action` (exact match)
+- `action_family` (one fixed product family from `shared/audit-actions.ts`; unknown values return 400). A family uses literal prefix/equality predicates and combines with an exact action as an intersection. The same scoped predicate is applied before count and pagination. Families do not enumerate stored tenant or workflow action text.
+
+These are lexical action filters, not proof of event provenance. Historical workflow rows may use an operator-authored label that matches a product prefix. The existing visibility guards still apply, and historical rows are not rewritten. New custom workflow rows retain the reserved `workflow.custom_audit` action.
 - `resource_type` (exact match)
 - `user_id` (exact match)
 - `date_from` / `date_to` (timestamp range)

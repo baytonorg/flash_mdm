@@ -36,6 +36,19 @@ function makeRequest(search = '?environment_id=env_1') {
 }
 
 describe('audit-log privileged visibility filtering', () => {
+  it('binds an allowlisted family with the same count and page predicate while retaining exact action',async()=>{
+    mockRequireEnvPerm.mockResolvedValue('owner' as never);
+    const response=await handler(makeRequest('?environment_id=env_1&action_family=device_commands&action=device.command.lock'),{} as never);
+    expect(response.status).toBe(200);
+    const [countSql,countParams]=mockQueryOne.mock.calls[0];const [pageSql,pageParams]=mockQuery.mock.calls[0];
+    expect(countSql).toContain('a.environment_id = $1');expect(countSql).toContain('a.action = $2');expect(countSql).toContain('left(a.action, length(audit_prefix.prefix)) = audit_prefix.prefix');
+    expect((countSql as string).slice((countSql as string).indexOf('WHERE ')+6)).toBe((pageSql as string).slice((pageSql as string).indexOf('WHERE ')+6,(pageSql as string).lastIndexOf('ORDER BY')).trim());
+    expect(countParams).toEqual(['env_1','device.command.lock',[],['device.command.','device.bulk.']]);expect((pageParams as unknown[]).slice(0,-2)).toEqual(countParams);
+  });
+  it('rejects unrecognised family values after authorisation without reading audit rows',async()=>{
+    mockRequireEnvPerm.mockResolvedValue('owner' as never);
+    expect((await handler(makeRequest('?environment_id=env_1&action_family=device%25'),{} as never)).status).toBe(400);expect(mockQuery).not.toHaveBeenCalled();expect(mockQueryOne).not.toHaveBeenCalled();
+  });
   it('redacts historical sensitive details and omits IP addresses for exports', async () => {
     mockRequireEnvPerm.mockResolvedValue('admin' as never);
     mockQuery.mockResolvedValueOnce([{ id: 'entry', action: 'example', ip_address: '192.0.2.1', details: { token: 'synthetic', nested: { password: 'synthetic', result: 'ok' } } }] as never);

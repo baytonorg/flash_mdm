@@ -135,7 +135,7 @@ describe('audit history outcomes',()=>{
     show();const user=userEvent.setup(),filter=screen.getByRole('combobox',{name:'Filter audit action'});
     await user.selectOptions(filter,'auth.login');await user.selectOptions(filter,'');
     await act(async()=>deny(new ApiError('Newer synthetic denied',403)));await screen.findByRole('alert');
-    await user.selectOptions(filter,'policy.create');await screen.findByText('No audit entries found.');expect(live()).toBeInTheDocument();
+    await user.selectOptions(filter,'family:policies');await screen.findByText('No audit entries found.');expect(live()).toBeInTheDocument();
     await user.selectOptions(filter,'');await act(async()=>succeed({entries:[row],total:1}));
     await waitFor(()=>expect(screen.getByRole('button',{name:'Retry audit log'})).toBeEnabled());
     expect(screen.queryByText('Synthetic policy')).not.toBeInTheDocument();expect(live()).not.toBeInTheDocument();expect(apiClient.get).toHaveBeenCalledTimes(3);
@@ -145,7 +145,7 @@ describe('audit history outcomes',()=>{
     let succeed!: (value:unknown)=>void,deny!: (reason:unknown)=>void;
     vi.mocked(apiClient.get).mockImplementationOnce(()=>new Promise(resolve=>{succeed=resolve;})).mockImplementationOnce(()=>new Promise((_resolve,reject)=>{deny=reject;})).mockResolvedValue({entries:[],total:0});
     show();const user=userEvent.setup(),filter=screen.getByRole('combobox',{name:'Filter audit action'});
-    await user.selectOptions(filter,'auth.login');await user.selectOptions(filter,'policy.create');
+    await user.selectOptions(filter,'auth.login');await user.selectOptions(filter,'family:policies');
     await screen.findByText('No audit entries found.');expect(live()).toBeInTheDocument();
     await act(async()=>deny(new ApiError('Middle synthetic denied',403)));
     expect(live()).toBeInTheDocument();expect(screen.queryByRole('alert')).not.toBeInTheDocument();

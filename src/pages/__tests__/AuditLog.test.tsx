@@ -43,13 +43,14 @@ describe('AuditLog', () => {
     const user = userEvent.setup();
     render(<AuditLog />);
 
-    await user.selectOptions(screen.getByRole('combobox'), 'device.delete');
+    await user.selectOptions(screen.getByRole('combobox'), 'family:devices');
 
     expect(mocks.useAuditLog).toHaveBeenLastCalledWith({
       environment_id: 'env_1',
       page: 1,
       per_page: 25,
-      action: 'device.delete',
+      action: undefined,
+      action_family: 'devices',
     });
     expect(screen.getByTestId('audit-total')).toHaveTextContent('52');
   });

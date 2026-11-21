@@ -19,6 +19,7 @@ export interface AuditListParams {
   page?: number;
   per_page?: number;
   action?: string;
+  action_family?: string;
 }
 
 interface AuditListResponse {
@@ -53,6 +54,7 @@ export function buildAuditQuery(params: AuditListParams): string {
   if (params.page != null) searchParams.set('page', String(params.page));
   if (params.per_page != null) searchParams.set('per_page', String(params.per_page));
   if (params.action) searchParams.set('action', params.action);
+  if (params.action_family) searchParams.set('action_family', params.action_family);
   return searchParams.toString();
 }
 

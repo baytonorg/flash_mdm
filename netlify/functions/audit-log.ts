@@ -4,6 +4,7 @@ import { requireAuth, requireReadOnlyApiKey, type AuthContext } from './_lib/aut
 import { requireEnvironmentResourcePermission } from './_lib/rbac.js';
 import { jsonResponse, errorResponse, getSearchParams } from './_lib/helpers.js';
 import { sanitizeAuditValue } from './_lib/audit.js';
+import { auditActionFamily } from '../../shared/audit-actions.js';
 
 export default async function handler(request: Request, _context: Context) {
   return readAuditLog(request, () => requireAuth(request));
@@ -86,6 +87,15 @@ async function readAuditLog(
       whereClause += ` AND a.action = $${paramIdx}`;
       queryParams.push(actionFilter);
       paramIdx++;
+    }
+
+    const actionFamilyFilter = params.get('action_family');
+    if (actionFamilyFilter) {
+      const family = auditActionFamily(actionFamilyFilter);
+      if (!family) return errorResponse('Unknown audit action family');
+      whereClause += ` AND (a.action = ANY($${paramIdx}::text[]) OR EXISTS (SELECT 1 FROM unnest($${paramIdx + 1}::text[]) AS audit_prefix(prefix) WHERE left(a.action, length(audit_prefix.prefix)) = audit_prefix.prefix))`;
+      queryParams.push(family.actions ?? [], family.prefixes);
+      paramIdx += 2;
     }
 
     const resourceTypeFilter = params.get('resource_type');
