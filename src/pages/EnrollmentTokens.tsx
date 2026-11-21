@@ -40,20 +40,26 @@ function getTokenExpiry(token: EnrollmentToken): string | null {
   return token.expires_at ?? token.expiry ?? null;
 }
 
-export default function EnrollmentTokens() {
-  const { user } = useAuthStore();
-  const { activeWorkspace, activeEnvironment } = useContextStore();
-  const readContext = JSON.stringify([
+function enrolmentReadContext(user: ReturnType<typeof useAuthStore.getState>['user'], context: ReturnType<typeof useContextStore.getState>) {
+  const { activeWorkspace, activeEnvironment } = context;
+  return JSON.stringify([
     user?.id, user?.is_superadmin, user?.impersonation?.active,
     user?.impersonation?.mode, user?.impersonation?.by_user_id,
     activeWorkspace?.id, activeWorkspace?.user_role, activeWorkspace?.access_scope,
     (activeWorkspace?.settings as { rbac?: unknown } | undefined)?.rbac,
     activeEnvironment?.id, activeEnvironment?.user_role,
   ]);
-  return <EnrollmentTokensContent key={readContext} readContext={readContext} />;
 }
 
-function EnrollmentTokensContent({ readContext }: { readContext: string }) {
+export default function EnrollmentTokens() {
+  const { user } = useAuthStore();
+  const context = useContextStore();
+  const readContext = enrolmentReadContext(user, context);
+  return <EnrollmentTokensContent key={readContext} readContext={readContext}
+    canRead={() => enrolmentReadContext(useAuthStore.getState().user, useContextStore.getState()) === readContext} />;
+}
+
+function EnrollmentTokensContent({ readContext, canRead }: { readContext: string; canRead: () => boolean }) {
   const { activeEnvironment } = useContextStore();
   const queryClient = useQueryClient();
   const environmentId = activeEnvironment?.id;
@@ -141,6 +147,14 @@ function EnrollmentTokensContent({ readContext }: { readContext: string }) {
   const handleCopy = async (value: string, field: 'token' | 'qr') => {
     const key = currentSelection.current;
     if (!key || !value || copying.current === key) return;
+    // Store/query state can change before React commits a replacement render.
+    // Validate the actual current handoff immediately before touching clipboard.
+    const queryKey = [...enrollmentKeys.list(environmentId ?? ''), readContext];
+    const state = queryClient.getQueryState<{ tokens: EnrollmentToken[] }>(queryKey);
+    const current = state?.data?.tokens.find(token => token.id === selection?.id && token.environment_id === environmentId);
+    if (!canRead() || state?.status !== 'success' || state.fetchStatus !== 'idle' || state.isInvalidated || !current
+      || (current.value ?? current.token_value ?? '') !== tokenValue || current.qr_data !== selectedToken?.qr_data
+      || value !== (field === 'token' ? tokenValue : current.qr_data)) return;
     copying.current = key;
     if (copiedFieldTimeoutRef.current !== null) {
       window.clearTimeout(copiedFieldTimeoutRef.current);
@@ -149,7 +163,7 @@ function EnrollmentTokensContent({ readContext }: { readContext: string }) {
     setCopyResult({ key, field, status: 'pending' });
     try {
       await navigator.clipboard.writeText(value);
-      if (currentSelection.current !== key) return;
+      if (currentSelection.current !== key || !canRead()) return;
       setCopyResult({ key, field, status: 'copied' });
       if (copiedFieldTimeoutRef.current !== null) {
         window.clearTimeout(copiedFieldTimeoutRef.current);
@@ -159,7 +173,7 @@ function EnrollmentTokensContent({ readContext }: { readContext: string }) {
         copiedFieldTimeoutRef.current = null;
       }, 1500);
     } catch {
-      if (currentSelection.current === key) setCopyResult({ key, field, status: 'failed' });
+      if (currentSelection.current === key && canRead()) setCopyResult({ key, field, status: 'failed' });
     } finally {
       if (copying.current === key) copying.current = null;
     }
