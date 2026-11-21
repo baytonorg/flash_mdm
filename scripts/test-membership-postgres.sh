@@ -98,3 +98,8 @@ TRANSACTION_AUDIT_TRACE_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fix
 docker exec "$fixture_container" createdb -U postgres flash_registration_audit_fixture
 REGISTRATION_AUDIT_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/flash_registration_audit_fixture" \
   npx vitest run netlify/functions/__tests__/registration-audit.postgres.test.ts
+
+# Destructive local flows must preserve every enrolment/sign-in carrier.
+docker exec "$fixture_container" createdb -U postgres flash_environment_preservation_fixture
+ENVIRONMENT_PRESERVATION_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/flash_environment_preservation_fixture" \
+  npx vitest run netlify/functions/__tests__/environment-preservation.postgres.test.ts

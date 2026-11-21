@@ -79,6 +79,7 @@ describe('environment-crud delete hardening', () => {
 
     const client = {
       query: vi.fn().mockImplementation(async (sql: string) => {
+        if (sql.includes('AS configuration') && sql.includes('AS verification')) return { rows: [{ enrollment: false, configuration: false, verification: false }] };
         if (sql.startsWith('UPDATE audit_log SET details') && sql.includes('deleted_environment_id')) throw { code: '42P01' };
         if (sql.startsWith('DELETE FROM pubsub_events')) throw { code: '42703' };
         if (sql.startsWith('SELECT id FROM workspaces')) return { rows: [{ id: '22222222-2222-4222-8222-222222222222' }], rowCount: 1 };
