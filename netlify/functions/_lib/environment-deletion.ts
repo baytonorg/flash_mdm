@@ -10,13 +10,18 @@ export async function deleteEnvironmentData(client: PoolClient, environmentId: s
   // These records have separate credential ownership and retirement semantics.
   // Parent locking also serialises their immediate FK-backed insertions. Do not
   // infer retirement authority from expiry, empty values or the key/link flag.
-  const carriers = await client.query<{ enrollment: boolean; configuration: boolean; verification: boolean }>(
-    `SELECT EXISTS (SELECT 1 FROM enrollment_tokens WHERE environment_id = $1) AS enrollment,
-            EXISTS (SELECT 1 FROM signin_configurations WHERE environment_id = $1) AS configuration,
-            EXISTS (SELECT 1 FROM signin_verifications WHERE environment_id = $1) AS verification`,
+  const carriers = await client.query<{ enrollment: boolean; configuration: boolean; verification: boolean; enrollment_rls: boolean; configuration_rls: boolean; verification_rls: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM public.enrollment_tokens WHERE environment_id = $1) AS enrollment,
+            EXISTS (SELECT 1 FROM public.signin_configurations WHERE environment_id = $1) AS configuration,
+            EXISTS (SELECT 1 FROM public.signin_verifications WHERE environment_id = $1) AS verification,
+            row_security_active('public.enrollment_tokens') AS enrollment_rls,
+            row_security_active('public.signin_configurations') AS configuration_rls,
+            row_security_active('public.signin_verifications') AS verification_rls`,
     [environmentId]
   );
-  if (!carriers.rows[0]) throw errorResponse('Credential preservation could not be verified. Environment deletion is blocked.', 503);
+  if (!carriers.rows[0] || carriers.rows[0].enrollment_rls || carriers.rows[0].configuration_rls || carriers.rows[0].verification_rls) {
+    throw errorResponse('Credential preservation could not be verified. Environment deletion is blocked.', 503);
+  }
   if (carriers.rows[0].enrollment || carriers.rows[0].configuration || carriers.rows[0].verification) {
     throw errorResponse('Environment deletion is blocked because preserved enrolment or sign-in records are present.', 409);
   }
