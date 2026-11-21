@@ -1267,7 +1267,10 @@ export function EnvironmentTab() {
                   <div>
                     <p className="text-sm font-medium text-red-900">Delete Environment</p>
                     <p className="text-xs text-red-700 mt-1">
-                      Permanently delete this Flash environment and its environment-scoped records, including local devices, policies, apps, enrollment tokens, API keys, and dedicated signup links. Shared signup links are kept with this environment's assignments removed. Audit history, workspace accounts, and billing subscriptions are retained.
+                      Permanently delete this Flash environment and its environment-scoped records, including local devices, policies, apps, API keys, and dedicated signup links. Shared signup links are kept with this environment's assignments removed. Audit history, workspace accounts, and billing subscriptions are retained.
+                    </p>
+                    <p className="text-xs text-red-700 mt-1">
+                      Deletion is blocked when enrolment token, sign-in configuration, or verification records are present. Those records are preserved. The API-key and signup-link confirmation does not override this protection.
                     </p>
                     <p className="text-xs text-red-700 mt-1">
                       This does not delete the Google enterprise or send device wipe commands. If bound, the enterprise and its devices remain in Google, disconnected from this Flash environment. Use Unbind Enterprise first if you also intend to remove the Google enterprise. Local deletion cannot be undone.
