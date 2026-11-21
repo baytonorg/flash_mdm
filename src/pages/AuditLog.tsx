@@ -1,5 +1,6 @@
 import { auditActionLabel } from '@/lib/audit-label';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { AUDIT_ACTION_FAMILIES, AUDIT_EXACT_ACTIONS, isProductAuditAction } from '../../shared/audit-actions';
 import { useContextStore } from '@/stores/context';
 import { useAuditLog, isAuditAccessDenied, type AuditEntry } from '@/api/queries/audit';
 import DataTable, { type ColumnDef } from '@/components/common/DataTable';
@@ -27,48 +28,30 @@ function timeAgo(dateStr: string): string {
   return `${years}y ago`;
 }
 
-const ACTION_TYPES = [
-  'All Actions',
-  'workflow.custom_audit',
-  'device.enroll',
-  'device.delete',
-  'device.wipe',
-  'device.lock',
-  'device.reboot',
-  'policy.create',
-  'policy.update',
-  'policy.delete',
-  'group.create',
-  'group.update',
-  'group.delete',
-  'user.invite',
-  'user.remove',
-  'environment.bind',
-  'environment.update',
-  'workspace.update',
-  'auth.login',
-  'auth.logout',
-];
-
 // ---- Main AuditLog page ----
 
 export default function AuditLog() {
-  const LIVE_REFRESH_MS = 30000;
   const { activeEnvironment } = useContextStore();
+  const [perPage, setPerPage] = useState(25);
+  return <AuditLogContent key={activeEnvironment?.id ?? ''} activeEnvironment={activeEnvironment} perPage={perPage} setPerPage={setPerPage} />;
+}
+
+function AuditLogContent({ activeEnvironment, perPage, setPerPage }: { activeEnvironment: ReturnType<typeof useContextStore.getState>['activeEnvironment']; perPage: number; setPerPage: (value: number) => void }) {
+  const LIVE_REFRESH_MS = 30000;
   const environmentId = activeEnvironment?.id ?? '';
 
   const [page, setPage] = useState(1);
-  const [perPage, setPerPage] = useState(25);
   const [actionFilter, setActionFilter] = useState('');
-
-  // Reset pagination on environment switch
-  useEffect(() => { setPage(1); setActionFilter(''); }, [environmentId]);
+  const [exactDraft, setExactDraft] = useState('');
+  const [exactAction, setExactAction] = useState('');
+  const [exactError, setExactError] = useState(false);
 
   const { data, isPending, isPaused, isError, error, failureCount, failureReason, isFetching, refetch, dataUpdatedAt } = useAuditLog({
     environment_id: environmentId,
     page,
     per_page: perPage,
-    action: actionFilter || undefined,
+    action: actionFilter === 'exact' ? exactAction || undefined : actionFilter.startsWith('family:') ? undefined : actionFilter || undefined,
+    action_family: actionFilter.startsWith('family:') ? actionFilter.slice('family:'.length) : undefined,
   });
 
   const entries = data?.entries ?? [];
@@ -158,24 +141,39 @@ export default function AuditLog() {
         </div>
 
         {/* Action filter */}
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 w-full flex-wrap items-center gap-2 sm:w-auto">
           <Filter className="h-4 w-4 text-gray-400" />
           <select
             aria-label="Filter audit action"
             value={actionFilter}
             onChange={(e) => {
               setActionFilter(e.target.value);
+              setExactDraft(''); setExactAction(''); setExactError(false);
               setPage(1);
             }}
-            className="rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
+            className="min-w-0 max-w-full flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 sm:flex-none"
           >
             <option value="">All Actions</option>
-            {ACTION_TYPES.filter((a) => a !== 'All Actions').map((action) => (
-              <option key={action} value={action}>
-                {auditActionLabel(action)}
-              </option>
-            ))}
+            <optgroup label="Action families">
+              {AUDIT_ACTION_FAMILIES.map(family => <option key={family.id} value={`family:${family.id}`}>{family.label}</option>)}
+            </optgroup>
+            <optgroup label="Specific actions">
+              {AUDIT_EXACT_ACTIONS.map(item => <option key={item.action} value={item.action}>{item.label}</option>)}
+            </optgroup>
+            <option value="exact">Exact action...</option>
           </select>
+          {actionFilter === 'exact' && (
+            <form className="flex w-full min-w-0 basis-full flex-wrap items-center gap-2 sm:w-auto sm:basis-auto" onSubmit={event => {
+              event.preventDefault(); const value = exactDraft.trim();
+              if (value && !isProductAuditAction(value)) { setExactError(true); return; }
+              setExactError(false); setExactAction(value); setPage(1);
+            }}>
+              <input aria-label="Exact audit action" value={exactDraft} maxLength={128} onChange={event => setExactDraft(event.target.value)} placeholder="policy.updated" className="w-0 min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 sm:w-auto" />
+              <button type="submit" className="rounded-lg border border-border bg-surface px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-accent/20">Apply</button>
+              <p className="w-full break-all text-xs text-muted">{exactAction ? `Applied action: ${exactAction}` : 'Enter a dotted product action and select Apply.'}</p>
+              {exactError && <p role="alert" className="w-full text-sm text-red-600">Enter a product action such as policy.updated.</p>}
+            </form>
+          )}
         </div>
       </div>
 

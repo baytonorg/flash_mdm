@@ -80,3 +80,7 @@ ROLES_RBAC_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/fl
 docker exec "$fixture_container" createdb -U postgres flash_licensing_notice_fixture
 LICENSING_NOTICE_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/flash_licensing_notice_fixture" \
   npx vitest run netlify/functions/__tests__/licensing-notice.postgres.test.ts
+
+docker exec "$fixture_container" createdb -U postgres flash_audit_filter_fixture
+AUDIT_FILTER_TEST_DATABASE_URL="postgresql://postgres@127.0.0.1:${fixture_port}/flash_audit_filter_fixture" \
+  npx vitest run netlify/functions/__tests__/audit-filters.postgres.test.ts
