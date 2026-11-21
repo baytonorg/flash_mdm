@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   enrollmentKeys,
@@ -9,6 +9,7 @@ import {
   type EnrollmentToken,
 } from '@/api/queries/enrollment';
 import { useContextStore } from '@/stores/context';
+import { useAuthStore } from '@/stores/auth';
 import BulkActionBar, { type BulkAction } from '@/components/common/BulkActionBar';
 import ConfirmModal from '@/components/common/ConfirmModal';
 import SelectAllMatchingNotice from '@/components/common/SelectAllMatchingNotice';
@@ -40,6 +41,19 @@ function getTokenExpiry(token: EnrollmentToken): string | null {
 }
 
 export default function EnrollmentTokens() {
+  const { user } = useAuthStore();
+  const { activeWorkspace, activeEnvironment } = useContextStore();
+  const readContext = JSON.stringify([
+    user?.id, user?.is_superadmin, user?.impersonation?.active,
+    user?.impersonation?.mode, user?.impersonation?.by_user_id,
+    activeWorkspace?.id, activeWorkspace?.user_role, activeWorkspace?.access_scope,
+    (activeWorkspace?.settings as { rbac?: unknown } | undefined)?.rbac,
+    activeEnvironment?.id, activeEnvironment?.user_role,
+  ]);
+  return <EnrollmentTokensContent key={readContext} readContext={readContext} />;
+}
+
+function EnrollmentTokensContent({ readContext }: { readContext: string }) {
   const { activeEnvironment } = useContextStore();
   const queryClient = useQueryClient();
   const environmentId = activeEnvironment?.id;
@@ -47,15 +61,20 @@ export default function EnrollmentTokens() {
 
   const [creatorOpen, setCreatorOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<EnrollmentToken | null>(null);
-  const [selectedToken, setSelectedToken] = useState<EnrollmentToken | null>(null);
-  const [copiedField, setCopiedField] = useState<'token' | 'qr' | null>(null);
+  const [selection, setSelection] = useState<{ id: string; epoch: number } | null>(null);
+  const selectionEpoch = useRef(0);
+  const [copyResult, setCopyResult] = useState<{ key: string; field: 'token' | 'qr'; status: 'pending' | 'copied' | 'failed' } | null>(null);
+  const currentSelection = useRef<string | null>(null);
+  const copying = useRef<string | null>(null);
   const detailOverlayRef = useRef<HTMLDivElement>(null);
+  const detailDialogRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
   const syncResultTimeoutRef = useRef<number | null>(null);
   const copiedFieldTimeoutRef = useRef<number | null>(null);
 
   // Reset local state on environment switch
   useEffect(() => {
-    setSelectedToken(null);
+    setSelection(null);
     setDeleteTarget(null);
     setCreatorOpen(false);
   }, [environmentId]);
@@ -71,9 +90,33 @@ export default function EnrollmentTokens() {
     };
   }, []);
 
-  const tokensQuery = useEnrollmentTokens(environmentId ?? '');
+  const tokensQuery = useEnrollmentTokens(environmentId ?? '', readContext);
   const tokens = tokensQuery.data ?? [];
   const { isLoading, isError, error, refetch, isFetching } = tokensQuery;
+  const handoffReady = tokensQuery.isSuccess && tokensQuery.fetchStatus === 'idle';
+  const selectedToken = handoffReady && selection
+    ? tokens.find(token => token.id === selection.id && token.environment_id === environmentId) ?? null
+    : null;
+  // The canonical API field is value. Only genuinely older row shapes fall back.
+  const tokenValue = selectedToken?.value ?? selectedToken?.token_value ?? '';
+  const selectionKey = selectedToken && selection
+    ? JSON.stringify([selection.epoch, selectedToken.id, tokenValue, selectedToken.qr_data]) : null;
+  useLayoutEffect(() => {
+    currentSelection.current = selectionKey;
+    return () => { currentSelection.current = null; };
+  }, [selectionKey]);
+  const currentCopy = copyResult?.key === selectionKey ? copyResult : null;
+  const copiedField = currentCopy?.status === 'copied' ? currentCopy.field : null;
+  const closeViewer = () => { currentSelection.current = null; setSelection(null); setCopyResult(null); };
+  const openViewer = (token: EnrollmentToken) => {
+    if (!handoffReady || token.environment_id !== environmentId) return;
+    setSelection({ id: token.id, epoch: ++selectionEpoch.current });
+    setCopyResult(null);
+  };
+  useEffect(() => {
+    if (selection && !selectedToken) setSelection(null);
+  }, [selection, selectedToken]);
+  useEffect(() => () => { currentSelection.current = null; }, []);
   const deleteMutation = useDeleteEnrollmentToken();
   const bulkEnrollmentAction = useBulkEnrollmentAction();
   const bulkSelection = useBulkSelection<EnrollmentToken>({
@@ -96,18 +139,29 @@ export default function EnrollmentTokens() {
   };
 
   const handleCopy = async (value: string, field: 'token' | 'qr') => {
+    const key = currentSelection.current;
+    if (!key || !value || copying.current === key) return;
+    copying.current = key;
+    if (copiedFieldTimeoutRef.current !== null) {
+      window.clearTimeout(copiedFieldTimeoutRef.current);
+      copiedFieldTimeoutRef.current = null;
+    }
+    setCopyResult({ key, field, status: 'pending' });
     try {
       await navigator.clipboard.writeText(value);
-      setCopiedField(field);
+      if (currentSelection.current !== key) return;
+      setCopyResult({ key, field, status: 'copied' });
       if (copiedFieldTimeoutRef.current !== null) {
         window.clearTimeout(copiedFieldTimeoutRef.current);
       }
       copiedFieldTimeoutRef.current = window.setTimeout(() => {
-        setCopiedField((current) => (current === field ? null : current));
+        setCopyResult((current) => (current?.key === key ? null : current));
         copiedFieldTimeoutRef.current = null;
       }, 1500);
     } catch {
-      // Ignore clipboard failures in unsupported contexts
+      if (currentSelection.current === key) setCopyResult({ key, field, status: 'failed' });
+    } finally {
+      if (copying.current === key) copying.current = null;
     }
   };
 
@@ -129,14 +183,26 @@ export default function EnrollmentTokens() {
 
   useEffect(() => {
     if (!selectedToken) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeButtonRef.current?.focus();
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setSelectedToken(null);
-        setCopiedField(null);
+        closeViewer();
       }
+      if (e.key !== 'Tab' || !detailDialogRef.current) return;
+      const controls = detailDialogRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])');
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (!first) { e.preventDefault(); detailDialogRef.current.focus(); }
+      else if (!detailDialogRef.current.contains(document.activeElement)) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
+      else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     };
     document.addEventListener('keydown', handleKey);
-    return () => document.removeEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('keydown', handleKey);
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
   }, [selectedToken]);
 
   if (!environmentId) {
@@ -298,14 +364,13 @@ export default function EnrollmentTokens() {
                     key={token.id}
                     className="cursor-pointer border-b border-border last:border-b-0 hover:bg-surface-secondary transition-colors"
                     onClick={() => {
-                      setSelectedToken(token);
-                      setCopiedField(null);
+                      openViewer(token);
                     }}
                     onKeyDown={(e) => {
+                      if (e.target !== e.currentTarget) return;
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        setSelectedToken(token);
-                        setCopiedField(null);
+                        openViewer(token);
                       }
                     }}
                     tabIndex={0}
@@ -433,12 +498,11 @@ export default function EnrollmentTokens() {
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
           onClick={(e) => {
             if (e.target === detailOverlayRef.current) {
-              setSelectedToken(null);
-              setCopiedField(null);
+              closeViewer();
             }
           }}
         >
-          <div className="w-full max-w-2xl rounded-xl border border-border bg-surface shadow-xl max-h-[90vh] overflow-y-auto">
+          <div ref={detailDialogRef} role="dialog" tabIndex={-1} aria-modal="true" aria-label="Enrolment token details" className="w-full max-w-2xl rounded-xl border border-border bg-surface shadow-xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-border px-6 py-4">
               <div>
                 <h2 className="text-base font-semibold text-gray-900">
@@ -449,10 +513,10 @@ export default function EnrollmentTokens() {
                 </p>
               </div>
               <button
+                ref={closeButtonRef}
                 type="button"
                 onClick={() => {
-                  setSelectedToken(null);
-                  setCopiedField(null);
+                  closeViewer();
                 }}
                 className="rounded-lg p-2 text-muted hover:bg-surface-secondary hover:text-gray-700"
                 aria-label="Close token viewer"
@@ -499,13 +563,15 @@ export default function EnrollmentTokens() {
                   </div>
                 </div>
 
-                {selectedToken.token_value && (
+                {tokenValue && (
                   <div>
                     <div className="mb-1.5 flex items-center justify-between">
                       <label className="text-sm font-medium text-gray-700">Token Value</label>
                       <button
                         type="button"
-                        onClick={() => void handleCopy(selectedToken.token_value!, 'token')}
+                        onClick={() => void handleCopy(tokenValue, 'token')}
+                        disabled={currentCopy?.status === 'pending'}
+                        aria-label="Copy token value"
                         className="inline-flex items-center gap-1 rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
                       >
                         {copiedField === 'token' ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
@@ -513,7 +579,7 @@ export default function EnrollmentTokens() {
                       </button>
                     </div>
                     <div className="rounded-lg border border-border bg-surface-secondary px-3 py-2 font-mono text-xs break-all max-h-32 overflow-y-auto">
-                      {selectedToken.token_value}
+                      {tokenValue}
                     </div>
                   </div>
                 )}
@@ -525,6 +591,8 @@ export default function EnrollmentTokens() {
                       <button
                         type="button"
                         onClick={() => void handleCopy(selectedToken.qr_data!, 'qr')}
+                        disabled={currentCopy?.status === 'pending'}
+                        aria-label="Copy QR payload"
                         className="inline-flex items-center gap-1 rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
                       >
                         {copiedField === 'qr' ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
@@ -535,6 +603,9 @@ export default function EnrollmentTokens() {
                       {selectedToken.qr_data}
                     </div>
                   </div>
+                )}
+                {currentCopy?.status === 'failed' && (
+                  <p role="alert" className="text-sm text-red-600">Unable to copy. Select and copy the value manually.</p>
                 )}
               </div>
             </div>

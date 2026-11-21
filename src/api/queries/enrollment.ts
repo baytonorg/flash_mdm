@@ -56,13 +56,18 @@ export const enrollmentKeys = {
 
 // --- Hooks ---
 
-export function useEnrollmentTokens(environmentId: string) {
+export function useEnrollmentTokens(environmentId: string, readContext = '') {
   return useQuery({
-    queryKey: enrollmentKeys.list(environmentId),
-    queryFn: () =>
-      apiClient.get<EnrollmentTokensResponse>(`/api/enrolment/list?environment_id=${environmentId}`),
+    queryKey: [...enrollmentKeys.list(environmentId), readContext],
+    queryFn: ({ signal }) =>
+      apiClient.get<EnrollmentTokensResponse>(`/api/enrolment/list?environment_id=${environmentId}`, { signal }),
     select: (data) => data.tokens,
     enabled: !!environmentId,
+    // Existing values are a credential handoff. Revalidate after remount and
+    // discard this observer's cached payload when its read context departs.
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnMount: 'always',
   });
 }
 
