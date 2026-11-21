@@ -5,7 +5,7 @@ import {mkdtemp,readFile,readdir,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {MIGRATIONS} from '../migrate.js';
-import {transaction,closeDatabasePool} from '../_lib/db.js';
+import {transaction,withClient,closeDatabasePool} from '../_lib/db.js';
 import {logAudit} from '../_lib/audit.js';
 import {traceHttp,setTraceActor,closeOperationalTrace,type TraceActor} from '../_lib/operational-trace.js';
 import {buildTraceReport} from '../_lib/trace-reader.js';
@@ -92,6 +92,14 @@ const url=process.env.TRANSACTION_AUDIT_TRACE_TEST_DATABASE_URL;
  it('does no survivor queries when tracing is disabled or no audit rows were inserted',async()=>{
   const original=pg.Client.prototype.query;let checks=0;vi.spyOn(pg.Client.prototype,'query').mockImplementation(function(this:pg.Client,...args:unknown[]){if(String(args[0]).startsWith('SELECT id FROM audit_log WHERE id = ANY'))checks++;return Reflect.apply(original,this,args);});
   delete process.env.FLASH_TRACE_DIR;await transaction(c=>action(c));process.env.FLASH_TRACE_DIR=directory;await run(()=>transaction(c=>c.query('SELECT 1')));expect(checks).toBe(0);
+ });
+ it.each([false,true])('drains accepted work before another lease reuses the connection (tracing=%s)',async enabled=>{
+  await closeDatabasePool();if(!enabled)delete process.env.FLASH_TRACE_DIR;let firstPid=0,secondPid=0;
+  await expect(withClient(async c=>{firstPid=(await c.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;await Promise.all([c.query('SELECT pg_sleep(0.05)'),c.query("INSERT INTO audit_log(action,actor_type) VALUES('group.updated','system')"),Promise.reject(Error('Synthetic independent failure'))]);})).rejects.toThrow('Synthetic independent failure');
+  await withClient(async c=>{await c.query('BEGIN');secondPid=(await c.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;await c.query('ROLLBACK');});expect(secondPid).toBe(firstPid);expect((await pool.query("SELECT 1 FROM audit_log WHERE action='group.updated'")).rowCount).toBe(1);
+ });
+ it('rejects a new external command after a normally released lease',async()=>{
+  let leased!:pg.PoolClient;await withClient(async c=>{leased=c;await c.query('SELECT 1');});await expect(leased.query("INSERT INTO audit_log(action) VALUES('group.deleted')")).rejects.toThrow('lease is closed');expect((await pool.query('SELECT id FROM audit_log')).rowCount).toBe(0);
  });
  it('leaves unmanaged clients unconfirmed rather than inferring durability from a request span',async()=>{
   const c=await pool.connect();try{await c.query('BEGIN');await run(()=>action(c));await c.query('COMMIT');}finally{c.release();}const r=await report();expect(durable(r)).toBe(0);expect(r.coverage.unconfirmed_audit_attempts).toBe(1);

@@ -93,7 +93,9 @@ export async function withClient<T>(
   }
 
   let tail: Promise<unknown> = Promise.resolve();
+  let closing = false;
   const schedule = <T>(fn: () => Promise<T>): Promise<T> => {
+    if (closing) return Promise.reject(Error('Database client lease is closed'));
     const result = tail.then(fn);
     tail = result.catch(() => undefined);
     return result;
@@ -102,6 +104,7 @@ export async function withClient<T>(
     get(target, property, receiver) {
       if (property !== 'query') return Reflect.get(target, property, receiver);
       return async (...args: unknown[]) => {
+       if (closing && exclusiveClient.getStore() !== databaseClient) throw Error('Database client lease is closed');
        const run = async () => {
         try {
           return await tracedQuery(() => Reflect.apply(target.query, target, args), typeof args[0] === 'string' ? args[0] : 'unknown');
@@ -118,9 +121,15 @@ export async function withClient<T>(
   try {
     return await fn(databaseClient);
   } finally {
+    closing = true;
     clientOperations.delete(databaseClient);
     if (discardClients.has(databaseClient)) client.release(true);
-    else client.release();
+    else {
+      // Drain work accepted by this lease before lending its connection to a
+      // different transaction. A damaged diagnostic lease must evict promptly.
+      await tail;
+      client.release();
+    }
   }
 }
 
