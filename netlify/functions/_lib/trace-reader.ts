@@ -3,6 +3,7 @@ import { readdir, lstat, open } from "node:fs/promises";
 import { join } from "node:path";
 import type { FileHandle } from "node:fs/promises";
 import { traceWindow } from "./trace-writer.js";
+import { UUID_PATTERN } from "../../../shared/trace-contract.js";
 
 export type TraceRecord = {
   schema: number;
@@ -398,6 +399,7 @@ export async function buildTraceReport(
       problems: number;
       features: Record<string, number>;
       actions: Record<string, number>;
+      attempted_actions: Record<string, number>;
     }
   >();
   const eventCounts: Record<string, number> = Object.create(null),
@@ -412,7 +414,14 @@ export async function buildTraceReport(
     concurrent_renames_resolved: 0,
   };
   const requests = new Map<string, TraceRecord["actor"]>();
-  const committedTransactions = new Set<string>();
+  const confirmedReceipts = new Set<string>();
+  const countedReceipts = new Set<string>();
+  let pendingAudits = 0, unconfirmedAudits = 0, verificationUnconfirmed = 0;
+  const isReceipt = (record: TraceRecord) => record.event === "audit.committed" &&
+    record.data.durability === "committed" &&
+    typeof record.data.receipt_id === "string" && UUID_PATTERN.test(record.data.receipt_id) &&
+    timestamp(record.data.attempted_at) && timestamp(record.data.commit_observed_at) &&
+    record.data.attempted_at <= record.data.commit_observed_at && record.data.commit_observed_at <= record.time;
   let clientDrops = 0,
     clientUnconfirmed = 0;
   let invalid = 0,
@@ -473,11 +482,9 @@ export async function buildTraceReport(
     )
       requests.set(record.request_id, record.actor);
     if (
-      record.event === "db.transaction.committed" &&
-      record.span_id &&
-      committedTransactions.size < 250_000
+      isReceipt(record) && confirmedReceipts.size < 250_000
     )
-      committedTransactions.add(record.span_id);
+      confirmedReceipts.add(record.data.receipt_id as string);
   }
   const actorCorrelationLimited = requests.size >= 250_000;
   invalid = 0;
@@ -486,6 +493,16 @@ export async function buildTraceReport(
     first = !first || record.time < String(first) ? record.time : first;
     last = !last || record.time > String(last) ? record.time : last;
     eventCounts[record.event] = (eventCounts[record.event] ?? 0) + 1;
+    if (record.event === "audit.write" && record.data.durability === "transaction_pending") {
+      pendingAudits++;
+      if (!confirmedReceipts.has(String(record.data.receipt_id))) unconfirmedAudits++;
+    }
+    if (record.event === "audit.transaction_unconfirmed" && Number.isSafeInteger(record.data.count) && Number(record.data.count) > 0)
+      verificationUnconfirmed += Number(record.data.count);
+    const receiptId = String(record.data.receipt_id);
+    const confirmedAudit = record.event === "audit.write" && record.data.durability === "committed" ||
+      isReceipt(record) && confirmedReceipts.has(receiptId) && !countedReceipts.has(receiptId);
+    if (confirmedAudit && record.event === "audit.committed") countedReceipts.add(receiptId);
     if (record.event === "ui.collection_gap") {
       clientDrops += Number(record.data.dropped) || 0;
       clientUnconfirmed += Number(record.data.unconfirmed) || 0;
@@ -511,7 +528,7 @@ export async function buildTraceReport(
       ? requests.get(record.request_id)
       : undefined;
     const actor =
-      record.actor?.type === "anonymous" && established?.type !== "anonymous"
+      !["audit.committed", "audit.write"].includes(record.event) && record.actor?.type === "anonymous" && established?.type !== "anonymous"
         ? (established ?? record.actor)
         : record.actor;
     const key = `${actor?.type ?? "unknown"}:${actor?.id ?? actor?.email ?? "unattributed"}`;
@@ -529,6 +546,7 @@ export async function buildTraceReport(
         problems: 0,
         features: Object.create(null),
         actions: Object.create(null),
+        attempted_actions: Object.create(null),
       };
       actors.set(key, summary);
     }
@@ -547,9 +565,7 @@ export async function buildTraceReport(
           "ui.submit",
           "ui.invalid",
         ].includes(record.event) ||
-        (record.event === "audit.write" &&
-          (record.data.durability === "committed" ||
-            (!!record.span_id && committedTransactions.has(record.span_id))));
+        confirmedAudit;
       if (meaningful) {
         summary.meaningful_events++;
         if (summary.first_meaningful === null || record.time < summary.first_meaningful)
@@ -559,9 +575,12 @@ export async function buildTraceReport(
         const feature = record.feature ?? "other";
         summary.features[feature] = (summary.features[feature] ?? 0) + 1;
       }
-      if (typeof record.data.action === "string")
+      if (typeof record.data.action === "string" && confirmedAudit)
         summary.actions[record.data.action] =
           (summary.actions[record.data.action] ?? 0) + 1;
+      if (typeof record.data.action === "string" && record.event === "audit.write")
+        summary.attempted_actions[record.data.action] =
+          (summary.attempted_actions[record.data.action] ?? 0) + 1;
       if (problem) summary.problems++;
     }
     if (problem && problems.length < 2000) problems.push({ ...record, actor });
@@ -622,7 +641,11 @@ export async function buildTraceReport(
             Math.min(Date.now(), to.getTime()) - 120_000,
       ).length,
       actor_correlation_limited: actorCorrelationLimited,
-      transaction_correlation_limited: committedTransactions.size >= 250_000,
+      transaction_correlation_limited: confirmedReceipts.size >= 250_000,
+      audit_durability_method: "row_receipt_v1",
+      pending_audit_attempts: pendingAudits,
+      unconfirmed_audit_attempts: unconfirmedAudits,
+      audit_verification_unconfirmed: verificationUnconfirmed,
       actor_limit_reached: actors.size >= 20_000,
       problem_examples_limited: problems.length >= 2000,
       dropped_events: writers.reduce((n, w) => n + (w.dropped ?? 0), 0),
@@ -631,7 +654,7 @@ export async function buildTraceReport(
         (n, w) => n + (w.budget_evictions ?? 0),
         0,
       ),
-      note: "UI events are client-reported interaction evidence. Human-attributed HTTP includes background reads and is not proof of active use. Pending transactional audit writes require a matching transaction commit. Absence of logged problems does not establish complete coverage.",
+      note: "UI events are client-reported. HTTP includes background reads. Durable audit actions require autocommit evidence or a surviving-row receipt, counted at its durability-observed time. Provisional and historical outer-span-only attempts are unconfirmed, not durable actions. Crash, retention, verification limits and trace loss can omit receipts. Absence of logged problems does not establish complete coverage.",
     },
     totals: {
       events: total,

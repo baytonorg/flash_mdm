@@ -334,6 +334,7 @@ export async function traceComparisons(directory: string, to: Date) {
         0,
       ),
       http_requests: selected.reduce((n, c) => n + c.totals.http_requests, 0),
+      audit_durability_mixed_history: selected.some(c => c.coverage.audit_durability_method !== "row_receipt_v1"),
       partial_history:
         selected.length < days ||
         unavailableWindows.length > 0 ||
@@ -344,6 +345,9 @@ export async function traceComparisons(directory: string, to: Date) {
             c.coverage.actor_limit_reached ||
             c.coverage.actor_correlation_limited ||
             c.coverage.transaction_correlation_limited ||
+            c.coverage.audit_durability_method !== "row_receipt_v1" ||
+            c.coverage.unconfirmed_audit_attempts ||
+            c.coverage.audit_verification_unconfirmed ||
             c.coverage.unavailable_files ||
             c.coverage.invalid_health_records ||
             c.coverage.collection_started_after_from ||
