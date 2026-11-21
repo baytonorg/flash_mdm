@@ -48,6 +48,15 @@ const url=process.env.REGISTRATION_AUDIT_TEST_DATABASE_URL;
  it('retains account-created evidence when later mail delivery fails without claiming login or delivery success',async()=>{
   vi.mocked(sendEmail).mockRejectedValue(Error('Synthetic mail unavailable'));await expect(run()).rejects.toThrow('Synthetic mail unavailable');expect(await counts()).toEqual({users:1,sessions:0,links:1});expect((await audit())[0]).toMatchObject({action:'auth.register',details:{registration_route:'self_registration'}});await expectTrace('auth.register');
  });
+ it.each(['self','workspace-invite','signup-link'] as const)('rejects %s registration if the required audit row is suppressed',async route=>{
+  if(route==='workspace-invite')await invite('workspace');if(route==='signup-link')await link('environment');
+  await pool.query("CREATE FUNCTION registration_fixture_suppress() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action IN ('auth.register','auth.register.signup_link') THEN RETURN NULL; END IF; RETURN NEW; END $$; CREATE TRIGGER registration_fixture_suppress BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION registration_fixture_suppress()");
+  try{await expect(run(route==='workspace-invite'?{redirect_path:'/invite/inert-invite'}:route==='signup-link'?{signup_link_token:'inert-signup-link'}:{})).rejects.toThrow('Requested audit record was not inserted');expect(await counts()).toEqual({users:0,sessions:0,links:0});expect(await audit()).toEqual([]);expect((await records()).filter(r=>r.event==='audit.committed')).toEqual([]);if(route==='workspace-invite')expect((await pool.query('SELECT status FROM user_invites WHERE email=$1',[email])).rows[0].status).toBe('pending');}finally{await pool.query('DROP TRIGGER registration_fixture_suppress ON audit_log; DROP FUNCTION registration_fixture_suppress()');}
+ });
+ it('preserves human actor and visibility through the compatible legacy audit fallback',async()=>{
+  await pool.query('ALTER TABLE audit_log DROP COLUMN api_key_id');
+  try{expect((await run()).status).toBe(201);expect(await counts()).toEqual({users:1,sessions:0,links:1});expect((await pool.query("SELECT action,actor_type,visibility_scope,details->>'registration_route' AS route FROM audit_log")).rows).toEqual([{action:'auth.register',actor_type:'user',visibility_scope:'standard',route:'self_registration'}]);await expectTrace('auth.register');}finally{await pool.query('ALTER TABLE audit_log ADD COLUMN api_key_id uuid REFERENCES api_keys(id) ON DELETE SET NULL');}
+ });
  it('keeps bearer, password, email content and user display text out of trace records',async()=>{
   await link('environment');await run({signup_link_token:'inert-signup-link',first_name:'PrivateDisplaySentinel',workspace_name:'PrivateWorkspaceSentinel'});const text=JSON.stringify(await records());for(const value of ['inert-signup-link',password,'PrivateDisplaySentinel','PrivateWorkspaceSentinel'])expect(text).not.toContain(value);expect(fetch).not.toHaveBeenCalled();
  });

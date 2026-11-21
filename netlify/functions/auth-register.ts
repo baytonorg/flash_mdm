@@ -227,7 +227,7 @@ export default async (request: Request, _context: Context) => {
             registration_route: appliedInviteWorkspaceId === null ? 'platform_invite' : 'workspace_invite',
           },
           ip_address: getClientIp(request),
-      }, client);
+      }, client, { requirePersistence: true });
       const sessionToken = generateToken();
       const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_MILLISECONDS);
       await client.query(`INSERT INTO sessions (token_hash, user_id, workspace_id, ip_address, user_agent, expires_at)
@@ -364,7 +364,7 @@ export default async (request: Request, _context: Context) => {
           allow_environment_creation: resolvedSignupLink.allow_environment_creation,
         },
         ip_address: getClientIp(request),
-      }, client);
+      }, client, { requirePersistence: true });
       return {userId};
     }
 
@@ -424,7 +424,7 @@ export default async (request: Request, _context: Context) => {
           invite_type: appliedInviteWorkspaceId === null ? 'platform_access' : 'workspace_access' }),
       },
       ip_address: getClientIp(request),
-    }, client);
+    }, client, { requirePersistence: true });
     return { userId };
   });
 
