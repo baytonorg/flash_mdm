@@ -1,0 +1,33 @@
+name: Edge log credential redaction
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/test-edge-log-redaction.py'
+      - 'scripts/fixtures/flash-edge-log-redaction.caddy'
+      - '.github/workflows/edge-log-redaction.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  caddy-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Obtain the matching Caddy runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull caddy:2.11.4-alpine
+          fixture_container=$(docker create caddy:2.11.4-alpine)
+          trap 'docker rm -f "$fixture_container" >/dev/null' EXIT
+          docker cp "$fixture_container:/usr/bin/caddy" "$RUNNER_TEMP/caddy"
+          chmod +x "$RUNNER_TEMP/caddy"
+          "$RUNNER_TEMP/caddy" version | grep -E '^v2\.11\.4([[:space:]]|$)'
+      - name: Verify both log encoders and forwarding
+        run: python3 scripts/test-edge-log-redaction.py --caddy "$RUNNER_TEMP/caddy"

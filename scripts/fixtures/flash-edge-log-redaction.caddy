@@ -1,0 +1,63 @@
+# Exact Flash-only encoder blocks. Production error log7 is log0 in the isolated fixture.
+{
+ admin off
+ persist_config off
+ auto_https off
+ log default {
+  exclude http.log.error.log0
+ }
+    log flash_private_errors {
+        include http.log.error.log0
+        output file ERROR_LOG {
+         mode 0600
+        }
+        format filter {
+        wrap json
+        request>uri regexp `\?.*$` ""
+        request>uri regexp `(?i)^(/(?:invite|join(?:/[we])?|api/invites|api/signup-links/resolve))(?:/.*)?$` "${1}/[redacted]"
+        # Encoded/non-canonical paths cannot bypass the raw-URI prefix rules.
+        request>uri regexp `^.*(?:%|/\.\.?/|//|\\).*$` "[noncanonical-path-redacted]"
+        request>headers>Referer delete
+        request>headers>X-Api-Key delete
+        request>headers>X-Internal-Secret delete
+        request>headers>X-Migration-Secret delete
+        request>headers>X-Bootstrap-Secret delete
+        resp_headers>Location delete
+    }
+    }
+}
+
+(flash_private_log_format) {
+    format filter {
+        wrap json
+        request>uri regexp `\?.*$` ""
+        request>uri regexp `(?i)^(/(?:invite|join(?:/[we])?|api/invites|api/signup-links/resolve))(?:/.*)?$` "${1}/[redacted]"
+        # Encoded/non-canonical paths cannot bypass the raw-URI prefix rules.
+        request>uri regexp `^.*(?:%|/\.\.?/|//|\\).*$` "[noncanonical-path-redacted]"
+        request>headers>Referer delete
+        request>headers>X-Api-Key delete
+        request>headers>X-Internal-Secret delete
+        request>headers>X-Migration-Secret delete
+        request>headers>X-Bootstrap-Secret delete
+        resp_headers>Location delete
+    }
+}
+
+:18426 {
+ bind 127.0.0.1
+ log {
+  import flash_private_log_format
+  output file ACCESS_LOG {
+   mode 0600
+  }
+ }
+ handle /failure {
+  reverse_proxy 127.0.0.1:1
+ }
+ handle /denied {
+  respond "denied" 403
+ }
+ handle {
+  reverse_proxy 127.0.0.1:18427
+ }
+}
